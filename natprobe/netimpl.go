@@ -1,6 +1,7 @@
 package natprobe
 
 import (
+	"context"
 	"net"
 	"net/netip"
 
@@ -43,4 +44,12 @@ func interfacePrefixes() ([]netip.Prefix, error) {
 		}
 	}
 	return out, nil
+}
+
+// systemLookup resolves host with the operating system's resolver
+// (ResolveSTUN's default).
+//
+//holepunch:netimpl
+func systemLookup(ctx context.Context, network, host string) ([]netip.Addr, error) {
+	return net.DefaultResolver.LookupNetIP(ctx, network, host)
 }

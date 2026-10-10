@@ -26,7 +26,8 @@ const (
 	maxSourceTable      = 1 << 20 // the limiter preallocates its table, so the size is bounded
 	maxGroups           = 32      // observer id = group*8 + port index fits a byte
 	portsPerGroup       = 8
-	maxFamilyObservers  = 16 // ProbeSpec.observers
+	maxFamilyObservers  = 16 // a family's listeners
+	maxSpecObservers    = 16 // ProbeSpec.observers in all (protocol)
 )
 
 // ObserverGroup describes one server IP of one address family, bound

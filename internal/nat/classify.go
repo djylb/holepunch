@@ -51,6 +51,13 @@ func (t *ObsTable) Classify() protocol.Traits {
 	}
 	first := S[0].Observed
 	tr.Observed, tr.PublicIP = first, first.Addr()
+	if lanObserved(S, scope) {
+		// The server's public observers saw a private address: the
+		// client reaches the server without NAT, so the samples describe
+		// that path and nothing of the client's NAT toward the Internet.
+		tr.LANObserved, tr.NoNAT = true, protocol.TriUnknown
+		return tr
+	}
 	tr.NoNAT = noNAT(p, S, scope)
 	xs := t.crossRowsLocked(p.ID, scope, SourceServerAlt, SourcePeer)
 	tr.MultiExit = distinctIPs(S, xs) >= 2
@@ -287,8 +294,8 @@ func (t *ObsTable) STUNConflicts() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	p, ok := t.socketOfKindLocked(protocol.SocketPrimary)
-	if !ok {
-		return 0
+	if !ok || t.lanObservedLocked() {
+		return 0 // a LAN-observed table has no public value to contradict
 	}
 	n, _ := t.stunConflictsLocked(p, t.classScopeLocked())
 	return n
@@ -398,6 +405,39 @@ func (t *ObsTable) cgnatLocked(p SocketMeta, pub netip.Addr) protocol.Tri {
 		return protocol.TriFalse
 	}
 	return protocol.TriUnknown
+}
+
+// lanObserved reports whether public observers (scope global) saw the
+// primary socket at private addresses only: a client that reaches the server
+// over a LAN route or through a hairpin without source NAT.
+func lanObserved(S []sample, scope Scope) bool {
+	if scope != ScopeGlobal || len(S) == 0 {
+		return false
+	}
+	for _, s := range S {
+		if ScopeOf(s.Observed.Addr()) != ScopePrivate {
+			return false
+		}
+	}
+	return true
+}
+
+// LANObserved reports whether the table's public observers saw its primary
+// socket at private addresses only (protocol.Traits.LANObserved).
+func (t *ObsTable) LANObserved() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lanObservedLocked()
+}
+
+// lanObservedLocked is lanObserved for the table's primary socket.
+func (t *ObsTable) lanObservedLocked() bool {
+	p, ok := t.socketOfKindLocked(protocol.SocketPrimary)
+	if !ok {
+		return false
+	}
+	scope := t.classScopeLocked()
+	return lanObserved(t.firstValuesLocked(p.ID, scope), scope)
 }
 
 // noNAT: every server value equals the local address, which is global (or

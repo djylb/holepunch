@@ -78,11 +78,9 @@ func New(t testing.TB, o Options) *World {
 	}
 	w.Probe = probe
 	bcfg := broker.Config{Coord: coord.Config{
-		Registry: w.Registry,
-		DefaultProbe: protocol.ProbeSpec{
-			V: protocol.ProbeSpecVersion, Observers: probe.Observers(protocol.FamilyUDP4), ExtraReply: true,
-		},
-		Timeouts: Timeouts(),
+		Registry:     w.Registry,
+		DefaultProbe: probe.ProbeSpec(),
+		Timeouts:     Timeouts(),
 	}}
 	if o.Broker != nil {
 		o.Broker(&bcfg)

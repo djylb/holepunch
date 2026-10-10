@@ -21,6 +21,12 @@ const (
 	serveNoReply               // act on the request, never answer (lost reply)
 )
 
+// heldRequest is a PCP request the gateway answers later (fakeGW.holdPCP).
+type heldRequest struct {
+	b   []byte
+	src netip.AddrPort
+}
+
 type pcpEntry struct {
 	nonce [12]byte
 	ext   uint16
@@ -36,7 +42,9 @@ type fakeGW struct {
 	pcpMode       serveMode
 	natMode       serveMode
 	dropDeletes   bool
-	grant         uint32 // maximum granted lifetime, seconds
+	holdPCP       bool          // PCP requests wait for the first NAT-PMP external-address query
+	held          []heldRequest // PCP requests held by holdPCP
+	grant         uint32        // maximum granted lifetime, seconds
 	nextExt       uint16
 	pcpActive     map[uint16]pcpEntry
 	natActive     map[uint16]uint16
@@ -111,10 +119,42 @@ func (f *fakeGW) serve() {
 		if err != nil {
 			return
 		}
+		if f.hold(buf[:n], src) {
+			continue
+		}
 		if resp := f.handle(buf[:n]); resp != nil {
 			_, _ = f.conn.WriteToUDPAddrPort(resp, src)
 		}
+		for _, h := range f.release() {
+			if resp := f.handle(h.b); resp != nil {
+				_, _ = f.conn.WriteToUDPAddrPort(resp, h.src)
+			}
+		}
 	}
+}
+
+// hold keeps a copy of a PCP request while holdPCP waits for a NAT-PMP
+// probe; it reports whether it did.
+func (f *fakeGW) hold(b []byte, src netip.AddrPort) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.holdPCP || f.natExtQueries > 0 || len(b) == 0 || b[0] != pcpVersion {
+		return false
+	}
+	f.held = append(f.held, heldRequest{b: append([]byte(nil), b...), src: src})
+	return true
+}
+
+// release returns the held PCP requests once a NAT-PMP probe has arrived.
+func (f *fakeGW) release() []heldRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.natExtQueries == 0 {
+		return nil
+	}
+	h := f.held
+	f.held = nil
+	return h
 }
 
 func (f *fakeGW) handle(b []byte) []byte {

@@ -10,7 +10,7 @@ import (
 // Report bounds (protocol: rows per socket, STUN rows).
 const (
 	maxReportRows = 16
-	maxReportSTUN = 4
+	maxReportSTUN = 8
 )
 
 // Snapshot returns the family's probe_report entry as far as the table knows
@@ -19,7 +19,7 @@ const (
 // seq, first send time, minimum RTT, cookie of the latest answer); the STUN
 // rows; and the extra and alt replies seen. The caller fills Failure,
 // Traits, PortMap and LocalAddrs. The result stays within the protocol
-// bounds (6 sockets, 16 rows each, 4 STUN rows, 24 filters).
+// bounds (6 sockets, 16 rows each, 8 STUN rows, 24 filters).
 func (t *ObsTable) Snapshot() protocol.FamilyReport {
 	t.mu.Lock()
 	defer t.mu.Unlock()

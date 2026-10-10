@@ -169,6 +169,7 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 	if s.ablate.NoMemory {
 		mem = nil
 	}
+	opts := natprobe.MergeOptions{VerifiedTargetsOnly: s.c.cfg.VerifiedTargetsOnly}
 	for r := range in.reports {
 		key := natprobe.TraitsKey{ClientKey: s.keys[r]}
 		var (
@@ -176,12 +177,12 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 			diag natprobe.MergeDiag
 		)
 		if perr := life.Safe("coord.merge", func() {
-			out.views[r], diag, err = s.handle.Merge(roleOf(r), in.reports[r], mem, key)
+			out.views[r], diag, err = s.handle.MergeWith(roleOf(r), in.reports[r], mem, key, opts)
 			if err == nil && mem != nil {
 				// The memory's own conclusions must not renew it:
 				// the traits fed back at the end come from this
 				// session's evidence only.
-				out.raw[r], _, err = s.handle.Merge(roleOf(r), in.reports[r], nil, key)
+				out.raw[r], _, err = s.handle.MergeWith(roleOf(r), in.reports[r], nil, key, opts)
 			}
 		}); perr != nil {
 			out.term = &terminal{code: protocol.ReasonInternal, detail: detailMergePanic}
@@ -363,6 +364,24 @@ func (s *Session) pairFacts(in planIn, out *planOut) protocol.PairFacts {
 				p.LikelySameLAN[f] = true
 			}
 		}
+		// Two sides the server saw at private addresses reach it without
+		// NAT; their PublicIP are their own LAN addresses, so sharing a
+		// LAN prefix is what puts them on one LAN.
+		if a.Traits.LANObserved && b.Traits.LANObserved && sameLAN(a, b) {
+			if p.LikelySameLAN == nil {
+				p.LikelySameLAN = map[protocol.Family]bool{}
+			}
+			p.LikelySameLAN[f] = true
+		}
+		// Elsewhere a LAN-observed side has no verified public address: it
+		// is reached at the global addresses it reported itself, in the
+		// unverified mode, unless the server allows verified targets only.
+		if !s.c.cfg.VerifiedTargetsOnly && !p.LikelySameLAN[f] && (selfReportedOnly(a) || selfReportedOnly(b)) {
+			if p.Unverified == nil {
+				p.Unverified = map[protocol.Family]bool{}
+			}
+			p.Unverified[f] = true
+		}
 	}
 	for r, rep := range in.reports {
 		if rep.Clock.RTTMs > 0 {
@@ -386,6 +405,17 @@ func (s *Session) pairFacts(in planIn, out *planOut) protocol.PairFacts {
 	return p
 }
 
+// lanObserved reports whether the server saw a side only at private
+// addresses in some family (Traits.LANObserved).
+func lanObserved(views [2]protocol.PeerView) bool {
+	for _, v := range views {
+		if slices.ContainsFunc(v.Families, func(fv protocol.FamilyView) bool { return fv.Traits.LANObserved }) {
+			return true
+		}
+	}
+	return false
+}
+
 func familyView(v protocol.PeerView, f protocol.Family) (protocol.FamilyView, bool) {
 	for _, fv := range v.Families {
 		if fv.Family == f {
@@ -393,6 +423,16 @@ func familyView(v protocol.PeerView, f protocol.Family) (protocol.FamilyView, bo
 		}
 	}
 	return protocol.FamilyView{}, false
+}
+
+// selfReportedOnly reports whether a LAN-observed view carries a global
+// address the side reported itself (a STUN answer, a port mapping), which
+// natprobe admits as its reported fallback.
+func selfReportedOnly(v protocol.FamilyView) bool {
+	return v.Traits.LANObserved && slices.ContainsFunc(v.Endpoints, func(e protocol.Endpoint) bool {
+		return !e.Verified && (e.Source == protocol.EndpointSTUN || e.Source == protocol.EndpointPortmap) &&
+			nat.ScopeOf(e.Addr.Addr()) == nat.ScopeGlobal
+	})
 }
 
 // hasOverlay reports whether a view carries an overlay endpoint.
@@ -561,6 +601,9 @@ func (s *Session) takePlanLocked(gen uint64, out planOut, now time.Duration) (ef
 	if len(st.pair.Unverified) > 0 {
 		st.addWarn(protocol.WarnUnverifiedTargets)
 	}
+	if lanObserved(st.views) {
+		st.addWarn(protocol.WarnLANObserved)
+	}
 	if out.term == nil {
 		st.sandwich = s.handle != nil && st.echoed[0] && st.echoed[1]
 		st.pairRND = pairRND(st.views, st.cls)
@@ -609,7 +652,7 @@ func (s *Session) applyRound1Locked(gen uint64, d decision, nowT time.Time) effe
 		return fx
 	}
 	if d.dec.Stop != "" {
-		s.planEndLocked(&fx, s.stopTermLocked(d.dec.Stop), now)
+		s.planEndLocked(&fx, s.stopTermLocked(d.dec.Stop, d.dec.StopDetail), now)
 		return fx
 	}
 	if term := s.prepareRoundLocked(1, d.dec, now); term != nil {

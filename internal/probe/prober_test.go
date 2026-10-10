@@ -549,14 +549,61 @@ func TestSTUNSubProbe(t *testing.T) {
 		t.Fatalf("v6 STUN answer used: %+v", r.Traits)
 	}
 	checkReport(t, r)
-	// STUN servers of the other family, without port or beyond two are skipped
+	// STUN servers of the other family, without port or beyond eight are skipped
 	o.stun = false
 	s = newSim(t, o)
-	s.spec.Probe.STUN = []netip.AddrPort{netip.MustParseAddrPort("[2001:db8::1]:3478"), netip.MustParseAddrPort("192.0.2.9:0"),
-		stunAddr, netip.MustParseAddrPort("192.0.2.51:3478"), netip.MustParseAddrPort("192.0.2.52:3478")}
+	s.spec.Probe.STUN = []netip.AddrPort{netip.MustParseAddrPort("[2001:db8::1]:3478"), netip.MustParseAddrPort("192.0.2.9:0"), stunAddr}
+	for i := range maxSTUNServers {
+		s.spec.Probe.STUN = append(s.spec.Probe.STUN, netip.AddrPortFrom(netip.AddrFrom4([4]byte{192, 0, 2, byte(51 + i)}), 3478))
+	}
 	s.p = New(s.spec, s.socks[0], nil, nil)
-	if rs := newRunState(s.p); len(rs.stun) != 2 || rs.stun[0].addr != stunAddr || rs.stun[0].idx != 2 {
+	rs := newRunState(s.p)
+	if len(rs.stun) != maxSTUNServers || rs.stun[0].addr != stunAddr || rs.stun[0].idx != 2 || rs.stun[maxSTUNServers-1].idx != maxSTUNServers+1 {
 		t.Fatalf("stun targets %+v", rs.stun)
+	}
+}
+
+// Every STUN server of the family is asked at once, and silent ones hold
+// probing back no longer than one silent server does; only a LAN-observed
+// family, for which a STUN answer is the only public address, waits up to
+// stunLANGrace for its first one.
+func TestSTUNWaits(t *testing.T) {
+	silent := func(i int) netip.AddrPort {
+		return netip.AddrPortFrom(netip.AddrFrom4([4]byte{192, 0, 2, byte(60 + i)}), 3478)
+	}
+	many := []netip.AddrPort{stunAddr}
+	for i := range maxSTUNServers - 1 {
+		many = append(many, silent(i))
+	}
+	lan := defaultOpts()
+	lan.nat = natCfg{noNAT: true} // seen at 192.168.1.10 by public observers
+	for _, c := range []struct {
+		name     string
+		o        simOpts
+		servers  []netip.AddrPort
+		delay    time.Duration // the answering server's delay; < 0 silent
+		maxDone  time.Duration
+		minDone  time.Duration
+		rows     int
+		lanTrait bool
+	}{
+		{"eight servers, seven silent", defaultOpts(), many, 0, 40*ms + stunGrace + ms, 0, 1, false},
+		{"slow STUN, public client", defaultOpts(), many[:1], 600 * ms, 40*ms + stunGrace + ms, 0, 0, false},
+		{"slow STUN, LAN-observed client", lan, many, 600 * ms, 600*ms + 5*ms, 600 * ms, 1, true},
+		{"silent STUN, LAN-observed client", lan, many[1:], -1, 40*ms + stunLANGrace + ms, stunLANGrace, 0, true},
+	} {
+		s := newSim(t, c.o)
+		s.stunOn, s.stunDelay = c.delay >= 0, max(c.delay, 0)
+		s.spec.Probe.STUN = c.servers
+		s.p = New(s.spec, s.socks[0], nil, nil)
+		r := s.stepRun()
+		if s.now > c.maxDone || s.now < c.minDone {
+			t.Fatalf("%s: done at %v, want within [%v, %v]", c.name, s.now, c.minDone, c.maxDone)
+		}
+		if len(r.Table.Snapshot().STUN) != c.rows || r.Traits.LANObserved != c.lanTrait || int(r.Sent.STUN) < len(c.servers) {
+			t.Fatalf("%s: stun rows %+v, traits %+v, sent %+v", c.name, r.Table.Snapshot().STUN, r.Traits, r.Sent)
+		}
+		checkReport(t, r)
 	}
 }
 

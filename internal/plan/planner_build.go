@@ -131,7 +131,7 @@ func peerAddrsOf(fp familyPlan, fv protocol.FamilyView) peerAddrs {
 	}
 	pa.public = append(verified, reported...)
 	if fp.Unverified {
-		pa.direct = reportedTargets(fv, reported, fp.MaxTargets)
+		pa.direct = reportedTargets(fv, pa.public, fp.MaxTargets)
 	} else {
 		pa.direct = directTargets(fv)
 		pa.guess = guessTargets(fv, pa.direct)
@@ -230,16 +230,17 @@ func seenTargets(in RoundInput, fp familyPlan, role int, pa peerAddrs) []netip.A
 	return out
 }
 
-// reportedTargets returns the Direct targets toward an unverified peer
-// family: the peer's self-reported endpoints on the admitted
-// global IPs, in the order the peer reported them, at most limit.
+// reportedTargets returns the Direct targets toward a peer family in the
+// unverified mode: the peer's endpoints on the admitted IPs — verified ones,
+// where only the other side is LAN-observed (Traits.LANObserved), and the
+// global addresses it reported — in the order of its view, at most limit.
 func reportedTargets(fv protocol.FamilyView, ips []netip.Addr, limit int) []netip.AddrPort {
 	var out []netip.AddrPort
 	for _, e := range fv.Endpoints {
 		if len(out) == limit {
 			break
 		}
-		if !e.Verified && usableTarget(e.Addr) && slices.Contains(ips, e.Addr.Addr().Unmap()) && !slices.Contains(out, e.Addr) {
+		if e.Source != protocol.EndpointOverlay && usableTarget(e.Addr) && slices.Contains(ips, e.Addr.Addr().Unmap()) && !slices.Contains(out, e.Addr) {
 			out = append(out, e.Addr)
 		}
 	}

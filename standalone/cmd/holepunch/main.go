@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"flag"
-	"fmt"
 	"os"
 
 	"github.com/djylb/holepunch/standalone"
@@ -19,26 +18,10 @@ const usage = `usage:
 run "holepunch host -h" or "holepunch connect -h" for every flag`
 
 func main() {
-	if len(os.Args) < 2 {
-		_, _ = fmt.Fprintln(os.Stderr, usage)
-		os.Exit(2)
-	}
-	var err error
-	switch os.Args[1] {
-	case "host":
-		err = runHost(os.Args[2:])
-	case "connect":
-		err = runConnect(os.Args[2:])
-	default:
-		_, _ = fmt.Fprintln(os.Stderr, usage)
-		os.Exit(2)
-	}
-	if err != nil {
-		if !errors.Is(err, flag.ErrHelp) {
-			_, _ = fmt.Fprintln(os.Stderr, "holepunch:", err)
-		}
-		os.Exit(1)
-	}
+	cli.Dispatch("holepunch", usage, os.Args[1:], map[string]func([]string) error{
+		"host":    runHost,
+		"connect": runConnect,
+	})
 }
 
 func runHost(args []string) error {

@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/djylb/holepunch/coord"
@@ -25,16 +26,18 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		if !errors.Is(err, flag.ErrHelp) {
-			_, _ = fmt.Fprintln(os.Stderr, "holepunchd:", err)
-		}
-		os.Exit(1)
-	}
+	os.Exit(cli.Status(os.Stderr, "holepunchd", run(os.Args[1:])))
 }
 
-// maxSTUN is the number of STUN servers a probe spec lists at most.
-const maxSTUN = 2
+// How often the STUN servers' names are resolved again: stunRefresh, or
+// stunRetry while the last resolution left none.
+const (
+	stunRefresh = 6 * time.Hour
+	stunRetry   = time.Minute
+)
+
+// stunOff is the -stun value that turns STUN off.
+const stunOff = "none"
 
 // options are the command's flags.
 type options struct {
@@ -44,7 +47,7 @@ type options struct {
 	token         string
 	probeIPs      cli.StringList
 	altIPs        cli.StringList
-	stun          []netip.AddrPort
+	stun          []string // host:port; nil: none
 	probePort     int
 	probePorts    int
 	maxSessions   int
@@ -52,6 +55,7 @@ type options struct {
 	handshakeWait time.Duration
 	noExtraReply  bool
 	allowExtreme  bool
+	verifiedOnly  bool
 	debug         bool
 }
 
@@ -65,11 +69,15 @@ func parse(args []string) (options, error) {
 	fs.Var(&o.probeIPs, "probe-ip", "public IP of a natprobe observer group, IP or BIND=ADVERTISE; repeatable, one at least")
 	fs.Var(&o.altIPs, "probe-alt-ip", "second public IP for change-IP replies, IP or BIND=ADVERTISE; one per family")
 	var stun cli.StringList
-	fs.Var(&stun, "stun", "IP:port of a third-party STUN server the clients also ask, a second view of their mapping; repeatable, two at most")
+	fs.Var(&stun, "stun", "HOST:PORT or IP:PORT of a public STUN server the clients also ask, a second view of their mapping; repeatable; "+
+		"the clients ask up to 8 of each address family at once, and a slow or blocked one costs them nothing; "+
+		"none turns STUN off (default: a built-in list of servers on several continents, mainland China included)")
 	fs.IntVar(&o.probePort, "probe-port", 3478, "first UDP port of the natprobe observers")
 	fs.IntVar(&o.probePorts, "probe-ports", 3, "UDP ports per observer group (2..8)")
 	fs.BoolVar(&o.noExtraReply, "no-extra-reply", false, "do not send natprobe's extra replies")
 	fs.BoolVar(&o.allowExtreme, "allow-extreme", false, "allow the extreme per-round budget class")
+	fs.BoolVar(&o.verifiedOnly, "verified-targets-only", false, "never aim at addresses a client only reported itself: "+
+		"a client the server sees at a private address (on the server's LAN) then connects only to peers on that LAN")
 	fs.IntVar(&o.maxSessions, "max-sessions", 0, "concurrent sessions (0: the coordinator's default)")
 	fs.DurationVar(&o.heartbeat, "heartbeat", server.DefaultHeartbeat, "heartbeat interval of the host links")
 	fs.DurationVar(&o.handshakeWait, "handshake-timeout", server.DefaultHandshakeTimeout, "bound of a client's TLS handshake and first request")
@@ -80,15 +88,17 @@ func parse(args []string) (options, error) {
 	if len(o.probeIPs) == 0 {
 		return o, errors.New("at least one -probe-ip is required: natprobe binds each public address explicitly")
 	}
-	if len(stun) > maxSTUN {
-		return o, fmt.Errorf("at most %d -stun servers", maxSTUN)
-	}
-	for _, v := range stun {
-		ap, err := netip.ParseAddrPort(v)
-		if err != nil {
-			return o, fmt.Errorf("-stun %q: %w", v, err)
+	switch {
+	case len(stun) == 0:
+		o.stun = natprobe.DefaultSTUNServers()
+	case len(stun) == 1 && stun[0] == stunOff:
+	default:
+		for _, v := range stun {
+			if _, port, err := net.SplitHostPort(v); err != nil || port == "" || v == stunOff {
+				return o, fmt.Errorf("-stun %q: want HOST:PORT, IP:PORT or a single %s", v, stunOff)
+			}
 		}
-		o.stun = append(o.stun, ap)
+		o.stun = stun
 	}
 	if (o.certFile == "") != (o.keyFile == "") {
 		return o, errors.New("-cert and -key go together")
@@ -102,6 +112,9 @@ func run(args []string) error {
 		return err
 	}
 	log := cli.Logger(o.debug)
+	if strings.TrimSpace(o.token) == "" {
+		log.Warn("no -auth-token: any client that reaches the server can register hosts and open sessions")
+	}
 	tlsCfg, err := serverTLS(o, log)
 	if err != nil {
 		return err
@@ -122,12 +135,27 @@ func run(args []string) error {
 	if err := probe.Start(); err != nil {
 		return fmt.Errorf("natprobe: %w", err)
 	}
-	observers := append(probe.Observers(protocol.FamilyUDP4), probe.Observers(protocol.FamilyUDP6)...)
-	for _, ob := range observers {
+	for _, ob := range probe.ProbeSpec().Observers {
 		log.Info("natprobe observer", "id", ob.ID, "addr", ob.Addr, "alt", ob.Alt)
 	}
+	ctx, stop := cli.SignalContext()
+	defer stop()
+	stun := &stunList{servers: o.stun, log: log}
+	if len(o.stun) > 0 {
+		stun.resolve(ctx)
+		g := life.New(ctx)
+		defer func() { _ = g.Close(0) }()
+		g.Go("holepunchd.stun", stun.refresh)
+	}
+	// Every session gets natprobe's live observers and the STUN servers
+	// as last resolved.
+	probeSpec := func(protocol.Role, *coord.SessionOptions) (protocol.ProbeSpec, error) {
+		spec := probe.ProbeSpec()
+		spec.STUN = stun.get()
+		return spec, nil
+	}
 
-	b, err := broker.New(broker.Config{Coord: coordConfig(o, reg, observers, log)})
+	b, err := broker.New(broker.Config{Coord: coordConfig(o, reg, probeSpec, log)})
 	if err != nil {
 		return err
 	}
@@ -148,14 +176,12 @@ func run(args []string) error {
 		return err
 	}
 	log.Info("listening", "addr", l.Addr())
-	return serve(srv, l, log)
+	return serve(ctx, srv, l, log)
 }
 
-// serve runs the server until a signal; the server is closed before the
-// broker and natprobe (run's deferred closes).
-func serve(srv *server.Server, l net.Listener, log *slog.Logger) error {
-	ctx, stop := cli.SignalContext()
-	defer stop()
+// serve runs the server until ctx ends (a signal); the server is closed
+// before the broker and natprobe (run's deferred closes).
+func serve(ctx context.Context, srv *server.Server, l net.Listener, log *slog.Logger) error {
 	g := life.New(ctx)
 	g.Go("holepunchd.shutdown", func(ctx context.Context) {
 		<-ctx.Done()
@@ -222,17 +248,16 @@ func bindAdvertise(v string) (bind, adv netip.Addr, err error) {
 	return bind, adv, nil
 }
 
-// coordConfig configures the coordinator: the observers every client
-// probes, the operator's limits, and logging of every session's end (and of
-// every event with -debug).
-func coordConfig(o options, reg *natprobe.Registry, observers []protocol.ObserverSpec, log *slog.Logger) coord.Config {
+// coordConfig configures the coordinator: the probe spec every client
+// receives, the operator's limits, and logging of every session's end (and
+// of every event with -debug).
+func coordConfig(o options, reg *natprobe.Registry, probe coord.ProbeFunc, log *slog.Logger) coord.Config {
 	cfg := coord.Config{
-		Registry: reg,
-		DefaultProbe: protocol.ProbeSpec{
-			V: protocol.ProbeSpecVersion, Observers: observers, ExtraReply: !o.noExtraReply, STUN: o.stun,
-		},
-		Budget: coord.BudgetConfig{AllowExtreme: o.allowExtreme},
-		Limits: coord.Limits{MaxSessions: o.maxSessions},
+		Registry:            reg,
+		Probe:               probe,
+		Budget:              coord.BudgetConfig{AllowExtreme: o.allowExtreme},
+		Limits:              coord.Limits{MaxSessions: o.maxSessions},
+		VerifiedTargetsOnly: o.verifiedOnly,
 		OnResult: func(r coord.Result) {
 			log.Info("session", "id", r.SessionID, "host", r.Labels["host_id"], "dialer", r.Labels["dialer_id"],
 				"outcome", r.Outcome, "code", r.Code, "detail", r.Detail, "rounds", len(r.Rounds), "pair", r.PairClass)
@@ -254,4 +279,51 @@ func eventData(d any) string {
 		return "panic: " + p.Value
 	}
 	return fmt.Sprintf("%+v", d)
+}
+
+// stunList holds the STUN servers' addresses as last resolved.
+type stunList struct {
+	servers []string
+	log     *slog.Logger
+	cur     atomic.Pointer[[]netip.AddrPort]
+}
+
+// get returns the current addresses; nil before the first resolution.
+func (s *stunList) get() []netip.AddrPort {
+	if p := s.cur.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// resolve looks the servers up again. A resolution that finds none keeps
+// the addresses found before.
+func (s *stunList) resolve(ctx context.Context) {
+	addrs, err := natprobe.ResolveSTUN(ctx, nil, s.servers)
+	if err != nil {
+		s.log.Warn("stun servers left out", "err", strings.ReplaceAll(err.Error(), "\n", "; "))
+	}
+	if len(addrs) > 0 || s.cur.Load() == nil {
+		s.cur.Store(&addrs)
+	}
+	s.log.Info("stun servers", "addrs", s.get())
+}
+
+// refresh resolves the servers again every stunRefresh (stunRetry while
+// there are none) until ctx ends.
+func (s *stunList) refresh(ctx context.Context) {
+	for {
+		wait := stunRefresh
+		if len(s.get()) == 0 {
+			wait = stunRetry
+		}
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
+		s.resolve(ctx)
+	}
 }

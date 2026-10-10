@@ -24,7 +24,7 @@ type Timer = clock.Timer
 type Rate struct{ PerSec, Burst int }
 
 // ProbeFunc returns the ProbeSpec a role receives in punch_start
-// (normally built from natprobe.Server.Observers). It runs in NewSession,
+// (normally built from natprobe.Server.ProbeSpec). It runs in NewSession,
 // outside every lock and inside a recover boundary; an error or a panic fails
 // NewSession.
 type ProbeFunc func(role protocol.Role, opts *SessionOptions) (protocol.ProbeSpec, error)
@@ -50,13 +50,27 @@ type Config struct {
 	// round; the summary marks it in pair.unverified and the Result warns
 	// unverified_targets. Disabled, the family is left out of the session.
 	DisableUnverifiedFamilies bool
+	// VerifiedTargetsOnly makes the clients aim only at addresses the server
+	// verified (and at LAN and overlay addresses where both sides share one).
+	// By default a client the server saw only at private addresses
+	// (protocol.Traits.LANObserved: it reaches the server over a LAN route or
+	// through a hairpin without source NAT), and that therefore has no
+	// verified public address, is reached at the global addresses it
+	// reported itself — its STUN answers and its port mapping — with
+	// Direct stages only, at most 4 IPs and 8 packets per target and round,
+	// as in an unverified family; the summary marks the family in
+	// pair.unverified and the Result warns unverified_targets. A client
+	// could report a third party's address there; the bounds keep what that
+	// third party receives small.
+	VerifiedTargetsOnly bool
 	// DisableRegistrySweep stops the housekeeping from sweeping the Registry
 	// every 10 s; set it on all but one Coordinator sharing a Registry.
 	DisableRegistrySweep bool
 	// Probe builds each role's ProbeSpec; nil uses DefaultProbe.
 	Probe ProbeFunc
 	// DefaultProbe is the ProbeSpec used when Probe is nil and the session
-	// options give none.
+	// options give none: normally natprobe.Server.ProbeSpec of the server
+	// whose Registry this is. Its zero V is ProbeSpecVersion.
 	DefaultProbe protocol.ProbeSpec
 	// Timeouts are the protocol timeouts of the sessions (zero fields:
 	// protocol.DefaultTimeouts); summary_wait_ms is computed per link.

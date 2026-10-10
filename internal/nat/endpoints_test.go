@@ -208,3 +208,62 @@ func TestEndpointLocalPort(t *testing.T) {
 		t.Errorf("unverified: %+v", eps)
 	}
 }
+
+// A client the public observers saw only at its private address is
+// LAN-observed: its traits say nothing of its NAT, it has no verified IP,
+// and its STUN and port-mapping addresses become endpoints only with the
+// reported fallback on.
+func TestLANObservedReportedFallback(t *testing.T) {
+	local := "192.168.1.50:40000"
+	socks := []SocketMeta{{ID: v4P, Kind: protocol.SocketPrimary, Local: ap(local)}}
+	stun := Row{Key: PointKey{Socket: v4P, Source: SourceSTUN, Observer: 0}, Observed: ap("203.0.113.10:40000")}
+	pm := Row{Key: PointKey{Socket: v4P, Source: SourcePortMap}, Observed: ap("203.0.113.10:40001")}
+	for _, fallback := range []bool{false, true} {
+		tb := serverTable(socks, srow(v4P, 0, local, 1, true), srow(v4P, 1, local, 2, true), srow(v4P, 2, local, 3, true))
+		tb.SetReportedFallback(fallback)
+		for _, r := range []Row{stun, pm} {
+			if got := tb.AdmitReported(r.Key.Source, r.Observed); got != fallback {
+				t.Fatalf("fallback %v: AdmitReported(%v) = %v", fallback, r.Observed, got)
+			}
+			tb.RecordServer(r)
+		}
+		tr := tb.Classify()
+		if !tr.LANObserved || tr.Mapping != protocol.MapUnknown || tr.Filtering != protocol.FiltUnknown ||
+			tr.NoNAT != protocol.TriUnknown || tr.Samples != 3 || tr.PublicIP != ip("192.168.1.50") {
+			t.Fatalf("traits %+v", tr)
+		}
+		if tb.STUNConflicts() != 0 || len(tb.VerifiedIPs()) != 0 {
+			t.Fatalf("conflicts %d, verified %v", tb.STUNConflicts(), tb.VerifiedIPs())
+		}
+		var srcs []protocol.EndpointSource
+		for _, e := range tb.Endpoints() {
+			if e.Verified {
+				t.Fatalf("verified endpoint %+v", e)
+			}
+			srcs = append(srcs, e.Source)
+		}
+		want := []protocol.EndpointSource{protocol.EndpointLAN}
+		if fallback {
+			want = []protocol.EndpointSource{protocol.EndpointSTUN, protocol.EndpointPortmap, protocol.EndpointLAN}
+		}
+		if !slices.Equal(srcs, want) {
+			t.Fatalf("fallback %v: endpoint sources %v, want %v", fallback, srcs, want)
+		}
+	}
+
+	// A client natprobe saw at its public address is not LAN-observed, and
+	// the fallback admits nothing more for it.
+	tb := serverTable(socks, srow(v4P, 0, "198.51.100.9:50000", 1, true), srow(v4P, 1, "198.51.100.9:50000", 2, true))
+	tb.SetReportedFallback(true)
+	if tb.Classify().LANObserved || tb.AdmitReported(SourceSTUN, ap("203.0.113.10:40000")) {
+		t.Fatal("a publicly observed client counted as LAN-observed")
+	}
+	// Private observers (a private-scope deployment) observe a LAN; their
+	// private values are no LAN-observed evidence.
+	priv := NewTable(protocol.FamilyUDP4, socks, []Observer{{ID: 0, Addr: ap("10.0.0.1:3478")}, {ID: 1, Addr: ap("10.0.0.1:3479")}})
+	priv.RecordServer(srow(v4P, 0, local, 1, true))
+	priv.RecordServer(srow(v4P, 1, local, 2, true))
+	if priv.Classify().LANObserved {
+		t.Fatal("a private-scope deployment counted as LAN-observed")
+	}
+}

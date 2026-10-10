@@ -44,7 +44,8 @@ type FamilyDiagnostics struct {
 	Confirmed  netip.AddrPort // the confirmed remote of this family's path: the primary path's, else the first extra path's
 	Counters   Counters
 	// Hints are likely causes of what the traits show, for people; no
-	// decision depends on them: HintHostFirewall, HintPeerHostFirewall.
+	// decision depends on them: HintHostFirewall, HintPeerHostFirewall,
+	// HintServerSeesLAN, HintPeerServerSeesLAN.
 	Hints []string
 }
 
@@ -60,6 +61,18 @@ const (
 	HintHostFirewall = "host_firewall"
 	// HintPeerHostFirewall is HintHostFirewall for the peer.
 	HintPeerHostFirewall = "peer_host_firewall"
+	// HintServerSeesLAN means the server's public observers saw this side
+	// only at a private address (protocol.Traits.LANObserved): it reaches
+	// the server over a LAN route, or through a router hairpin that keeps
+	// the source address, so the server knows none of its public addresses.
+	// It connects to a peer on the same LAN directly, and to others only at
+	// the addresses its STUN servers or port mapping reported, if the server
+	// allows them. Letting the server see the client through its public
+	// address — a hairpin with source NAT, or no LAN route to the server's
+	// public IP — removes the restriction.
+	HintServerSeesLAN = "server_sees_lan"
+	// HintPeerServerSeesLAN is HintServerSeesLAN for the peer.
+	HintPeerServerSeesLAN = "peer_server_sees_lan"
 )
 
 // hostFirewallLikely reports whether traits show port-dependent filtering
@@ -78,6 +91,12 @@ func familyHints(self, peer protocol.Traits) []string {
 	}
 	if hostFirewallLikely(peer) {
 		out = append(out, HintPeerHostFirewall)
+	}
+	if self.LANObserved {
+		out = append(out, HintServerSeesLAN)
+	}
+	if peer.LANObserved {
+		out = append(out, HintPeerServerSeesLAN)
 	}
 	return out
 }

@@ -178,6 +178,9 @@ func TestMapUPnPExternalAddressUnusable(t *testing.T) {
 
 func TestMapPreferenceOrder(t *testing.T) {
 	gw := newFakeGW(t)
+	// PCP answers once NAT-PMP has probed: the methods probe in parallel,
+	// and Map stops the others as soon as the preferred one succeeds.
+	gw.set(func(f *fakeGW) { f.holdPCP = true })
 	igd := newFakeIGD(t, svcIGD2)
 	m := newTestMapper(t, Config{}, testEnv{gw: gw, igd: igd})
 	pc := listenLoopback(t)

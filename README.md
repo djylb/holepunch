@@ -22,7 +22,10 @@ go get github.com/djylb/holepunch
 - **NAT measurement.** A built-in observer server measures each client's
   mapping, filtering and port allocation from several ports, verifies the
   reported addresses with a return-path cookie, and can add third-party STUN
-  observations as a second view.
+  observations as a second view. Clients ask up to 8 STUN servers per address
+  family at once, so a server that is blocked or slow in the client's region
+  (some are unreachable from mainland China, many are far from Africa) costs
+  nothing: probing waits at most 150 ms for STUN.
 - **One plan per NAT pair.** Cone and restricted NATs connect on the first
   round. Sequential symmetric NATs get port prediction with paired send
   orders. Random symmetric NATs get bounded birthday rounds. Pairs that cannot
@@ -39,8 +42,9 @@ go get github.com/djylb/holepunch
   that only admit known UDP protocols let the flow through. Send rate, new
   targets and distinct ports are capped per session.
 - **Many network shapes.** IPv4 and IPv6, dual stack, same LAN, same host,
-  shared upstream NAT, UPnP/NAT-PMP/PCP port mapping, and overlay interfaces
-  such as Tailscale or WireGuard (ranked last, and can be excluded).
+  shared upstream NAT, clients on the server's own LAN, UPnP/NAT-PMP/PCP port
+  mapping, and overlay interfaces such as Tailscale or WireGuard (ranked last,
+  and can be excluded).
 - **Several paths.** Optionally hand over more than one confirmed path, for
   example one per address family.
 - **Bounded resources.** Every session has hard limits on packets, sockets,
@@ -63,28 +67,118 @@ go get github.com/djylb/holepunch
 
 ## Usage
 
-On the client, pass the authenticated control connection to `AttachSession`:
+### Client
+
+Open an authenticated, encrypted control connection to the server (TLS works
+as is), send whatever the application needs first, then hand the connection
+to `AttachSession`:
 
 ```go
-sess, err := holepunch.AttachSession(ctx, conn, holepunch.Options{
-	ControlSecurity: protocol.ControlSecurityDeclared, // conn is authenticated and encrypted
-})
+conn, err := tls.Dial("tcp", "coordinator.example:4343", tlsConfig)
 if err != nil {
-	var herr *holepunch.Error
-	if errors.As(err, &herr) {
-		// herr.Reason says why; herr.Advice says whether a later attempt is worthwhile.
-	}
 	return err
+}
+defer conn.Close() // the connection stays yours; the library never closes it
+
+sess, err := holepunch.AttachSession(ctx, conn, holepunch.Options{})
+if err != nil {
+	return err // a *holepunch.Error; see "Handling failures" below
 }
 defer sess.Close()
 
-pc := sess.PacketConn()        // the punched UDP socket
-peer := sess.Result().Path.RemoteAddr
+pc := sess.PacketConn()               // the punched UDP socket, now yours
+peer := sess.Result().Path.RemoteAddr // the peer's address on it
+_, err = pc.WriteTo([]byte("hello"), net.UDPAddrFromAddrPort(peer))
 ```
 
-On the server, a `natprobe.Server` measures the clients and a
-`coord.Coordinator` runs the sessions. The `standalone` module shows the whole
-server side and client side wired together.
+A control connection that is not a `*tls.Conn` but is protected by an outer
+layer (an encrypted bridge, a QUIC stream) needs
+`Options.ControlSecurity: protocol.ControlSecurityDeclared`. An upper layer
+other than QUIC wraps the socket with `udpwire.DropResidual` (see
+`Session.ResidualFilter`) so that late handshake packets never reach it.
+
+### Server
+
+A `natprobe.Server` measures the clients' NATs and a `coord.Coordinator`
+runs the sessions. Pair two clients' connections in one session:
+
+```go
+reg := natprobe.NewRegistry(natprobe.RegistryConfig{})
+probe, err := natprobe.NewServer(natprobe.ServerConfig{
+	Registry: reg,
+	Groups:   []natprobe.ObserverGroup{{Bind: publicIP}},
+	BasePort: 3478,
+})
+// handle err
+if err := probe.Start(); err != nil {
+	return err
+}
+defer probe.Close()
+
+spec := probe.ProbeSpec()
+spec.STUN, _ = natprobe.ResolveSTUN(ctx, nil, natprobe.DefaultSTUNServers()) // optional, see below
+co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: spec})
+// handle err
+defer co.Close()
+
+sess, err := co.NewSession(coord.SessionOptions{})
+// handle err
+err = sess.Attach(protocol.RoleInitiator, connA, coord.AttachOptions{}) // connA: a TLS conn, handshake done
+err = sess.Attach(protocol.RoleResponder, connB, coord.AttachOptions{})
+```
+
+Once `Attach` returns nil the connection belongs to the session, which closes
+it when the session ends. `Config.OnResult` receives every session's outcome.
+
+STUN servers are optional. `natprobe.DefaultSTUNServers` lists public ones on
+several continents, mainland China included; `ResolveSTUN` turns names into
+the addresses the protocol carries (resolve again every few hours in a
+long-running server, as `holepunchd` does). A long-running server can hand
+every session the current list through `coord.Config.Probe` instead of
+`DefaultProbe`.
+
+### Clients on the server's LAN
+
+A client that reaches the server over a LAN route, or through a router
+hairpin that keeps the source address, is seen at its private address
+(`protocol.Traits.LANObserved`; the result warns `lan_observed` and the
+client's diagnostics carry the hint `server_sees_lan`). Two such clients on one
+LAN connect over it. With a peer elsewhere, the server knows no public address
+of the LAN client, so by default it is reached at the addresses its STUN
+servers and port mapping reported, with direct sends only and a small packet
+cap. `coord.Config.VerifiedTargetsOnly` (`holepunchd -verified-targets-only`)
+refuses such self-reported addresses. Letting the server see these clients at
+their public address (a hairpin with source NAT, or no LAN route to the
+server's public IP) avoids the restriction altogether.
+
+The package examples run the whole flow on a simulated Internet
+(`go test -run Example .`), and the `standalone` module is a complete
+deployment with authentication and matchmaking.
+
+### Handling failures
+
+A failed session returns a `*holepunch.Error`. Its `Advice` and the class of
+its `Reason` say what to do next:
+
+```go
+var herr *holepunch.Error
+if errors.As(err, &herr) {
+	switch {
+	case herr.Advice == protocol.AdviceRelayOnly:
+		// no direct path is expected for this pair: keep the relay
+	case herr.Advice == protocol.AdviceBackgroundViable:
+		// keep relaying and punch again with Options.Mode = protocol.ModeBackground
+	case herr.Reason.Class() == protocol.ClassTransient:
+		// try again, after herr.RetryAfter when it is set
+	default:
+		// fatal (configuration, network) or NAT-hard: retrying now ends the same way
+	}
+}
+```
+
+`herr.Diagnostics` holds the full account of the session (the NAT traits of
+both sides, the rounds run, packet counters) for logs and support; it is nil
+when the session failed before the server started it.
 
 ## Standalone server and clients
 
@@ -95,7 +189,9 @@ The `standalone` module builds three commands:
 - `holepunch-diag`: connectivity diagnostics.
 
 ```bash
-go install github.com/djylb/holepunch/standalone/cmd/...@latest
+git clone https://github.com/djylb/holepunch
+cd holepunch/standalone
+go install ./cmd/...
 
 # server (prints its certificate pin at start)
 holepunchd -listen :4343 -probe-ip 203.0.113.10 -auth-token SECRET
@@ -105,7 +201,10 @@ holepunch host    -server 203.0.113.10:4343 -pin PIN -auth-token SECRET -id home
 holepunch connect -server 203.0.113.10:4343 -pin PIN -auth-token SECRET -id home -listen 127.0.0.1:2222
 ```
 
-Run any command with `-h` for all flags.
+The server needs TCP 4343 and UDP 3478-3480 (`-probe-port`, `-probe-ports`)
+open. By default it hands the clients a built-in list of public STUN servers;
+`-stun HOST:PORT` (repeatable) replaces it and `-stun none` turns STUN off. Run
+any command with `-h` for all flags.
 
 ## Testing
 

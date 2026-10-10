@@ -20,12 +20,11 @@ const (
 	maxCapsFamilies    = 2
 	maxPortMapMethods  = 3
 	maxObservers       = 16
-	maxProbeSTUN       = 2
 	maxReportFamilies  = 2
 	maxReportSockets   = 6
 	maxReportRows      = 16
 	maxReportFilters   = 24
-	maxReportSTUNRows  = 4
+	maxReportSTUNRows  = 8
 	maxLocalAddrs      = 16
 	maxOverlayAddrs    = 2
 	maxTransportMode   = 16
@@ -476,8 +475,8 @@ func (p ProbeSpec) validate(path string) error {
 			}
 		}
 	}
-	if len(p.STUN) > maxProbeSTUN {
-		return violation(path+".stun", "%d > %d", len(p.STUN), maxProbeSTUN)
+	if len(p.STUN) > MaxProbeSTUN {
+		return violation(path+".stun", "%d > %d", len(p.STUN), MaxProbeSTUN)
 	}
 	for i, s := range p.STUN {
 		if err := checkEndpoint(fmt.Sprintf("%s.stun[%d]", path, i), s, ""); err != nil {

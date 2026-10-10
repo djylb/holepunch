@@ -34,11 +34,20 @@ type Traits struct {
 	// depends on the path and an endpoint-independent conclusion is not to be
 	// trusted; planning treats the side as endpoint dependent. It never raises
 	// a confidence.
-	PathDependent bool           `json:"path_dependent,omitempty"`
-	PublicIP      netip.Addr     `json:"public_ip,omitzero"`
-	Observed      netip.AddrPort `json:"observed,omitzero"` // primary socket as seen by observer 0
-	Samples       uint8          `json:"samples,omitempty"` // server observers with a valid sample
-	Provisional   bool           `json:"provisional,omitempty"`
+	PathDependent bool `json:"path_dependent,omitempty"`
+	// LANObserved: the server's public observers saw this side only at
+	// private addresses — it reaches the server over a LAN route or through
+	// a hairpin without source NAT — so PublicIP and Observed are LAN
+	// addresses and the traits say nothing of its NAT toward the Internet:
+	// mapping, filtering and allocation are unknown. Two LAN-observed sides
+	// on one LAN connect over it; a LAN-observed side is otherwise reached
+	// at the public addresses it reported itself (STUN, port mapping), in the
+	// unverified mode, unless the server allows verified targets only.
+	LANObserved bool           `json:"lan_observed,omitempty"`
+	PublicIP    netip.Addr     `json:"public_ip,omitzero"`
+	Observed    netip.AddrPort `json:"observed,omitzero"` // primary socket as seen by observer 0
+	Samples     uint8          `json:"samples,omitempty"` // server observers with a valid sample
+	Provisional bool           `json:"provisional,omitempty"`
 }
 
 // TraitsUpdate is a punch-time correction of this side's traits

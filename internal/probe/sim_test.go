@@ -93,8 +93,9 @@ type sim struct {
 	srvWin      udpwire.SeqWindow
 	cliWin      udpwire.SeqWindow
 	stunOn      bool
-	stunWrongV6 bool // the STUN server answers with an IPv6 address
-	extraFirst  bool // the extra leaves before the ack
+	stunWrongV6 bool          // the STUN server answers with an IPv6 address
+	stunDelay   time.Duration // the STUN server's answer arrives this long after the request; 0: one RTT
+	extraFirst  bool          // the extra leaves before the ack
 
 	cli, srv  *udpwire.Codec
 	spec      Spec
@@ -271,6 +272,8 @@ func (s *sim) write(from *simSock, b []byte, to netip.AddrPort) error {
 		return nil
 	}
 	switch {
+	case to == stunAddr && s.stunOn && s.stunDelay > 0:
+		s.schedule(s.stunDelay-s.owd, func() { s.stunReply(b, ext) })
 	case to == stunAddr && s.stunOn:
 		s.schedule(s.owd, func() { s.stunReply(b, ext) })
 	case to.Addr() == srvIP || to.Addr() == altIP:
