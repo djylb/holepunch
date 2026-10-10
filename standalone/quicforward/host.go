@@ -193,7 +193,9 @@ func serveStream(ctx context.Context, g *life.Group, conn *Conn, st *quic.Stream
 		_ = tc.Close()
 		return
 	}
-	relay(g, newStreamConn(st, conn.qc), tc)
+	sc := newStreamConn(st, conn.qc)
+	defer func() { _ = sc.Close() }() // relay closes both; Close is idempotent
+	relay(g, sc, tc)
 }
 
 // refuse answers a stream with a refusal and ends it: the answer is sent

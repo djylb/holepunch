@@ -11,8 +11,8 @@ import (
 	"github.com/djylb/holepunch/controlwire"
 )
 
-// jsonFields lists the JSON names of t's fields in declaration order; a name
-// ending in "?" is omitempty/omitzero.
+// jsonFields lists the JSON names of t's fields; a name ending in "?" is
+// omitempty/omitzero.
 func jsonFields(t reflect.Type) []string {
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
 		t = t.Elem()
@@ -33,21 +33,30 @@ func jsonFields(t reflect.Type) []string {
 	return out
 }
 
-// checkFields compares t's JSON fields with the wire field list.
+// checkFields compares t's JSON fields with the wire field list, in any
+// order: declarations follow memory layout, and a JSON object is unordered.
 // A "?" in want (an optional field) must be omitempty in the code; a field
 // without "?" may still be omitempty where the protocol defines it so.
 func checkFields(t *testing.T, what string, typ reflect.Type, want ...string) {
 	t.Helper()
 	got := jsonFields(typ)
-	if len(got) != len(want) {
+	optional := make(map[string]bool, len(got))
+	for _, g := range got {
+		name, opt := strings.CutSuffix(g, "?")
+		optional[name] = opt
+	}
+	if len(optional) != len(got) || len(got) != len(want) {
 		t.Errorf("%s: fields %v, want %v", what, got, want)
 		return
 	}
-	for i := range want {
-		g := strings.TrimSuffix(got[i], "?")
-		w := strings.TrimSuffix(want[i], "?")
-		if g != w || (strings.HasSuffix(want[i], "?") && !strings.HasSuffix(got[i], "?")) {
-			t.Errorf("%s: field %d is %q, want %q (all: %v)", what, i, got[i], want[i], got)
+	for _, w := range want {
+		name, opt := strings.CutSuffix(w, "?")
+		gotOpt, ok := optional[name]
+		switch {
+		case !ok:
+			t.Errorf("%s: no field %q (all: %v)", what, name, got)
+		case opt && !gotOpt:
+			t.Errorf("%s: field %q is not omitempty (all: %v)", what, name, got)
 		}
 	}
 }

@@ -37,13 +37,13 @@ const ProbeSpecVersion = 3
 
 // ProbeSpec is punch_start.probe.
 type ProbeSpec struct {
-	V            uint8            `json:"v"`                     // ProbeSpecVersion
 	Observers    []ObserverSpec   `json:"observers"`             // <= 16
+	STUN         []netip.AddrPort `json:"stun,omitempty"`        // <= 2
+	RTTHintMs    uint16           `json:"rtt_hint_ms,omitempty"` // known control-link RTT; omitted when unknown
+	V            uint8            `json:"v"`                     // ProbeSpecVersion
 	ExtraReply   bool             `json:"extra"`                 // hint only; the ack declares what is really sent
 	SecondSocket bool             `json:"second_socket"`         // probe a second socket when APDM is suspected
 	Siblings     uint8            `json:"siblings"`              // sibling interfaces to probe, clamped to 2
-	STUN         []netip.AddrPort `json:"stun,omitempty"`        // <= 2
-	RTTHintMs    uint16           `json:"rtt_hint_ms,omitempty"` // known control-link RTT; omitted when unknown
 }
 
 // ObserverSpec is one natprobe observer.
@@ -372,19 +372,19 @@ type FamilyReady struct {
 
 // FamilyOutcome is one family of round_result.
 type FamilyOutcome struct {
+	Remap         *Remap           `json:"remap,omitempty"` // the primary socket's new mapping, re-observed this round
 	Family        Family           `json:"family"`
-	Hit           bool             `json:"hit"`                 // a peer success was received
 	SeenFrom      []netip.AddrPort `json:"seen_from,omitempty"` // peer sources seen this round, <= 4
-	PeerSeenUs    bool             `json:"peer_seen_us"`        // a peer_seen about us arrived this round
 	Sent          uint32           `json:"sent"`
 	Recv          uint32           `json:"recv"`
 	DistinctPorts uint16           `json:"distinct_ports"`
 	ICMPUnreach   uint16           `json:"icmp_unreach,omitempty"`
 	BindFailed    uint16           `json:"bind_failed,omitempty"`
+	Rejected      uint16           `json:"rejected,omitempty"` // targets admission refused this round
+	Hit           bool             `json:"hit"`                // a peer success was received
+	PeerSeenUs    bool             `json:"peer_seen_us"`       // a peer_seen about us arrived this round
 	BudgetHit     bool             `json:"budget_hit,omitempty"`
 	Drift         bool             `json:"drift,omitempty"`
-	Rejected      uint16           `json:"rejected,omitempty"` // targets admission refused this round
-	Remap         *Remap           `json:"remap,omitempty"`    // the primary socket's new mapping, re-observed this round
 	// Halted: the side stopped initiating in this family for the rest of
 	// the round on a spike of write or bind failures, as the slow birthday
 	// of a Background session does.
@@ -471,12 +471,12 @@ type PathInfo struct {
 
 // Stats are punch_result.stats.
 type Stats struct {
+	Drops     map[string]uint32 `json:"drops"` // keys: DropKeys; unknown keys are kept (forward compatible)
 	Sent      uint32            `json:"sent"`
 	Recv      uint32            `json:"recv"`
 	Replies   uint32            `json:"replies"`
 	Rounds    uint8             `json:"rounds"`
 	Hits      uint8             `json:"hits"`
-	Drops     map[string]uint32 `json:"drops"` // keys: DropKeys; unknown keys are kept (forward compatible)
 	BudgetHit bool              `json:"budget_hit,omitempty"`
 }
 

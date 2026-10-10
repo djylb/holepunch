@@ -47,12 +47,12 @@ type options struct {
 	stun          []netip.AddrPort
 	probePort     int
 	probePorts    int
-	noExtraReply  bool
-	allowExtreme  bool
 	maxSessions   int
-	debug         bool
 	heartbeat     time.Duration
 	handshakeWait time.Duration
+	noExtraReply  bool
+	allowExtreme  bool
+	debug         bool
 }
 
 func parse(args []string) (options, error) {

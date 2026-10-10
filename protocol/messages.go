@@ -139,13 +139,13 @@ type PunchReady struct {
 
 // PunchGo starts a round: fire at (the instant the frame was read) + DelayMs.
 type PunchGo struct {
+	Plan      *RoundPlan `json:"plan,omitempty"` // round 1: absent (the plan is summary.plan.round1); round >= 2: required
 	SessionID string     `json:"session_id"`
-	Round     uint8      `json:"round"`     // 1..8, strictly increasing; a larger round preempts
-	DelayMs   uint16     `json:"delay_ms"`  // clamped to [0, 2000]
-	WindowMs  uint16     `json:"window_ms"` // = plan.window_ms; clamped to 10000, 45000 for a background round
-	Final     bool       `json:"final,omitempty"`
+	DelayMs   uint16     `json:"delay_ms"`         // clamped to [0, 2000]
+	WindowMs  uint16     `json:"window_ms"`        // = plan.window_ms; clamped to 10000, 45000 for a background round
 	RTTMs     uint16     `json:"rtt_ms,omitempty"` // server's estimate of this link's RTT
-	Plan      *RoundPlan `json:"plan,omitempty"`   // round 1: absent (the plan is summary.plan.round1); round >= 2: required
+	Round     uint8      `json:"round"`            // 1..8, strictly increasing; a larger round preempts
+	Final     bool       `json:"final,omitempty"`
 }
 
 // ---- 6 punch_progress (C→S, telemetry only) ----
@@ -153,16 +153,16 @@ type PunchGo struct {
 // Progress is telemetry: droppable, rate limited, never an input of any
 // server decision.
 type Progress struct {
-	SessionID string            `json:"session_id"`
-	Role      Role              `json:"role"`
-	Seq       uint16            `json:"seq"`   // sender's monotonic sequence
-	Stage     string            `json:"stage"` // open enumeration, [a-z][a-z0-9_]{0,63}
-	Status    ProgressStatus    `json:"status,omitempty"`
-	Round     uint8             `json:"round,omitempty"`    // <= 8
-	AtMs      uint32            `json:"at_ms"`              // since punch_start, monotonic
-	Detail    string            `json:"detail,omitempty"`   // <= 128 B
 	Counters  map[string]uint32 `json:"counters,omitempty"` // <= 16 keys
 	Meta      map[string]string `json:"meta,omitempty"`     // <= 16 keys, values <= 64 B; caller pass-through
+	SessionID string            `json:"session_id"`
+	Role      Role              `json:"role"`
+	Stage     string            `json:"stage"` // open enumeration, [a-z][a-z0-9_]{0,63}
+	Status    ProgressStatus    `json:"status,omitempty"`
+	Detail    string            `json:"detail,omitempty"` // <= 128 B
+	AtMs      uint32            `json:"at_ms"`            // since punch_start, monotonic
+	Seq       uint16            `json:"seq"`              // sender's monotonic sequence
+	Round     uint8             `json:"round,omitempty"`  // <= 8
 }
 
 // ProgressStatus is Progress.Status.
@@ -196,15 +196,15 @@ type Abort struct {
 // server's signal to stop new rounds and wind down). A preempted round sends
 // none.
 type RoundResult struct {
+	Path       *PathInfo       `json:"path,omitempty"` // required when confirmed
 	SessionID  string          `json:"session_id"`
 	Role       Role            `json:"role"`
-	Round      uint8           `json:"round"`        // 1..8
-	ElapsedMs  uint32          `json:"elapsed_ms"`   // the round's punch_go read → this frame written (sample Sk)
-	FireSkewMs int16           `json:"fire_skew_ms"` // actual fire − (t_recv + delay_ms)
 	Status     RoundStatus     `json:"status"`
 	Code       Reason          `json:"code,omitempty"` // status fatal: udp_blocked | local_port_bind_failed | ...
 	Families   []FamilyOutcome `json:"families"`       // <= 2
-	Path       *PathInfo       `json:"path,omitempty"` // required when confirmed
+	ElapsedMs  uint32          `json:"elapsed_ms"`     // the round's punch_go read → this frame written (sample Sk)
+	FireSkewMs int16           `json:"fire_skew_ms"`   // actual fire − (t_recv + delay_ms)
+	Round      uint8           `json:"round"`          // 1..8
 }
 
 // RoundStatus is RoundResult.Status.

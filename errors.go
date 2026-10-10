@@ -86,7 +86,7 @@ func fail(r protocol.Reason, detail string, err error) *failure {
 // classify turns a cause into its reason and detail. A recovered panic is
 // tested first because a panic value may wrap anything; then the caller's own
 // cancellation — Canceled and DeadlineExceeded alike — then the runtime's
-// structured causes and the wire errors.
+// structured causes and the wire errors. It never returns nil.
 func classify(callerCtx context.Context, cause error) *failure {
 	var pe *life.PanicError
 	if errors.As(cause, &pe) {

@@ -139,9 +139,9 @@ type ControlSecurity uint8
 
 // ControlSecurity values.
 const (
-	// ControlSecurityUnknown, the default, accepts the stream only if the
-	// conn has ConnectionState() with HandshakeComplete (TLS); otherwise it
-	// is rejected with invalid_argument (detail insecure_control).
+	// ControlSecurityUnknown is the default: the stream is accepted only if
+	// the conn has ConnectionState() with HandshakeComplete (TLS); otherwise
+	// it is rejected with invalid_argument (detail insecure_control).
 	ControlSecurityUnknown ControlSecurity = iota
 	// ControlSecurityDeclared means the caller declares the outer layer
 	// encrypted and authenticated (such as an encrypted bridge).

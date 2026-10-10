@@ -247,13 +247,14 @@ func (rt *runtime) finish(win *candidate.Action, cause error) (*Session, error) 
 		ho.restore(rt, &f)
 	}
 	now := rt.clk.Now()
-	if f == nil {
+	switch {
+	case f != nil:
+		rt.phases.advance(protocol.PhaseFailed, string(f.reason), now)
+	case win != nil: // no failure means a winner: classify never returns nil
 		rt.extraPaths = rt.extraPathInfos(win, ho.paths())
 		rt.timing.handover = now.Sub(rt.punch.confirmTime())
 		rt.phases.advance(protocol.PhaseDone, stageHandoverDone, now)
 		rt.progress(progressEvent{stage: stageHandoverDone, status: protocol.StatusOK, detail: string(win.ConfirmedBy), family: win.Family, remote: win.Remote})
-	} else {
-		rt.phases.advance(protocol.PhaseFailed, string(f.reason), now)
 	}
 	rt.timing.total = now.Sub(rt.attachAt)
 	// 5

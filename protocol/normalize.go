@@ -192,9 +192,8 @@ func (s FamilySide) normalize(l ClassLimits) (FamilySide, bool) {
 		s.Stages[i], sc = s.Stages[i].normalize()
 		c = sc || c
 	}
-	var fc bool
-	s, fc = s.clampFresh(min(maxSideSockets, int(l.MaxSockets)))
-	return s, fc || c
+	out, fc := s.clampFresh(min(maxSideSockets, int(l.MaxSockets)))
+	return out, fc || c
 }
 
 // clampFresh keeps the side's sockets with its fresh sockets within limit:

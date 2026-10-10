@@ -161,9 +161,9 @@ func (m Assist) StripServerFields() (Assist, bool) {
 // removed. The server never forwards the client's
 // frame itself.
 func (m Assist) Relayed(from Role) Assist {
-	m, _ = m.StripServerFields()
-	m.From, m.Role, m.Local = from, "", netip.AddrPort{}
-	return m
+	out, _ := m.StripServerFields()
+	out.From, out.Role, out.Local = from, "", netip.AddrPort{}
+	return out
 }
 
 // validateOutbound is what Marshal checks: an assist written by a server

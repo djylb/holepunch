@@ -125,8 +125,8 @@ func TestUnknownFieldsIgnored(t *testing.T) {
 func TestValidation(t *testing.T) {
 	long := strings.Repeat("a", MaxNameLen+1)
 	meta := map[string]string{}
-	for i := range MaxMetadata + 1 {
-		meta[string(rune('a'+i))] = "v"
+	for c := 'a'; c < 'a'+MaxMetadata+1; c++ {
+		meta[string(c)] = "v"
 	}
 	bad := []Message{
 		&Register{HostID: ""},
@@ -163,8 +163,8 @@ func TestValidation(t *testing.T) {
 		t.Fatal("typed nil encoded")
 	}
 	huge := &Register{HostID: "h", Metadata: map[string]string{}}
-	for i := range MaxMetadata {
-		huge.Metadata[strings.Repeat(string(rune('a'+i)), MaxNameLen)] = strings.Repeat("v", MaxMetaValueLen)
+	for c := 'a'; c < 'a'+MaxMetadata; c++ {
+		huge.Metadata[strings.Repeat(string(c), MaxNameLen)] = strings.Repeat("v", MaxMetaValueLen)
 	}
 	if _, err := Encode(huge); err != nil {
 		t.Fatalf("largest valid register: %v", err)
