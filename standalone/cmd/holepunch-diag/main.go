@@ -34,26 +34,10 @@ const usage = `usage:
   holepunch-diag probe -server ADDR -pin PIN -id ID [-count 5] [-interval 500ms]`
 
 func main() {
-	if len(os.Args) < 2 {
-		_, _ = fmt.Fprintln(os.Stderr, usage)
-		os.Exit(2)
-	}
-	var err error
-	switch os.Args[1] {
-	case "echo":
-		err = runEcho(os.Args[2:])
-	case "probe":
-		err = runProbe(os.Args[2:])
-	default:
-		_, _ = fmt.Fprintln(os.Stderr, usage)
-		os.Exit(2)
-	}
-	if err != nil {
-		if !errors.Is(err, flag.ErrHelp) {
-			_, _ = fmt.Fprintln(os.Stderr, "holepunch-diag:", err)
-		}
-		os.Exit(1)
-	}
+	cli.Dispatch("holepunch-diag", usage, os.Args[1:], map[string]func([]string) error{
+		"echo":  runEcho,
+		"probe": runProbe,
+	})
 }
 
 // newClient parses args and returns the Client they configure. cleanup
