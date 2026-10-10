@@ -115,7 +115,14 @@ func TestRunCanceled(t *testing.T) {
 		ctx, cancel := context.WithCancelCause(context.Background())
 		done := make(chan Result, 1)
 		go func() { done <- s.p.Run(ctx) }()
-		s.settle()
+		// Cancel once the first batch is out: Run counts each packet as it
+		// sends it and checks ctx only between batches, so all three count.
+		// A fixed sleep let a slow runner cancel before the batch was sent.
+		for wait := time.Now(); len(s.sentTo(srvIP)) < 3; time.Sleep(50 * time.Microsecond) {
+			if time.Since(wait) > 2*time.Second {
+				t.Fatal("Run sent no first batch")
+			}
+		}
 		start := time.Now()
 		cancel(cause)
 		var r Result
