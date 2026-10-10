@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net"
@@ -280,6 +281,83 @@ func TestServerProbeSpec(t *testing.T) {
 	var nilS *Server
 	if spec := nilS.ProbeSpec(); spec.Observers != nil || spec.V != protocol.ProbeSpecVersion {
 		t.Fatalf("nil server: %+v", spec)
+	}
+}
+
+// specObservers keeps a dual-stack server's observers within the protocol's
+// 16: at least 8 of each family that has them, each family's first main
+// group and alt observer first.
+func TestSpecObservers(t *testing.T) {
+	// groups returns the observers of main groups first..first+n-1 with
+	// ports observers each, then an alt group's, as Server.Observers lists
+	// them (by id).
+	groups := func(v6 bool, first, n, ports int, alt bool) []protocol.ObserverSpec {
+		var out []protocol.ObserverSpec
+		add := func(g, p int, isAlt bool) {
+			ip := netip.AddrFrom4([4]byte{198, 51, 100, byte(g)})
+			if v6 {
+				ip = netip.MustParseAddr(fmt.Sprintf("2001:db8::%d", g))
+			}
+			out = append(out, protocol.ObserverSpec{ID: uint8(g*8 + p), Addr: netip.AddrPortFrom(ip, uint16(3478+p)), Group: uint8(g), Alt: isAlt})
+		}
+		for g := first; g < first+n; g++ {
+			for p := range ports {
+				add(g, p, false)
+			}
+		}
+		if alt {
+			add(first+n, 0, true)
+		}
+		return out
+	}
+	count := func(obs []protocol.ObserverSpec, keep func(protocol.ObserverSpec) bool) int {
+		n := 0
+		for _, o := range obs {
+			if keep(o) {
+				n++
+			}
+		}
+		return n
+	}
+	for _, c := range []struct {
+		name   string
+		v4, v6 []protocol.ObserverSpec
+		n4, n6 int
+	}{
+		{"within the limit", groups(false, 0, 3, 3, false), groups(true, 3, 1, 3, false), 9, 3},
+		{"one family of 16", groups(false, 0, 5, 3, true), nil, 16, 0},
+		{"both over 8", groups(false, 0, 3, 3, true), groups(true, 4, 3, 3, true), 8, 8},
+		{"one family short", groups(false, 0, 4, 3, true), groups(true, 5, 1, 3, false), 13, 3},
+		{"short of 8", groups(false, 0, 2, 3, false), groups(true, 2, 4, 3, true), 6, 10},
+	} {
+		got := specObservers(c.v4, c.v6)
+		is4 := func(o protocol.ObserverSpec) bool { return o.Addr.Addr().Is4() }
+		if n4, n6 := count(got, is4), len(got)-count(got, is4); n4 != c.n4 || n6 != c.n6 || len(got) > maxSpecObservers {
+			t.Fatalf("%s: %d v4 + %d v6, want %d + %d", c.name, n4, n6, c.n4, c.n6)
+		}
+		for _, fam := range [][]protocol.ObserverSpec{c.v4, c.v6} {
+			var kept []protocol.ObserverSpec
+			for _, o := range got {
+				if len(fam) > 0 && o.Addr.Addr().Is4() == fam[0].Addr.Addr().Is4() {
+					kept = append(kept, o)
+				}
+			}
+			if !slices.IsSortedFunc(kept, func(a, b protocol.ObserverSpec) int { return int(a.ID) - int(b.ID) }) {
+				t.Fatalf("%s: not in id order: %+v", c.name, kept)
+			}
+			if len(kept) == len(fam) || len(kept) == 0 {
+				continue
+			}
+			// Trimmed: the first main group and the alt observer stay.
+			first := fam[0].Group
+			if count(kept, func(o protocol.ObserverSpec) bool { return !o.Alt && o.Group == first }) !=
+				count(fam, func(o protocol.ObserverSpec) bool { return !o.Alt && o.Group == first }) {
+				t.Fatalf("%s: first group trimmed: %+v", c.name, kept)
+			}
+			if count(fam, func(o protocol.ObserverSpec) bool { return o.Alt }) != count(kept, func(o protocol.ObserverSpec) bool { return o.Alt }) {
+				t.Fatalf("%s: alt observer dropped: %+v", c.name, kept)
+			}
+		}
 	}
 }
 

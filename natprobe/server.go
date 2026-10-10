@@ -218,6 +218,12 @@ func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec {
 //	spec.STUN = stunServers
 //	co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: spec})
 //
+// A ProbeSpec holds at most 16 observers in all, while a server may have 16
+// of each family: a server with more keeps at least 8 of each family that
+// has them and gives the rest to the other family, and within a family keeps
+// its first main group's observers, then its alt observer, then its other
+// groups'.
+//
 // Call it after Start; before Start, and after Close, the spec has no
 // observers.
 func (s *Server) ProbeSpec() protocol.ProbeSpec {
@@ -226,8 +232,46 @@ func (s *Server) ProbeSpec() protocol.ProbeSpec {
 		return spec
 	}
 	spec.ExtraReply = !s.cfg.NoExtraReply
-	spec.Observers = append(s.Observers(protocol.FamilyUDP4), s.Observers(protocol.FamilyUDP6)...)
+	spec.Observers = specObservers(s.Observers(protocol.FamilyUDP4), s.Observers(protocol.FamilyUDP6))
 	return spec
+}
+
+// specObservers joins the two families' observers within maxSpecObservers
+// (ProbeSpec).
+func specObservers(v4, v6 []protocol.ObserverSpec) []protocol.ObserverSpec {
+	n4 := min(len(v4), max(maxSpecObservers/2, maxSpecObservers-len(v6)))
+	n6 := min(len(v6), maxSpecObservers-n4)
+	return append(pickObservers(v4, n4), pickObservers(v6, n6)...)
+}
+
+// pickObservers keeps n of one family's observers, ordered by id: the first
+// main group's, then the alt observer, then the other groups' in id order.
+func pickObservers(obs []protocol.ObserverSpec, n int) []protocol.ObserverSpec {
+	if len(obs) <= n {
+		return slices.Clone(obs)
+	}
+	first := -1
+	for _, o := range obs {
+		if !o.Alt && (first < 0 || int(o.Group) < first) {
+			first = int(o.Group)
+		}
+	}
+	rank := func(o protocol.ObserverSpec) int {
+		switch {
+		case !o.Alt && int(o.Group) == first:
+			return 0
+		case o.Alt:
+			return 1
+		}
+		return 2
+	}
+	kept := slices.Clone(obs)
+	slices.SortStableFunc(kept, func(a, b protocol.ObserverSpec) int {
+		return cmp.Or(cmp.Compare(rank(a), rank(b)), cmp.Compare(a.ID, b.ID))
+	})
+	kept = kept[:n]
+	slices.SortFunc(kept, func(a, b protocol.ObserverSpec) int { return cmp.Compare(a.ID, b.ID) })
+	return kept
 }
 
 // Stats returns a snapshot of the counters.
