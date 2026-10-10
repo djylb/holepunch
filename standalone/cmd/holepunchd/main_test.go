@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"log/slog"
+	"net/netip"
+	"slices"
 	"testing"
 
 	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch/coord"
+	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -29,8 +33,8 @@ func TestParse(t *testing.T) {
 		{},
 		{"-probe-ip", "1.2.3.4", "-cert", "c.pem"},
 		{"-nonsense"},
-		{"-probe-ip", "1.2.3.4", "-stun", "stun.example:3478"},
-		{"-probe-ip", "1.2.3.4", "-stun", "192.0.2.1:3478", "-stun", "192.0.2.2:3478", "-stun", "192.0.2.3:3478"},
+		{"-probe-ip", "1.2.3.4", "-stun", "stun.example"},
+		{"-probe-ip", "1.2.3.4", "-stun", "none", "-stun", "192.0.2.1:3478"},
 	} {
 		if _, err := parse(args); err == nil {
 			t.Errorf("%v accepted", args)
@@ -43,20 +47,46 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestSTUNFlag(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want []string
+	}{
+		{nil, natprobe.DefaultSTUNServers()},
+		{[]string{"-stun", "none"}, nil},
+		{[]string{"-stun", "stun.example:3478", "-stun", "192.0.2.1:3478"}, []string{"stun.example:3478", "192.0.2.1:3478"}},
+	} {
+		o, err := parse(append([]string{"-probe-ip", "1.2.3.4"}, c.args...))
+		if err != nil || !slices.Equal(o.stun, c.want) {
+			t.Fatalf("%v: stun %v, %v; want %v", c.args, o.stun, err, c.want)
+		}
+	}
+
+	// A resolution that finds nothing keeps what an earlier one found.
+	l := &stunList{servers: []string{"192.0.2.1:3478", "[2001:db8::1]:3478"}, log: discard()}
+	if l.get() != nil {
+		t.Fatal("addresses before the first resolution")
+	}
+	l.resolve(context.Background())
+	want := []netip.AddrPort{netip.MustParseAddrPort("192.0.2.1:3478"), netip.MustParseAddrPort("[2001:db8::1]:3478")}
+	if !slices.Equal(l.get(), want) {
+		t.Fatalf("resolved %v", l.get())
+	}
+	l.servers = []string{"192.168.1.1:3478"}
+	l.resolve(context.Background())
+	if !slices.Equal(l.get(), want) {
+		t.Fatalf("after an empty resolution %v", l.get())
+	}
+}
+
 func TestCoordConfig(t *testing.T) {
-	o := options{noExtraReply: true, allowExtreme: true, maxSessions: 7, debug: true}
-	p, err := parse([]string{"-probe-ip", "1.2.3.4", "-stun", "192.0.2.1:3478"})
-	if err != nil {
-		t.Fatal(err)
+	o := options{noExtraReply: true, allowExtreme: true, verifiedOnly: true, maxSessions: 7, debug: true}
+	probe := func(protocol.Role, *coord.SessionOptions) (protocol.ProbeSpec, error) {
+		return protocol.ProbeSpec{V: protocol.ProbeSpecVersion}, nil
 	}
-	if len(p.stun) != 1 {
-		t.Fatalf("-stun: %+v", p.stun)
-	}
-	o.stun = p.stun
-	spec := protocol.ProbeSpec{V: protocol.ProbeSpecVersion, Observers: []protocol.ObserverSpec{{ID: 1}}, STUN: o.stun}
-	cfg := coordConfig(o, nil, spec, nil)
-	if len(cfg.DefaultProbe.Observers) != 1 || cfg.DefaultProbe.V != protocol.ProbeSpecVersion || len(cfg.DefaultProbe.STUN) != 1 ||
-		!cfg.Budget.AllowExtreme || cfg.Limits.MaxSessions != 7 || cfg.Observer == nil || cfg.OnResult == nil {
+	cfg := coordConfig(o, nil, probe, nil)
+	if cfg.Probe == nil || !cfg.VerifiedTargetsOnly || !cfg.Budget.AllowExtreme || cfg.Limits.MaxSessions != 7 ||
+		cfg.Observer == nil || cfg.OnResult == nil {
 		t.Fatalf("%+v", cfg)
 	}
 }

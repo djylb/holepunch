@@ -22,7 +22,10 @@ go get github.com/djylb/holepunch
 - **NAT measurement.** A built-in observer server measures each client's
   mapping, filtering and port allocation from several ports, verifies the
   reported addresses with a return-path cookie, and can add third-party STUN
-  observations as a second view.
+  observations as a second view. Clients ask up to 8 STUN servers per address
+  family at once, so a server that is blocked or slow in the client's region
+  (some are unreachable from mainland China, many are far from Africa) costs
+  nothing: probing waits at most 150 ms for STUN.
 - **One plan per NAT pair.** Cone and restricted NATs connect on the first
   round. Sequential symmetric NATs get port prediction with paired send
   orders. Random symmetric NATs get bounded birthday rounds. Pairs that cannot
@@ -112,7 +115,9 @@ if err := probe.Start(); err != nil {
 }
 defer probe.Close()
 
-co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: probe.ProbeSpec()})
+spec := probe.ProbeSpec()
+spec.STUN, _ = natprobe.ResolveSTUN(ctx, nil, natprobe.DefaultSTUNServers()) // optional, see below
+co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: spec})
 // handle err
 defer co.Close()
 
@@ -124,6 +129,13 @@ err = sess.Attach(protocol.RoleResponder, connB, coord.AttachOptions{})
 
 Once `Attach` returns nil the connection belongs to the session, which closes
 it when the session ends. `Config.OnResult` receives every session's outcome.
+
+STUN servers are optional. `natprobe.DefaultSTUNServers` lists public ones on
+several continents, mainland China included; `ResolveSTUN` turns names into
+the addresses the protocol carries (resolve again every few hours in a
+long-running server, as `holepunchd` does). A long-running server can hand
+every session the current list through `coord.Config.Probe` instead of
+`DefaultProbe`.
 
 ### Clients on the server's LAN
 
@@ -190,7 +202,9 @@ holepunch connect -server 203.0.113.10:4343 -pin PIN -auth-token SECRET -id home
 ```
 
 The server needs TCP 4343 and UDP 3478-3480 (`-probe-port`, `-probe-ports`)
-open. Run any command with `-h` for all flags.
+open. By default it hands the clients a built-in list of public STUN servers;
+`-stun HOST:PORT` (repeatable) replaces it and `-stun none` turns STUN off. Run
+any command with `-h` for all flags.
 
 ## Testing
 

@@ -35,10 +35,14 @@ type FamilyCaps struct {
 // other value is control_version_mismatch with detail probe_v.
 const ProbeSpecVersion = 3
 
+// MaxProbeSTUN is the most STUN servers a ProbeSpec lists. A client asks at
+// most 8 of each family, all at once.
+const MaxProbeSTUN = 16
+
 // ProbeSpec is punch_start.probe.
 type ProbeSpec struct {
 	Observers    []ObserverSpec   `json:"observers"`             // <= 16
-	STUN         []netip.AddrPort `json:"stun,omitempty"`        // <= 2
+	STUN         []netip.AddrPort `json:"stun,omitempty"`        // <= MaxProbeSTUN; literal addresses
 	RTTHintMs    uint16           `json:"rtt_hint_ms,omitempty"` // known control-link RTT; omitted when unknown
 	V            uint8            `json:"v"`                     // ProbeSpecVersion
 	ExtraReply   bool             `json:"extra"`                 // hint only; the ack declares what is really sent
@@ -70,7 +74,7 @@ type FamilyReport struct {
 	Failure    Reason         `json:"failure,omitempty"`     // probe_timeout | udp_blocked | no_probe_endpoint | internal
 	Sockets    []SocketReport `json:"sockets"`               // [0] is the primary socket; <= 6
 	Filters    []FilterReport `json:"filters,omitempty"`     // <= 24
-	STUN       []RowReport    `json:"stun,omitempty"`        // self-reported; <= 4
+	STUN       []RowReport    `json:"stun,omitempty"`        // self-reported; <= 8
 	PortMap    *PortMapReport `json:"port_map,omitempty"`    // self-reported; later results go in punch_ready
 	LocalAddrs []netip.Addr   `json:"local_addrs,omitempty"` // <= 16; overlay addresses left out
 	// Overlay are the host's addresses of the family on overlay, tunnel and

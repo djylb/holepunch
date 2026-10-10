@@ -40,9 +40,16 @@ func Example() {
 	}
 	defer func() { _ = probe.Close() }()
 
+	// Public STUN servers give the clients a second view of their mapping,
+	// and a public address to a client on this server's own LAN.
+	spec := probe.ProbeSpec()
+	spec.STUN, err = natprobe.ResolveSTUN(context.Background(), nil, natprobe.DefaultSTUNServers())
+	if err != nil {
+		log.Print(err) // the servers that resolved are kept
+	}
 	co, err := coord.New(coord.Config{
 		Registry:     reg,
-		DefaultProbe: probe.ProbeSpec(),
+		DefaultProbe: spec,
 		OnResult: func(r coord.Result) {
 			log.Printf("session %s %s %s", r.SessionID, r.Outcome, r.Code)
 		},

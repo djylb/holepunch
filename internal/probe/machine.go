@@ -2,6 +2,7 @@ package probe
 
 import (
 	"net/netip"
+	"slices"
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
@@ -380,13 +381,27 @@ func (s *runState) altDone(now time.Duration) bool {
 	return true
 }
 
+// stunDone reports whether STUN lets probing finish: every STUN server
+// answered, or stunWait passed since mappingDone.
 func (s *runState) stunDone(now time.Duration) bool {
 	for _, st := range s.stun {
 		if !st.done {
-			return s.mappingDoneAt >= 0 && now >= s.mappingDoneAt+stunGrace
+			return s.mappingDoneAt >= 0 && now >= s.mappingDoneAt+s.stunWait()
 		}
 	}
 	return true
+}
+
+// stunWait is how long STUN may hold DONE back after mappingDone: stunGrace,
+// so that a slow or unreachable STUN server never holds probing up; but up to
+// stunLANGrace while a LAN-observed family (the server saw only private
+// addresses) has no STUN answer yet, since a STUN answer is the only public
+// address it can report. The hard limit bounds both.
+func (s *runState) stunWait() time.Duration {
+	if slices.ContainsFunc(s.stun, func(st *stunTarget) bool { return st.done }) || !s.table.LANObserved() {
+		return stunGrace
+	}
+	return stunLANGrace
 }
 
 // expire settles the declarations whose wait ran out, as negative filtering
@@ -452,7 +467,7 @@ func (s *runState) nextWake(now time.Duration) time.Duration {
 		at(s.topUp.last + settleRounds*s.t1())
 	}
 	if s.mappingDoneAt >= 0 {
-		at(s.mappingDoneAt + stunGrace)
+		at(s.mappingDoneAt + s.stunWait())
 	}
 	return next
 }

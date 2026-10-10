@@ -26,10 +26,13 @@
 // the ICMP may be theirs, and neither does such ICMP fail a family whose
 // server stayed silent at the hard limit.
 //
-// STUN is a hint: a STUN server that fails,
-// stays silent or answers with ICMP delays DONE by at most 150 ms and
-// changes no result; its answer enters the table, where nat.ObsTable.Classify
-// lets it neither raise nor overturn natprobe's conclusions.
+// STUN is a hint: the family's STUN servers (at most 8) are asked at once,
+// and a STUN server that fails, stays silent or answers with ICMP delays
+// DONE by at most 150 ms and changes no result — 1 s while a LAN-observed
+// family (the server saw only private addresses) has no STUN answer yet,
+// since one is the only public address it can report; its answer enters
+// the table, where nat.ObsTable.Classify lets it neither raise nor overturn
+// natprobe's conclusions.
 //
 // After Run, Hairpin runs the conditional hairpin self-test on the primary
 // socket, at most once per prober. Result.Table stays live: the runtime keeps

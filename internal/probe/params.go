@@ -20,6 +20,7 @@ const (
 	extraWaitBase  = 60 * time.Millisecond
 	stashTTL       = 250 * time.Millisecond // an extra that arrives before its ack waits this long
 	stunGrace      = 150 * time.Millisecond // STUN may hold DONE back this long after mappingDone
+	stunLANGrace   = time.Second            // the same for a LAN-observed family without a STUN answer yet
 	hairpinGap     = 100 * time.Millisecond // between the two hairpin packets
 	hairpinWindow  = 250 * time.Millisecond // from the first hairpin packet
 	mappingRounds  = 3                      // mappingDone: ≥ 2 answers and 3·T1 since the first send
@@ -32,9 +33,9 @@ const (
 	maxPrimarySends = 4  // per main observer: the first send and 3 retransmissions
 	maxOtherSends   = 2  // second socket, sibling, alt, STUN: the first send and 1 retransmission
 	maxSiblings     = 2  // sibling sockets probed
-	maxSTUNServers  = 2  // STUN servers used
+	maxSTUNServers  = 8  // STUN servers used per family, all at once
 	serverBudget    = 25 // probes to the server per family: primary 13 + second 6 + alt 2 + siblings 4
-	stunBudget      = 4  // STUN requests per family
+	stunBudget      = 16 // STUN requests per family: maxOtherSends per server
 )
 
 // Inbox and stash bounds.

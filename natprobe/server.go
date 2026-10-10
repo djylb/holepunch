@@ -212,10 +212,10 @@ func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec {
 // coord.Config.DefaultProbe: the live observers of both families, extra
 // replies unless the server was configured with NoExtraReply, and the
 // second-socket probe, which tells the port allocation of a symmetric NAT
-// apart. The caller adds its third-party STUN servers, if any:
+// apart. The caller adds third-party STUN servers, if any:
 //
 //	spec := probe.ProbeSpec()
-//	spec.STUN = stunServers
+//	spec.STUN, _ = natprobe.ResolveSTUN(ctx, nil, natprobe.DefaultSTUNServers())
 //	co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: spec})
 //
 // A ProbeSpec holds at most 16 observers in all, while a server may have 16
