@@ -1,0 +1,84 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "role": "initiator",
+  "control": {
+    "version": 1,
+    "features": [
+      "sandwich"
+    ]
+  },
+  "caps": {
+    "impl": "holepunch-go/1.0.0",
+    "families": [
+      {
+        "family": "udp4",
+        "low_ttl": true,
+        "recv_err": true
+      }
+    ],
+    "max_sockets": 40
+  },
+  "elapsed_ms": 143,
+  "families": [
+    {
+      "family": "udp4",
+      "sockets": [
+        {
+          "id": 0,
+          "kind": "primary",
+          "local": "192.168.1.20:51820",
+          "rows": [
+            {
+              "o": 0,
+              "a": "198.51.100.7:40123",
+              "tx": 1,
+              "s": 0,
+              "rtt": 31,
+              "c": 2741901133
+            },
+            {
+              "o": 1,
+              "a": "198.51.100.7:40123",
+              "tx": 2,
+              "s": 0,
+              "rtt": 30,
+              "c": 110432778
+            },
+            {
+              "o": 2,
+              "a": "198.51.100.7:40123",
+              "tx": 3,
+              "s": 1,
+              "rtt": 32,
+              "c": 3018837461
+            }
+          ]
+        }
+      ],
+      "filters": [
+        {
+          "socket": 0,
+          "observer": 0,
+          "extra_seen": 1,
+          "alt_seen": 0
+        }
+      ],
+      "local_addrs": [
+        "192.168.1.20"
+      ],
+      "traits": {
+        "mapping": "eim",
+        "filtering": "not_pdf",
+        "provisional": true
+      }
+    }
+  ],
+  "clock": {
+    "rtt_ms": 30,
+    "offset_ms": -412
+  },
+  "transport": {
+    "mode": "quic",
+    "data": "c2hhMjU2OjQ1Njc4..."
+  }
+}

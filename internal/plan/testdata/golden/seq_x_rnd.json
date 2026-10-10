@@ -1,0 +1,179 @@
+{
+  "name": "seq_x_rnd",
+  "pair_class": "seq_x_rnd",
+  "side_a": "initiator",
+  "rounds": [
+    {
+      "round": 1,
+      "variant": "seq_x_rnd_r1",
+      "budget": "balanced",
+      "window_ms": 800,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 5,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.4:40004"
+                ],
+                "repeats": 5
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 21,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 17,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.3:40003"
+                ],
+                "repeats": 5
+              },
+              {
+                "kind": "predict",
+                "at_ms": 20,
+                "ip": "203.0.113.3",
+                "anchor": 40003,
+                "steps": [
+                  1
+                ],
+                "span": 16
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 2,
+      "variant": "seq_x_rnd_r2",
+      "budget": "heavy",
+      "window_ms": 1200,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 16,
+            "max_packets": 32,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.4:40004"
+                ],
+                "repeats": 2
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "sender",
+            "send_delay_ms": 100,
+            "sockets": 1,
+            "max_packets": 64,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 64,
+            "stages": [
+              {
+                "kind": "predict",
+                "at_ms": 100,
+                "ip": "203.0.113.3",
+                "anchor": 40003,
+                "steps": [
+                  1
+                ],
+                "span": 64
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 3,
+      "variant": "seq_x_rnd_r3",
+      "budget": "heavy",
+      "window_ms": 4000,
+      "final": true,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 32,
+            "max_packets": 64,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.4:40004"
+                ],
+                "repeats": 2
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 384,
+            "max_pps": 300,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 384,
+            "stages": [
+              {
+                "kind": "predict",
+                "at_ms": 0,
+                "ip": "203.0.113.3",
+                "anchor": 40003,
+                "steps": [
+                  1
+                ],
+                "span": 192
+              },
+              {
+                "kind": "random",
+                "at_ms": 0,
+                "ip": "203.0.113.3",
+                "count": 192
+              }
+            ]
+          }
+        ]
+      ]
+    }
+  ]
+}

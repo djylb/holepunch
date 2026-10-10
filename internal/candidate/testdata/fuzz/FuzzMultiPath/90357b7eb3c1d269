@@ -1,0 +1,6 @@
+go test fuzz v1
+byte('\x00')
+byte('\a')
+byte('J')
+uint64(65)
+[]byte("\xff")

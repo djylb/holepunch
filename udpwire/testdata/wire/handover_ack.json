@@ -1,0 +1,38 @@
+[
+  {
+    "name": "handover_ack/min",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 9,
+    "nonce": "404142434445464748494a4b",
+    "plain_len": 30,
+    "header": {
+      "type": "handover_ack",
+      "role": "responder",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 2,
+      "sock": 133,
+      "cand": 12305,
+      "aux": 1,
+      "seq": 1003,
+      "ts": 2210,
+      "echo_seq": 43,
+      "echo_ts": 2200
+    },
+    "tlvs": {
+      "observed": "",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": 99,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "0b02028530110001000003eb000008a20000002b00000898050400000063",
+    "wire": "09404142434445464748494a4b5162ea7b3a5f378270c782d5107271d5a0c73705872037baf395b55d250ceec3fca687696b1363e8d9bbef3921a8"
+  }
+]

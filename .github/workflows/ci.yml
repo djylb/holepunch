@@ -1,0 +1,138 @@
+# Cross-platform checks: the platform behavior of real sockets — ICMP
+# reports, TTL options, interface lists — is not something nattest
+# simulates, so the suite runs on Linux, macOS and Windows, and the mobile
+# and BSD targets are at least compiled and vetted.
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # gofmt compares bytes: keep LF line endings on Windows.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: |
+            go.sum
+            standalone/go.sum
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: vet
+        run: |
+          go vet ./...
+          go vet -tags holepunch_faultinject ./...
+          cd standalone
+          go vet ./...
+          go vet -tags holepunch_faultinject ./...
+      - name: lintcheck
+        run: |
+          go run ./tools/lintcheck ./...
+          cd standalone
+          go run github.com/djylb/holepunch/tools/lintcheck ./...
+      - name: race detector
+        id: race
+        run: |
+          if go test -race -count=1 -run '^$' ./internal/life >/dev/null 2>&1; then
+            echo "flag=-race" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::race detector unavailable on ${{ runner.os }}; running the tests without it"
+            echo "flag=" >> "$GITHUB_OUTPUT"
+          fi
+      # e2e has its own job, on Linux only.
+      - name: test
+        run: |
+          pkgs=$(go list ./... | grep -v '/e2e')
+          go test ${{ steps.race.outputs.flag }} -count=1 $pkgs
+          go test ${{ steps.race.outputs.flag }} -count=1 -tags holepunch_faultinject $pkgs
+      - name: standalone test
+        working-directory: standalone
+        run: |
+          go test ${{ steps.race.outputs.flag }} -count=1 ./...
+          go test ${{ steps.race.outputs.flag }} -count=1 -tags holepunch_faultinject ./...
+      - name: build without the workspace
+        run: |
+          GOWORK=off go build ./...
+          cd standalone
+          GOWORK=off go build ./...
+
+  e2e:
+    name: e2e (pr level)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: |
+            go.sum
+            standalone/go.sum
+      - name: e2e
+        env:
+          HOLEPUNCH_E2E_LEVEL: pr
+        run: |
+          go test -race -count=1 ./e2e/...
+          go test -race -count=1 -tags holepunch_faultinject ./e2e/...
+
+  cross:
+    name: cross (${{ matrix.goos }}/${{ matrix.goarch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: android, goarch: arm64, runner: ubuntu-latest, cgo: "0" }
+          - { goos: freebsd, goarch: amd64, runner: ubuntu-latest, cgo: "0" }
+          # ios/arm64 links externally: cgo with the Xcode toolchain.
+          - { goos: ios, goarch: arm64, runner: macos-latest, cgo: "1" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: |
+            go.sum
+            standalone/go.sum
+      - name: target
+        run: |
+          {
+            echo "GOOS=${{ matrix.goos }}"
+            echo "GOARCH=${{ matrix.goarch }}"
+            echo "CGO_ENABLED=${{ matrix.cgo }}"
+            if [ "${{ matrix.goos }}" = ios ]; then echo "CC=$(go env GOROOT)/misc/ios/clangwrap.sh"; fi
+          } >> "$GITHUB_ENV"
+      - name: vet
+        run: |
+          go vet ./...
+          go vet -tags holepunch_faultinject ./...
+          cd standalone
+          go vet ./...
+          go vet -tags holepunch_faultinject ./...
+      - name: build
+        run: |
+          go build ./...
+          cd standalone
+          go build ./...

@@ -1,0 +1,74 @@
+[
+  {
+    "name": "probe_ack/v4-min",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 9,
+    "nonce": "808182838485868788898a8b",
+    "plain_len": 54,
+    "header": {
+      "type": "probe_ack",
+      "role": "server",
+      "low_ttl": false,
+      "retx": false,
+      "fa": true,
+      "fb": false,
+      "fc": true,
+      "round": 0,
+      "sock": 129,
+      "cand": 65535,
+      "aux": 5,
+      "seq": 9,
+      "ts": 3735928559,
+      "echo_seq": 77,
+      "echo_ts": 123456
+    },
+    "tlvs": {
+      "observed": "203.0.113.7:40000",
+      "extra_port": 51000,
+      "cookie": 2712847316,
+      "sandwich": null,
+      "rx_count": null,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "02530081ffff000500000009deadbeef0000004d0001e240011200000000000000000000ffffcb0071079c400202c7380304a1b2c3d4",
+    "wire": "09808182838485868788898a8b0921a25e1d4ebd79ff8f53d5a7ceaa6ed58296076f1d144dd83b409a223943037dffddab0b89424027a544aed3eda28b8b0ee90bc8fd20ddff8efe09360ab7b051cfaad46fcd"
+  },
+  {
+    "name": "probe_ack/v6",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 10,
+    "nonce": "909192939495969798999a9b",
+    "plain_len": 200,
+    "header": {
+      "type": "probe_ack",
+      "role": "server",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": true,
+      "fc": false,
+      "round": 0,
+      "sock": 128,
+      "cand": 65535,
+      "aux": 2,
+      "seq": 10,
+      "ts": 1,
+      "echo_seq": 1,
+      "echo_ts": 10
+    },
+    "tlvs": {
+      "observed": "[2001:db8::1]:65535",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": null,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "02230080ffff00020000000a00000001000000010000000a011220010db8000000000000000000000001ffff020200000304000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "wire": "0a909192939495969798999a9bea19b67902c65dfa52fcdaaeef54c7d705ff92e2bf5fb484a440c3c2b7547d236a7a610835c9b95aa1bd84fc500ca823a48a3493a85f49481775a0000bf192569430bf99d5534a12999009ef01de9e53e8d85bb5c77a19fdf25739d474ca373b3f0b5356ed0ab4c8012795b87deb852123c1667cccd1645866118111b677cfbacd4098432e9feaf8579435d7fd003d8ef88474b5bc8a9f6beedbfe8bcf1156f68733d03b88f9cbec415108e10366c656e19237632bf1367b480ed6a847804897249a357e483ae6595c93e75c6f3f78ab46068962ffcf3ce0"
+  }
+]

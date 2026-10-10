@@ -1,0 +1,547 @@
+{
+  "cgnat/PRC+PRC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 604.547916,
+    "packets_max": 21
+  },
+  "cgnat/SYMRND+FC-PRC": {
+    "success_rate": 0.3,
+    "confirm_ms_p95": 4709.365417,
+    "packets_max": 394
+  },
+  "cgnat/SYMSEQ+FC-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 598.631,
+    "packets_max": 15
+  },
+  "cgnat/SYMSEQ+PRC-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 628.710875,
+    "packets_max": 20
+  },
+  "dual/FC+OPEN6-SYMSEQ+FW6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 615.385084,
+    "packets_max": 16
+  },
+  "dual/PRC+FW6-PRC+FW6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 617.80325,
+    "packets_max": 17
+  },
+  "dual/PRC+FW6-SYMRND+FW6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 595.036166,
+    "packets_max": 14
+  },
+  "dual/SYMRND+FW6-PRC+FW6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 613.10725,
+    "packets_max": 14
+  },
+  "dual/SYMRND+FW6-SYMRND+FW6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 624.235959,
+    "packets_max": 5
+  },
+  "dual/SYMSEQ+FW6-PRC+OPEN6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 625.694209,
+    "packets_max": 16
+  },
+  "hairpin/PRC-hairpin-false": {
+    "success_rate": 1,
+    "confirm_ms_p95": 443.1995,
+    "packets_max": 10
+  },
+  "hairpin/PRC-hairpin-true": {
+    "success_rate": 1,
+    "confirm_ms_p95": 457.805917,
+    "packets_max": 11
+  },
+  "impair/FC-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 941.764,
+    "packets_max": 18
+  },
+  "impair/FC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 950.722334,
+    "packets_max": 19
+  },
+  "impair/PRC-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 927.686792,
+    "packets_max": 17
+  },
+  "impair/PRC-SYMRND": {
+    "success_rate": 0.25,
+    "confirm_ms_p95": 4474.654625,
+    "packets_max": 394
+  },
+  "impair/PRC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 1398.78225,
+    "packets_max": 84
+  },
+  "impair/SYMSEQ-SYMSEQ": {
+    "success_rate": 0.15,
+    "confirm_ms_p95": 1820.401958,
+    "packets_max": 90
+  },
+  "maptimeout/PRC-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 622.835208,
+    "packets_max": 13
+  },
+  "maptimeout/SYMSEQ-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 527.864333,
+    "packets_max": 15
+  },
+  "multi/ADMRND-PRC": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 25
+  },
+  "multi/FCX2-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 606.103208,
+    "packets_max": 14
+  },
+  "multi/SYMSEQRR-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 621.040792,
+    "packets_max": 16
+  },
+  "neg/peer-silent": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 25
+  },
+  "neg/probe-blackhole": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 0
+  },
+  "neg/symrnd-default": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 74
+  },
+  "neg/udp-blocked": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 0
+  },
+  "neg/v4only-v6only": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 0
+  },
+  "noise/PRC-SYMSEQ~20": {
+    "success_rate": 1,
+    "confirm_ms_p95": 618.610458,
+    "packets_max": 22
+  },
+  "noise/PRC-SYMSEQ~5": {
+    "success_rate": 1,
+    "confirm_ms_p95": 633.4015,
+    "packets_max": 22
+  },
+  "noise/PUBFW-SYMSEQ~5": {
+    "success_rate": 1,
+    "confirm_ms_p95": 622.817167,
+    "packets_max": 21
+  },
+  "noise/SYMSEQ~5-SYMSEQ~5": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 71
+  },
+  "ns/cgnat-same-lan": {
+    "success_rate": 1,
+    "confirm_ms_p95": 453.41025,
+    "packets_max": 10
+  },
+  "ns/upstream": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 25
+  },
+  "ns/upstream+hairpin": {
+    "success_rate": 1,
+    "confirm_ms_p95": 464.697292,
+    "packets_max": 10
+  },
+  "ns/upstream+hairpin+portmap": {
+    "success_rate": 1,
+    "confirm_ms_p95": 462.328917,
+    "packets_max": 12
+  },
+  "ns/upstream+portmap": {
+    "success_rate": 1,
+    "confirm_ms_p95": 440.406084,
+    "packets_max": 10
+  },
+  "ns/v4only-client": {
+    "success_rate": 1,
+    "confirm_ms_p95": 621.68275,
+    "packets_max": 13
+  },
+  "ns/v6-unverified": {
+    "success_rate": 1,
+    "confirm_ms_p95": 588.407333,
+    "packets_max": 17
+  },
+  "rebind/PRC-FC": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 25
+  },
+  "samehost/PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 463.338,
+    "packets_max": 10
+  },
+  "scan/FC-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 515.8915,
+    "packets_max": 14
+  },
+  "scan/FC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 626.661166,
+    "packets_max": 15
+  },
+  "scan/PRC-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 583.396125,
+    "packets_max": 13
+  },
+  "scan/PRC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 603.091,
+    "packets_max": 20
+  },
+  "scan/PUBFW-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 612.724042,
+    "packets_max": 13
+  },
+  "scan/RC-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 616.034792,
+    "packets_max": 15
+  },
+  "scan/RC-SYMRND": {
+    "success_rate": 1,
+    "confirm_ms_p95": 597.432583,
+    "packets_max": 15
+  },
+  "slowctl/FC-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 2427.090334,
+    "packets_max": 20
+  },
+  "slowctl/FC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 2795.400875,
+    "packets_max": 21
+  },
+  "slowctl/PRC-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 2794.679917,
+    "packets_max": 20
+  },
+  "slowctl/PRC-SYMRND": {
+    "success_rate": 0.15,
+    "confirm_ms_p95": 7430.112625,
+    "packets_max": 394
+  },
+  "slowctl/PRC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 2795.447042,
+    "packets_max": 24
+  },
+  "slowctl/SYMSEQ-SYMSEQ": {
+    "success_rate": 0.2,
+    "confirm_ms_p95": 4110.637666,
+    "packets_max": 71
+  },
+  "v4/FC-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 518.839459,
+    "packets_max": 13
+  },
+  "v4/FC-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 608.876125,
+    "packets_max": 14
+  },
+  "v4/FC-PUB": {
+    "success_rate": 1,
+    "confirm_ms_p95": 526.787917,
+    "packets_max": 13
+  },
+  "v4/FC-PUBFW": {
+    "success_rate": 1,
+    "confirm_ms_p95": 639.153958,
+    "packets_max": 14
+  },
+  "v4/FC-RC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 528.789958,
+    "packets_max": 13
+  },
+  "v4/FC-SYMRND": {
+    "success_rate": 1,
+    "confirm_ms_p95": 599.2085,
+    "packets_max": 15
+  },
+  "v4/FC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 627.123958,
+    "packets_max": 15
+  },
+  "v4/PRC-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 639.313833,
+    "packets_max": 14
+  },
+  "v4/PRC-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 600.050584,
+    "packets_max": 13
+  },
+  "v4/PRC-PUB": {
+    "success_rate": 1,
+    "confirm_ms_p95": 613.736208,
+    "packets_max": 13
+  },
+  "v4/PRC-PUBFW": {
+    "success_rate": 1,
+    "confirm_ms_p95": 637.350291,
+    "packets_max": 14
+  },
+  "v4/PRC-RC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 592.164125,
+    "packets_max": 13
+  },
+  "v4/PRC-SYMRND": {
+    "success_rate": 0.3,
+    "confirm_ms_p95": 4335.9635,
+    "packets_max": 394
+  },
+  "v4/PRC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 616.792458,
+    "packets_max": 20
+  },
+  "v4/PUB-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 539.532,
+    "packets_max": 13
+  },
+  "v4/PUB-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 577.810916,
+    "packets_max": 13
+  },
+  "v4/PUB-PUB": {
+    "success_rate": 1,
+    "confirm_ms_p95": 499.871,
+    "packets_max": 3
+  },
+  "v4/PUB-PUBFW": {
+    "success_rate": 1,
+    "confirm_ms_p95": 609.698584,
+    "packets_max": 3
+  },
+  "v4/PUB-RC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 531.464375,
+    "packets_max": 13
+  },
+  "v4/PUB-SYMRND": {
+    "success_rate": 1,
+    "confirm_ms_p95": 567.571333,
+    "packets_max": 3
+  },
+  "v4/PUB-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 599.20025,
+    "packets_max": 4
+  },
+  "v4/PUBFW-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 589.623625,
+    "packets_max": 13
+  },
+  "v4/PUBFW-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 614.052208,
+    "packets_max": 14
+  },
+  "v4/PUBFW-PUB": {
+    "success_rate": 1,
+    "confirm_ms_p95": 607.411292,
+    "packets_max": 3
+  },
+  "v4/PUBFW-PUBFW": {
+    "success_rate": 1,
+    "confirm_ms_p95": 611.621333,
+    "packets_max": 3
+  },
+  "v4/PUBFW-RC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 626.042584,
+    "packets_max": 14
+  },
+  "v4/PUBFW-SYMRND": {
+    "success_rate": 0.2,
+    "confirm_ms_p95": 4350.355875,
+    "packets_max": 394
+  },
+  "v4/PUBFW-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 612.891,
+    "packets_max": 22
+  },
+  "v4/RC-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 540.03975,
+    "packets_max": 13
+  },
+  "v4/RC-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 586.654416,
+    "packets_max": 14
+  },
+  "v4/RC-PUB": {
+    "success_rate": 1,
+    "confirm_ms_p95": 540.611,
+    "packets_max": 13
+  },
+  "v4/RC-PUBFW": {
+    "success_rate": 1,
+    "confirm_ms_p95": 571.813,
+    "packets_max": 14
+  },
+  "v4/RC-RC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 534.397417,
+    "packets_max": 13
+  },
+  "v4/RC-SYMRND": {
+    "success_rate": 1,
+    "confirm_ms_p95": 610.409375,
+    "packets_max": 15
+  },
+  "v4/RC-SYMSEQ": {
+    "success_rate": 1,
+    "confirm_ms_p95": 579.250708,
+    "packets_max": 15
+  },
+  "v4/SYMRND-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 603.957083,
+    "packets_max": 15
+  },
+  "v4/SYMRND-PRC": {
+    "success_rate": 0.25,
+    "confirm_ms_p95": 4514.923458,
+    "packets_max": 394
+  },
+  "v4/SYMRND-PUB": {
+    "success_rate": 1,
+    "confirm_ms_p95": 580.741542,
+    "packets_max": 3
+  },
+  "v4/SYMRND-PUBFW": {
+    "success_rate": 0.1,
+    "confirm_ms_p95": 4405.921667,
+    "packets_max": 394
+  },
+  "v4/SYMRND-RC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 580.0835,
+    "packets_max": 15
+  },
+  "v4/SYMRND-SYMRND": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 330
+  },
+  "v4/SYMRND-SYMSEQ": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 90
+  },
+  "v4/SYMSEQ-FC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 587.161,
+    "packets_max": 15
+  },
+  "v4/SYMSEQ-PRC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 605.103334,
+    "packets_max": 21
+  },
+  "v4/SYMSEQ-PUB": {
+    "success_rate": 1,
+    "confirm_ms_p95": 621.59375,
+    "packets_max": 4
+  },
+  "v4/SYMSEQ-PUBFW": {
+    "success_rate": 1,
+    "confirm_ms_p95": 626.03875,
+    "packets_max": 22
+  },
+  "v4/SYMSEQ-RC": {
+    "success_rate": 1,
+    "confirm_ms_p95": 573.731208,
+    "packets_max": 15
+  },
+  "v4/SYMSEQ-SYMRND": {
+    "success_rate": 0,
+    "confirm_ms_p95": -1,
+    "packets_max": 90
+  },
+  "v4/SYMSEQ-SYMSEQ": {
+    "success_rate": 0.2,
+    "confirm_ms_p95": 1496.238375,
+    "packets_max": 71
+  },
+  "v6/NAT66SEQ-PUBFW6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 623.576042,
+    "packets_max": 22
+  },
+  "v6/NPTV6-PRC66": {
+    "success_rate": 1,
+    "confirm_ms_p95": 608.412541,
+    "packets_max": 14
+  },
+  "v6/PUB6-PUB6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 545.094375,
+    "packets_max": 3
+  },
+  "v6/PUB6-PUBFW6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 600.020334,
+    "packets_max": 3
+  },
+  "v6/PUBFW6-PUB6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 607.509541,
+    "packets_max": 3
+  },
+  "v6/PUBFW6-PUBFW6": {
+    "success_rate": 1,
+    "confirm_ms_p95": 618.21475,
+    "packets_max": 3
+  }
+}

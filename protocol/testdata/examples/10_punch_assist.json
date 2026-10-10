@@ -1,0 +1,13 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "from": "server",
+  "kind": "peer_targets",
+  "round": 2,
+  "family": "udp4",
+  "window": {
+    "ip": "192.0.2.55",
+    "lo": 61017,
+    "hi": 61019
+  },
+  "source": "sandwich"
+}

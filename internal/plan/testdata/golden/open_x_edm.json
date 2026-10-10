@@ -1,0 +1,240 @@
+{
+  "name": "open_x_edm",
+  "pair_class": "open_x_edm",
+  "side_a": "initiator",
+  "rounds": [
+    {
+      "round": 1,
+      "variant": "open_x_edm_r1",
+      "budget": "light",
+      "window_ms": 800,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 1,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.3:40003"
+                ],
+                "repeats": 1
+              },
+              {
+                "kind": "reply_only",
+                "at_ms": 0
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 6,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 6
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 2,
+      "variant": "open_x_edm_r2",
+      "budget": "light",
+      "window_ms": 1000,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "receiver",
+            "sockets": 1,
+            "max_packets": 1,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.3:40003"
+                ],
+                "repeats": 1,
+                "ttl": 4
+              },
+              {
+                "kind": "reply_only",
+                "at_ms": 0
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "sender",
+            "send_delay_ms": 150,
+            "sockets": 1,
+            "max_packets": 6,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 150,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 6
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 3,
+      "variant": "open_x_edm_r3",
+      "budget": "balanced",
+      "window_ms": 1500,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 17,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 17,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.3:40003"
+                ],
+                "repeats": 1
+              },
+              {
+                "kind": "predict",
+                "at_ms": 20,
+                "ip": "203.0.113.3",
+                "anchor": 40003,
+                "steps": [
+                  1
+                ],
+                "span": 16
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "sender",
+            "send_delay_ms": 500,
+            "sockets": 1,
+            "max_packets": 5,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 500,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 5
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 4,
+      "variant": "open_x_edm_r4_final",
+      "budget": "balanced",
+      "window_ms": 3000,
+      "final": true,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 17,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 17,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.3:40003"
+                ],
+                "repeats": 1
+              },
+              {
+                "kind": "predict",
+                "at_ms": 20,
+                "ip": "203.0.113.3",
+                "anchor": 40003,
+                "steps": [
+                  1
+                ],
+                "span": 16
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "sender",
+            "send_delay_ms": 2000,
+            "sockets": 1,
+            "max_packets": 4,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 2000,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 4
+              }
+            ]
+          }
+        ]
+      ]
+    }
+  ]
+}

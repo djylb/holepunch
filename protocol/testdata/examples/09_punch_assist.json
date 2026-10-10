@@ -1,0 +1,12 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "from": "responder",
+  "kind": "peer_seen",
+  "round": 1,
+  "family": "udp4",
+  "remote": "198.51.100.7:40123",
+  "sock": 0,
+  "cand": 4097,
+  "type": 6,
+  "first": true
+}

@@ -1,0 +1,19 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "role": "initiator",
+  "round": 1,
+  "elapsed_ms": 2563,
+  "fire_skew_ms": 1,
+  "status": "window_end",
+  "families": [
+    {
+      "family": "udp4",
+      "hit": false,
+      "seen_from": [],
+      "peer_seen_us": true,
+      "sent": 180,
+      "recv": 0,
+      "distinct_ports": 33
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "role": "responder",
+  "ok": true,
+  "phase": "done",
+  "path": {
+    "family": "udp4",
+    "local": "10.0.0.8:40002",
+    "remote": "198.51.100.7:40123",
+    "round": 2,
+    "epoch": 1,
+    "sock": 0,
+    "cand": 4097,
+    "cand_kind": "direct",
+    "kind": "public",
+    "rtt_ms": 44,
+    "confirmed_by": "ready"
+  },
+  "stats": {
+    "sent": 211,
+    "recv": 17,
+    "replies": 9,
+    "rounds": 2,
+    "hits": 2,
+    "drops": {
+      "auth": 3,
+      "role": 1,
+      "replay": 0
+    }
+  },
+  "timing": {
+    "probe_ms": 131,
+    "summary_wait_ms": 930,
+    "go_wait_ms": 71,
+    "punch_ms": 3350,
+    "handover_ms": 31
+  }
+}

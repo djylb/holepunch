@@ -1,0 +1,63 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"go.uber.org/goleak"
+
+	"github.com/djylb/holepunch/nattest"
+	"github.com/djylb/holepunch/standalone/client"
+	"github.com/djylb/holepunch/standalone/internal/testworld"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+// TestProbeEcho runs both sides of the diagnostic over a punched session.
+func TestProbeEcho(t *testing.T) {
+	w := testworld.New(t, testworld.Options{})
+	hostC := w.Client(w.NATHost(nattest.PortRestricted()), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	echoed := make(chan int, 1)
+	served := make(chan error, 1)
+	go func() {
+		served <- hostC.Serve(ctx, client.Registration{HostID: "echo", TransportMode: mode}, func(ctx context.Context, s *client.Session) {
+			echoed <- echo(ctx, s)
+		})
+	}()
+	defer func() {
+		cancel()
+		<-served
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(w.Broker.Snapshot().Hosts) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("echo host not registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	dialC := w.Client(w.NATHost(nattest.SymmetricSeq(1)), nil)
+	s, err := dialC.Open(context.Background(), client.OpenRequest{HostID: "echo", TransportMode: mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	report(&out, s)
+	if err := ping(context.Background(), &out, s, 3, 10*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	text := out.String()
+	for _, want := range []string{"session " + s.ID(), "path", "self  udp4", "peer  udp4", "keepalive", "seq=2 rtt=", "3 sent, 0 lost"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("output lacks %q:\n%s", want, text)
+		}
+	}
+	cancel()
+	if n := <-echoed; n < 3 {
+		t.Fatalf("echoed %d", n)
+	}
+}

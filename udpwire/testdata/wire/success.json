@@ -1,0 +1,74 @@
+[
+  {
+    "name": "success/rx",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 4,
+    "nonce": "f0f1f2f3f4f5f6f7f8f9fafb",
+    "plain_len": 100,
+    "header": {
+      "type": "success",
+      "role": "initiator",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 2,
+      "sock": 2,
+      "cand": 12305,
+      "aux": 0,
+      "seq": 40,
+      "ts": 2010,
+      "echo_seq": 1000,
+      "echo_ts": 2000
+    },
+    "tlvs": {
+      "observed": "192.0.2.1:62000",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": 12,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "070102023011000000000028000007da000003e8000007d0011200000000000000000000ffffc0000201f23005040000000c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "wire": "04f0f1f2f3f4f5f6f7f8f9fafb7d1a40bbc4601cbab0b50e169fba0c18be5d95c97c608f97fc0fceec75e0910076e73d59f647691f6e5399e692e3db6b49ba780c871b4a3c602a75e025b41c653a382f857cb7d2648bc9c6535541687745dc250c974f1deb2fa41b9631a97780ebcb60e290df07f80765e95e7c6fc6e64c0fdfe5"
+  },
+  {
+    "name": "success/no-rx-min",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 5,
+    "nonce": "000102030405060708090a0b",
+    "plain_len": 44,
+    "header": {
+      "type": "success",
+      "role": "responder",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 2,
+      "sock": 0,
+      "cand": 5,
+      "aux": 0,
+      "seq": 41,
+      "ts": 2011,
+      "echo_seq": 39,
+      "echo_ts": 2009
+    },
+    "tlvs": {
+      "observed": "[2001:db8::7]:443",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": null,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "070202000005000000000029000007db00000027000007d9011220010db800000000000000000000000701bb",
+    "wire": "05000102030405060708090a0b00e240e4069468b6cde1657fce2d815816a308e575ec90ba720fe4671dd217ec4c83832e148fc8f0c5a10cb5fb496dca72d58809774730d37e0c86f7"
+  }
+]

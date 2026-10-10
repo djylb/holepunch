@@ -1,0 +1,523 @@
+package coord
+
+import (
+	"fmt"
+	"maps"
+	"net/netip"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/protocol"
+)
+
+// evilPlanner returns plans far beyond every limit.
+type evilPlanner struct {
+	round func(in RoundInput) RoundDecision
+}
+
+func (evilPlanner) Classify(_ ClassifyInput) Classification {
+	return Classification{Families: []protocol.Family{protocol.FamilyUDP4}, SideA: protocol.RoleInitiator,
+		Ladder: []VariantID{1, 2}, PairClass: "Not A Name"}
+}
+
+func (e evilPlanner) Round(in RoundInput) RoundDecision {
+	if e.round != nil {
+		return e.round(in)
+	}
+	side := func(target netip.AddrPort) []protocol.FamilySide {
+		var stages []protocol.Stage
+		stages = append(stages,
+			protocol.Stage{Kind: protocol.StageDirect, Targets: []netip.AddrPort{target, mustAP("8.8.8.8:53"),
+				mustAP("192.168.5.5:1000"), mustAP("0.0.0.0:1"), mustAP("224.0.0.1:5")}, Repeats: 50, TTL: 1},
+			protocol.Stage{Kind: protocol.StagePredict, IP: target.Addr(), Anchor: 1000, Steps: []int16{1, 2, 3, 4}, Span: 9000},
+			protocol.Stage{Kind: protocol.StageRandom, IP: netip.MustParseAddr("8.8.8.8"), Count: 9000},
+			protocol.Stage{Kind: "teleport"},
+		)
+		for range 10 {
+			stages = append(stages, protocol.Stage{Kind: protocol.StageDirect, Targets: []netip.AddrPort{target}})
+		}
+		return []protocol.FamilySide{
+			{Family: protocol.FamilyUDP4, Role: protocol.SideSender, SendDelayMs: 9000, Sockets: 1000, MaxPackets: 100000,
+				MaxPPS: 10000, MaxNewPerSec: 5000, MaxDistinctPorts: 9999, Sandwich: true, Stages: stages},
+			{Family: protocol.FamilyUDP6, Role: protocol.SideBoth, Sockets: 1, MaxPackets: 10,
+				Stages: []protocol.Stage{{Kind: protocol.StageDirect, Targets: []netip.AddrPort{mustAP("[2001:db8::1]:1")}}}},
+			{Family: protocol.FamilyUDP4, Role: "boss", Sockets: 1},
+		}
+	}
+	return RoundDecision{
+		Variant: 1, VariantName: "BAD NAME", Budget: protocol.BudgetExtreme, Window: time.Hour,
+		Rescue: true,
+		Sides:  [2][]protocol.FamilySide{side(pubR), side(pubI)},
+	}
+}
+
+// TestPlannerOutputClamped: a planner asking for everything gets the
+// class ceiling, the protocol limits and only admitted targets.
+func TestPlannerOutputClamped(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.Planner = evilPlanner{} })
+	p := r.pair(SessionOptions{})
+	sums := p.summaries()
+	for i, sum := range sums {
+		r1 := sum.Plan.Round1
+		if r1.Budget != protocol.BudgetLight || r1.Variant != "variant_1" || r1.Rescue || slices.ContainsFunc(r1.Sides, func(fs protocol.FamilySide) bool { return fs.Sandwich }) {
+			t.Fatalf("round1 %+v", r1)
+		}
+		if r1.WindowMs > 10000 || len(r1.Sides) != 1 || sum.Plan.PairClass != "" {
+			t.Fatalf("round1 sides %+v", r1)
+		}
+		lim, _ := protocol.BudgetLight.Limits()
+		s := r1.Sides[0]
+		if s.Role != protocol.SideReplyOnly && s.Role != protocol.SideSender && s.Role != protocol.SideReceiver && s.Role != protocol.SideBoth {
+			t.Fatalf("role %q", s.Role)
+		}
+		if s.SendDelayMs > 3000 || int(s.Sockets) > int(lim.MaxSockets) || s.MaxPackets > lim.MaxPackets ||
+			s.MaxPPS > lim.MaxPPS || s.MaxNewPerSec > 100 || s.MaxDistinctPorts > lim.MaxDistinctPorts || len(s.Stages) > 8 {
+			t.Fatalf("side %d not clamped: %+v", i, s)
+		}
+		peer := pubR
+		if i == 1 {
+			peer = pubI
+		}
+		for _, st := range s.Stages {
+			if st.Kind != protocol.StageDirect {
+				t.Fatalf("relay-only plan has a %s stage", st.Kind)
+			}
+			if st.TTL != 0 && st.TTL < 2 || st.Repeats > 8 {
+				t.Fatalf("stage %+v", st)
+			}
+			for _, tg := range st.Targets {
+				if tg != peer {
+					t.Fatalf("target %v admitted", tg)
+				}
+			}
+		}
+	}
+	p.s.Abort(protocol.ReasonCanceled, "")
+	res := r.wait(p.s)
+	if res.Counters.PlanClamped == 0 || res.Counters.TargetRejected == 0 {
+		t.Fatalf("counters %+v", res.Counters)
+	}
+	if len(r.waitEvents(EvPlanClamped, 1)) == 0 {
+		t.Fatal("no clamp events")
+	}
+}
+
+// TestPlannerWithoutTargets: a plan without one admitted target fails with
+// no_probe_endpoint.
+func TestPlannerWithoutTargets(t *testing.T) {
+	r := newRig(t, func(c *Config) {
+		c.Planner = evilPlanner{round: func(in RoundInput) RoundDecision {
+			bad := []protocol.FamilySide{{Family: protocol.FamilyUDP4, Role: protocol.SideBoth, Sockets: 1, MaxPackets: 10,
+				Stages: []protocol.Stage{{Kind: protocol.StageDirect, Targets: []netip.AddrPort{mustAP("8.8.4.4:53")}}}}}
+			return RoundDecision{Variant: 1, VariantName: "x", Budget: protocol.BudgetLight, Window: time.Second,
+				Sides: [2][]protocol.FamilySide{bad, nil}}
+		}}
+	})
+	p := r.pair(SessionOptions{})
+	p.report(0)
+	p.report(1)
+	for i := range 2 {
+		if a := expectAbort(t, p.cl[i]); a.Code != protocol.ReasonNoProbeEndpoint {
+			t.Fatalf("abort %+v", a)
+		}
+	}
+	if res := r.wait(p.s); res.Code != protocol.ReasonNoProbeEndpoint {
+		t.Fatalf("result %+v", res)
+	}
+}
+
+// TestPlannerStop: a planner stop ends the session with its reason, among
+// them local_port_bind_failed, which is retried after 5 s.
+func TestPlannerStop(t *testing.T) {
+	cases := []struct {
+		code  protocol.Reason
+		retry RetryAdvice
+	}{
+		{protocol.ReasonHardSymmetricRandom, RetryAdvice{}},
+		{protocol.ReasonLocalPortBindFailed, RetryAdvice{Retryable: true, After: retryBindFailed}},
+	}
+	for _, c := range cases {
+		r := newRig(t, func(cfg *Config) {
+			cfg.Planner = evilPlanner{round: func(RoundInput) RoundDecision { return RoundDecision{Stop: c.code} }}
+		})
+		p := r.pair(SessionOptions{})
+		p.report(0)
+		p.report(1)
+		if res := r.wait(p.s); res.Code != c.code || res.Outcome != OutcomeFailed || res.Retry != c.retry {
+			t.Fatalf("result %+v", res)
+		}
+	}
+}
+
+// TestPlannerUnknownReason: a stop reason outside the 26 is a planner defect.
+func TestPlannerUnknownReason(t *testing.T) {
+	r := newRig(t, func(c *Config) {
+		c.Planner = evilPlanner{round: func(RoundInput) RoundDecision { return RoundDecision{Stop: "made_up"} }}
+	})
+	p := r.pair(SessionOptions{})
+	p.report(0)
+	p.report(1)
+	if res := r.wait(p.s); res.Code != protocol.ReasonInternal {
+		t.Fatalf("result %+v", res)
+	}
+}
+
+// TestUnverifiedModeDirectOnly: the relay-only mode needs its switch, marks
+// the summary unverified and warns.
+func TestUnverifiedModeDirectOnly(t *testing.T) {
+	if _, err := New(Config{}); err == nil {
+		t.Fatal("nil Registry without AllowUnverifiedTargets accepted")
+	}
+	if _, err := New(Config{Registry: natprobe.NewRegistry(natprobe.RegistryConfig{}), AllowUnverifiedTargets: true}); err == nil {
+		t.Fatal("AllowUnverifiedTargets with a Registry accepted")
+	}
+	if _, err := New(Config{AllowUnverifiedTargets: true, TransportFallback: "a-very-long-transport-name"}); err == nil {
+		t.Fatal("long fallback accepted")
+	}
+	bad := &protocol.Policy{Budget: protocol.Budget{Birthday: "huge"}}
+	if _, err := New(Config{AllowUnverifiedTargets: true, Policy: bad}); err == nil {
+		t.Fatal("bad policy accepted")
+	}
+	r := newRig(t)
+	p := r.pair(SessionOptions{})
+	sums := p.summaries()
+	for _, sum := range sums {
+		if !maps.Equal(sum.Pair.Unverified, map[protocol.Family]bool{protocol.FamilyUDP4: true}) {
+			t.Fatalf("unverified %v", sum.Pair.Unverified)
+		}
+		for _, s := range sum.Plan.Round1.Sides {
+			targets := 0
+			for _, st := range s.Stages {
+				if st.Kind != protocol.StageDirect && st.Kind != protocol.StageReplyOnly || len(st.Targets) > 16 || st.Repeats > 8 {
+					t.Fatalf("stage %+v", st)
+				}
+				targets += len(st.Targets)
+			}
+			if int(s.MaxPackets) > 8*targets {
+				t.Fatalf("side %+v", s)
+			}
+		}
+	}
+	p.s.Abort(protocol.ReasonCanceled, "")
+	if res := r.wait(p.s); !contains(res.Warn, protocol.WarnUnverifiedTargets) {
+		t.Fatalf("warn %v", res.Warn)
+	}
+}
+
+// testSession is a bare session for white-box tests of the planning helpers.
+func testSession(t *testing.T, opts ...rigOpt) (*rig, *Session) {
+	r := newRig(t, opts...)
+	s := r.session(SessionOptions{ClientKeys: [2]string{"ik", "rk"}})
+	s.st.verified = [2]map[protocol.Family][]netip.Addr{
+		{protocol.FamilyUDP4: {pubI.Addr()}},
+		{protocol.FamilyUDP4: {pubR.Addr()}},
+	}
+	s.st.lan = [2]map[protocol.Family][]netip.Addr{
+		{protocol.FamilyUDP4: {localI.Addr()}},
+		{protocol.FamilyUDP4: {localR.Addr()}},
+	}
+	s.st.reports = [2]*protocol.ProbeReport{{}, {}}
+	s.st.cls = Classification{Families: []protocol.Family{protocol.FamilyUDP4}}
+	t.Cleanup(func() { s.Abort(protocol.ReasonCanceled, "") })
+	return r, s
+}
+
+// TestAdmission checks the target admission rules.
+func TestAdmission(t *testing.T) {
+	_, s := testSession(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u4 := protocol.FamilyUDP4
+	cases := []struct {
+		a    netip.AddrPort
+		want admitVerdict
+	}{
+		{pubR, admitPublic},
+		{netip.AddrPortFrom(pubR.Addr(), 1), admitPublic}, // another port of a verified IP
+		{mustAP("8.8.8.8:53"), admitRejected},
+		{localR, admitRejected}, // private, but not the same site
+		{mustAP("255.255.255.255:9"), admitRejected},
+		{mustAP("[fe80::1]:9"), admitRejected},
+		{netip.AddrPortFrom(pubR.Addr(), 0), admitRejected},
+	}
+	for _, c := range cases {
+		if got := s.admitDirectLocked(1, u4, c.a, 1, 0); got != c.want {
+			t.Errorf("%v: %v, want %v", c.a, got, c.want)
+		}
+	}
+	// A private LAN address needs the same LAN, not only the same
+	// public IP; a private port mapping (upstream-LAN candidate) needs the
+	// same public IP, at its exact port.
+	upstream := mustAP("100.64.1.2:4000")
+	s.st.upstream[1] = map[protocol.Family][]netip.AddrPort{u4: {upstream}}
+	if s.admitDirectLocked(1, u4, upstream, 1, 0) != admitRejected {
+		t.Fatal("upstream candidate without the same public IP")
+	}
+	s.st.pair.SamePublicIP = map[protocol.Family]bool{u4: true}
+	if got := s.admitDirectLocked(1, u4, localR, 1, 0); got != admitRejected {
+		t.Fatalf("LAN target of another LAN behind the same public IP: %v", got)
+	}
+	if s.admitDirectLocked(1, u4, upstream, 1, 0) != admitLAN ||
+		s.admitDirectLocked(1, u4, netip.AddrPortFrom(upstream.Addr(), 4001), 1, 0) != admitRejected {
+		t.Fatal("upstream candidate")
+	}
+	s.st.pair.LikelySameLAN = map[protocol.Family]bool{u4: true}
+	if got := s.admitDirectLocked(1, u4, localR, 1, 0); got != admitLAN {
+		t.Fatalf("same-LAN target: %v", got)
+	}
+	if !s.admitIPLocked(1, u4, pubR.Addr(), 1, 0) || s.admitIPLocked(1, u4, netip.MustParseAddr("8.8.8.8"), 1, 0) {
+		t.Fatal("predict and random stages need a verified peer IP")
+	}
+	// Loopback is refused like at the client, even as a verified or
+	// same-LAN address.
+	loop := mustAP("127.0.0.1:4000")
+	s.st.verified[1][u4] = append(s.st.verified[1][u4], loop.Addr())
+	s.st.lan[1][u4] = append(s.st.lan[1][u4], loop.Addr())
+	if got := s.admitDirectLocked(1, u4, loop, 1, 0); got != admitRejected {
+		t.Fatalf("loopback target: %v", got)
+	}
+	if usableAddr(mustAP("[::1]:4000"), protocol.FamilyUDP6) {
+		t.Fatal("IPv6 loopback")
+	}
+
+	// Stages: private targets of a same-site peer get a stage of their own
+	// with at most two packets each; predict needs a verified IP.
+	stages := []protocol.Stage{
+		{Kind: protocol.StageDirect, Targets: []netip.AddrPort{pubR, localR}, Repeats: 5, TTL: 99},
+		{Kind: protocol.StagePredict, IP: pubR.Addr(), Anchor: 1, Steps: []int16{1, 1, 1, 1}, Span: 5000},
+		{Kind: protocol.StageRandom, IP: netip.MustParseAddr("9.9.9.9"), Count: 1},
+		{Kind: protocol.StageReplyOnly, AtMs: 7, Targets: []netip.AddrPort{pubR}},
+	}
+	out, sends, _ := s.clampStagesLocked(1, 0, u4, stages, true, 0)
+	if !sends || len(out) != 4 {
+		t.Fatalf("stages %+v", out)
+	}
+	if out[0].Targets[0] != pubR || out[0].TTL != maxTTL || out[1].Targets[0] != localR || out[1].Repeats != lanRepeats {
+		t.Fatalf("direct stages %+v", out[:2])
+	}
+	if out[2].Span != maxSpan || len(out[2].Steps) != maxSteps || out[3].Kind != protocol.StageReplyOnly || out[3].Targets != nil {
+		t.Fatalf("other stages %+v", out[2:])
+	}
+	out, _, _ = s.clampStagesLocked(1, 0, u4, stages[:1], false, 0)
+	if out[0].TTL != 0 {
+		t.Fatal("ttl without low_ttl support")
+	}
+
+	// An unverified family: no predict or random stage, at most four
+	// distinct public targets, eight packets per target; sixteen when no
+	// family is verified.
+	s.st.cls.Families = []protocol.Family{protocol.FamilyUDP6, u4}
+	s.st.pair.Unverified = map[protocol.Family]bool{u4: true}
+	if s.admitIPLocked(1, u4, pubR.Addr(), 1, 0) {
+		t.Fatal("predict IP of an unverified family")
+	}
+	var many []netip.AddrPort
+	for i := range 6 {
+		many = append(many, netip.AddrPortFrom(pubR.Addr(), uint16(100+i)))
+	}
+	out, sends, n := s.clampStagesLocked(1, 0, u4, []protocol.Stage{
+		{Kind: protocol.StageDirect, Targets: many[:3], Repeats: 8},
+		{Kind: protocol.StageDirect, Targets: many[2:], Repeats: 8},
+		stages[1],
+	}, true, 0)
+	if !sends || len(out) != 2 || !slices.Equal(out[1].Targets, many[2:4]) || n != 4 {
+		t.Fatalf("unverified family stages %+v (%d targets)", out, n)
+	}
+	s.st.cls.Families = []protocol.Family{u4}
+	if out, _, n = s.clampStagesLocked(1, 0, u4, []protocol.Stage{{Kind: protocol.StageDirect, Targets: many, Repeats: 8}}, true, 0); n != len(many) || len(out[0].Targets) != len(many) {
+		t.Fatalf("every family unverified: stages %+v (%d targets)", out, n)
+	}
+}
+
+// TestFreshClamped: fresh stages aim only at
+// what admission allows — a fresh_peer stage and a paired fresh stage at a
+// verified IP, a fresh stage at verified endpoints — never in an unverified
+// family or under NoPrediction, and fresh sockets come on top of the side's
+// own within the socket ceiling.
+func TestFreshClamped(t *testing.T) {
+	_, s := testSession(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u4 := protocol.FamilyUDP4
+	nine := netip.MustParseAddr("9.9.9.9")
+	stages := []protocol.Stage{
+		{Kind: protocol.StageFresh, Count: 300, Repeats: 3, Targets: []netip.AddrPort{pubR, mustAP("8.8.8.8:53")}},
+		{Kind: protocol.StageFreshPeer, IP: pubR.Addr(), Count: 5, Repeats: 3},
+		{Kind: protocol.StageFreshPeer, IP: nine, Count: 5},
+		{Kind: protocol.StageFresh, IP: nine, Count: 5},
+	}
+	out, sends, _ := s.clampStagesLocked(1, 0, u4, stages, true, 0)
+	if !sends || len(out) != 2 || !slices.Equal(out[0].Targets, []netip.AddrPort{pubR}) || out[0].Count != maxSockets ||
+		out[1].Kind != protocol.StageFreshPeer || out[1].IP != pubR.Addr() {
+		t.Fatalf("stages %+v", out)
+	}
+	capped, sends := s.capFreshLocked(1, slices.Clone(out), 6)
+	if !sends || capped[0].Count != 6 {
+		t.Fatalf("capped %+v", capped)
+	}
+	if capped, sends = s.capFreshLocked(1, slices.Clone(out[:1]), 0); sends || len(capped) != 0 {
+		t.Fatalf("no room: %+v", capped)
+	}
+	s.ablate.NoPrediction = true
+	if out, sends, _ = s.clampStagesLocked(1, 0, u4, stages, true, 0); sends || len(out) != 0 {
+		t.Fatalf("NoPrediction kept %+v", out)
+	}
+	s.ablate.NoPrediction = false
+	s.st.pair.Unverified = map[protocol.Family]bool{u4: true}
+	if out, sends, _ = s.clampStagesLocked(1, 0, u4, stages, true, 0); sends || len(out) != 0 {
+		t.Fatalf("unverified family kept %+v", out)
+	}
+}
+
+// TestEscalationGuard: the first round is at most min(class of Ladder[0],
+// balanced) unless memory proved the variant; rounds rise one class at a
+// time; heavy waits for round 2 with random-EDM evidence, else round 3;
+// extreme needs AllowExtreme, round 3 and the keys' hourly allowance.
+func TestEscalationGuard(t *testing.T) {
+	_, s := testSession(t, func(c *Config) { c.Budget.AllowExtreme = true; c.Limits.ExtremePerHour = 1 })
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := &s.st
+	st.cls.Ladder = []VariantID{1, 2}
+	st.cls.Budgets = map[VariantID]protocol.BudgetClass{1: protocol.BudgetHeavy}
+	check := func(name string, k int, in, want protocol.BudgetClass) {
+		t.Helper()
+		if got := s.guardClassLocked(k, in, 0); got != want {
+			t.Errorf("%s: %s → %s, want %s", name, in, got, want)
+		}
+	}
+	check("first round cap", 1, protocol.BudgetExtreme, protocol.BudgetBalanced)
+	check("invalid class", 1, "bogus", protocol.BudgetLight)
+	st.promoted = true
+	check("proven variant", 1, protocol.BudgetHeavy, protocol.BudgetHeavy)
+	st.promoted = false
+	st.lastGranted = protocol.BudgetLight
+	check("one step", 2, protocol.BudgetHeavy, protocol.BudgetBalanced)
+	st.lastGranted = protocol.BudgetBalanced
+	check("heavy in round 2 without RND", 2, protocol.BudgetHeavy, protocol.BudgetBalanced)
+	st.pairRND = true
+	check("heavy in round 2 with RND", 2, protocol.BudgetHeavy, protocol.BudgetHeavy)
+	st.lastGranted = protocol.BudgetHeavy
+	check("extreme in round 2", 2, protocol.BudgetExtreme, protocol.BudgetHeavy)
+	check("extreme in round 3", 3, protocol.BudgetExtreme, protocol.BudgetExtreme)
+	check("extreme allowance used", 4, protocol.BudgetExtreme, protocol.BudgetHeavy)
+}
+
+// TestDefaultPlannerFallback: a planner that panics is replaced by the
+// default planner, which plans the rest of the session.
+func TestDefaultPlannerFallback(t *testing.T) {
+	for _, where := range []string{"classify", "round"} {
+		t.Run(where, func(t *testing.T) {
+			r := newRig(t, func(c *Config) { c.Planner = panicPlanner{where: where} })
+			p := r.pair(SessionOptions{})
+			sums := p.summaries()
+			if sums[0].Plan.PairClass != plan.PairEasy {
+				t.Fatalf("pair class %q", sums[0].Plan.PairClass)
+			}
+			p.s.Abort(protocol.ReasonCanceled, "")
+			r.wait(p.s)
+			if r.c.Stats().Panics == 0 || len(r.waitEvents(EvInternalError, 1)) == 0 {
+				t.Fatal("planner panic not counted")
+			}
+		})
+	}
+}
+
+type panicPlanner struct{ where string }
+
+func (p panicPlanner) Classify(in ClassifyInput) Classification {
+	if p.where == "classify" {
+		panic("classify")
+	}
+	return plan.DefaultPlanner{}.Classify(in)
+}
+
+func (p panicPlanner) Round(_ RoundInput) RoundDecision {
+	panic("round")
+}
+
+// sidePlanner plans every round as side(peer) for each role, peer being the
+// other side's public address.
+type sidePlanner struct {
+	side func(peer netip.AddrPort) protocol.FamilySide
+}
+
+func (sidePlanner) Classify(in ClassifyInput) Classification {
+	return plan.DefaultPlanner{}.Classify(in)
+}
+
+func (p sidePlanner) Round(in RoundInput) RoundDecision {
+	return RoundDecision{Variant: in.Class.Ladder[0], VariantName: "fixed", Budget: protocol.BudgetLight, Window: time.Second,
+		Sides: [2][]protocol.FamilySide{{p.side(pubR)}, {p.side(pubI)}}}
+}
+
+// TestClampNeedNotKeepEquality: "MaxPackets is what the stages
+// expand to" binds the Planner's output only. The clamp may leave a grant
+// below the expansion — scaled to the remaining budget, or capped at 8 ×
+// targets in an unverified family — or above it once admission dropped a
+// target; it does not trim stages or raise grants to restore the equality,
+// and a client sending its whole grant passes the audit.
+func TestClampNeedNotKeepEquality(t *testing.T) {
+	direct := func(sockets uint16, repeats uint8, extra ...netip.AddrPort) func(netip.AddrPort) protocol.FamilySide {
+		return func(peer netip.AddrPort) protocol.FamilySide {
+			targets := append([]netip.AddrPort{peer}, extra...)
+			return protocol.FamilySide{Family: protocol.FamilyUDP4, Role: protocol.SideBoth, Sockets: sockets,
+				MaxPackets: uint32(int(sockets) * len(targets) * int(repeats)), MaxPPS: 50, MaxNewPerSec: 50, MaxDistinctPorts: 4,
+				Stages: []protocol.Stage{{Kind: protocol.StageDirect, Targets: targets, Repeats: repeats}}}
+		}
+	}
+	cases := []struct {
+		name   string
+		side   func(netip.AddrPort) protocol.FamilySide
+		limits Limits
+		grant  uint32 // the round-1 grant after the clamp
+		stages int    // what the clamped stages ask, as the planner counts them
+	}{
+		// 2 sockets × 8: the unverified family's cap is 8 × 1 target.
+		{"unverified cap", direct(2, 8), Limits{}, 8, 16},
+		// The key quota leaves 5 packets of the 6 planned.
+		{"budget", direct(2, 3), Limits{PacketsPerMinute: [2]int{5, 5}}, 5, 6},
+		// Admission drops 8.8.8.8: 5 packets left of a 10-packet grant.
+		{"admission", direct(1, 5, mustAP("8.8.8.8:5000")), Limits{}, 8, 5},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t, func(cfg *Config) { cfg.Planner = sidePlanner{side: c.side}; cfg.Limits = c.limits })
+			p := r.pair(SessionOptions{ClientKeys: [2]string{"ik", "rk"}})
+			sums := p.summaries()
+			for i, sum := range sums {
+				fs := sum.Plan.Round1.Sides[0]
+				stages := 0
+				for _, st := range fs.Stages {
+					stages += int(fs.Sockets) * len(st.Targets) * int(st.Repeats)
+				}
+				if fs.MaxPackets != c.grant || stages != c.stages {
+					t.Fatalf("side %d: grant %d for stages of %d packets (%s), want a grant of %d off the expansion",
+						i, fs.MaxPackets, stages, fmt.Sprint(fs.Stages), c.grant)
+				}
+			}
+			if c.name == "budget" {
+				p.s.Abort(protocol.ReasonCanceled, "")
+				r.wait(p.s)
+				return
+			}
+			for i := range 2 {
+				send(t, p.cl[i], simclient.Ready(sums[i], roleOf(i), 1))
+			}
+			expect[protocol.PunchGo](t, p.cl[0])
+			expect[protocol.PunchGo](t, p.cl[1])
+			full := simclient.Outcome{Family: protocol.FamilyUDP4, Sent: c.grant}
+			if gos := p.endRound(1, [2]simclient.Outcome{full, full}); gos[0] == nil || gos[1] == nil {
+				t.Fatal("no round 2 after both sides sent their whole grant")
+			}
+			p.s.Abort(protocol.ReasonCanceled, "")
+			if res := r.wait(p.s); res.Code != protocol.ReasonCanceled || res.Counters.PlanClamped == 0 {
+				t.Fatalf("result %+v", res)
+			}
+		})
+	}
+}

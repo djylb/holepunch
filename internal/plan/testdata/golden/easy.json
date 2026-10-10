@@ -1,0 +1,265 @@
+{
+  "name": "easy",
+  "pair_class": "easy",
+  "side_a": "initiator",
+  "rounds": [
+    {
+      "round": 1,
+      "variant": "easy_r1_direct",
+      "budget": "light",
+      "window_ms": 800,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 5,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 5
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 5,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 5
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 2,
+      "variant": "easy_r2_ttl",
+      "budget": "light",
+      "window_ms": 1000,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "sender",
+            "send_delay_ms": 80,
+            "sockets": 1,
+            "max_packets": 5,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 80,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 5
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "receiver",
+            "sockets": 1,
+            "max_packets": 5,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 5,
+                "ttl": 4
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 3,
+      "variant": "easy_r3_ttl",
+      "budget": "light",
+      "window_ms": 1200,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "receiver",
+            "sockets": 1,
+            "max_packets": 5,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 5,
+                "ttl": 7
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "sender",
+            "send_delay_ms": 200,
+            "sockets": 1,
+            "max_packets": 5,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 200,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 5
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 4,
+      "variant": "easy_r4_slow",
+      "budget": "light",
+      "window_ms": 1500,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "sender",
+            "send_delay_ms": 500,
+            "sockets": 1,
+            "max_packets": 4,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 500,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 4
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 4,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 4
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 5,
+      "variant": "easy_r5_final",
+      "budget": "light",
+      "window_ms": 3000,
+      "final": true,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "sender",
+            "send_delay_ms": 2000,
+            "sockets": 1,
+            "max_packets": 3,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 2000,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 3
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "receiver",
+            "sockets": 1,
+            "max_packets": 3,
+            "max_pps": 80,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 1,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.1:40001"
+                ],
+                "repeats": 3,
+                "ttl": 4
+              }
+            ]
+          }
+        ]
+      ]
+    }
+  ]
+}

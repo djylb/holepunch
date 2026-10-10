@@ -1,0 +1,74 @@
+[
+  {
+    "name": "nominate/min",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 6,
+    "nonce": "101112131415161718191a1b",
+    "plain_len": 24,
+    "header": {
+      "type": "nominate",
+      "role": "initiator",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 2,
+      "sock": 2,
+      "cand": 12305,
+      "aux": 1,
+      "seq": 42,
+      "ts": 2100,
+      "echo_seq": 0,
+      "echo_ts": 0
+    },
+    "tlvs": {
+      "observed": "",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": null,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "08010202301100010000002a000008340000000000000000",
+    "wire": "06101112131415161718191a1bb842ea14fda09c971c96c3e2871924e131f167e245fecce3b8fc2058a37672d93c3fb74b7064eee0"
+  },
+  {
+    "name": "nominate/extra-slot",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 10,
+    "nonce": "505152535455565758595a5b",
+    "plain_len": 40,
+    "header": {
+      "type": "nominate",
+      "role": "initiator",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 2,
+      "sock": 129,
+      "cand": 65535,
+      "aux": 3,
+      "seq": 44,
+      "ts": 2120,
+      "echo_seq": 0,
+      "echo_ts": 0
+    },
+    "tlvs": {
+      "observed": "",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": null,
+      "slot": 2,
+      "paths": null
+    },
+    "plaintext": "08010281ffff00030000002c00000848000000000000000006010200000000000000000000000000",
+    "wire": "0a505152535455565758595a5b0b428d3c40964b9de1f90adca9bd66816478eedae161ae90015e33e4cb5ae8997d5679e50ffb46f2421b464fb0d395d00a3247a369fd4f96"
+  }
+]

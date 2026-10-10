@@ -1,0 +1,11 @@
+go test fuzz v1
+byte('!')
+byte('#')
+byte('J')
+byte('\a')
+uint16(3005)
+byte('\x00')
+int16(1)
+float32(0)
+uint32(3000)
+uint64(281474976710666)

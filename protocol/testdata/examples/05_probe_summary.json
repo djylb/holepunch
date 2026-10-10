@@ -1,0 +1,129 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "self": {
+    "families": [
+      {
+        "family": "udp4",
+        "traits": {
+          "mapping": "eim",
+          "mapping_conf": "medium",
+          "filtering": "pdf"
+        },
+        "endpoints": [
+          {
+            "addr": "198.51.100.7:40123",
+            "src": "server",
+            "sock": 0,
+            "v": true
+          }
+        ]
+      }
+    ]
+  },
+  "peer": {
+    "families": [
+      {
+        "family": "udp4",
+        "traits": {
+          "mapping": "apdm",
+          "port_alloc": "sequential",
+          "port_step": 2
+        },
+        "endpoints": [
+          {
+            "addr": "192.0.2.55:61001",
+            "src": "server",
+            "sock": 0,
+            "v": true
+          },
+          {
+            "addr": "192.0.2.55:61003",
+            "src": "server",
+            "sock": 0,
+            "v": true
+          }
+        ]
+      }
+    ]
+  },
+  "pair": {
+    "shared_families": [
+      "udp4"
+    ],
+    "probe_rtt_ms": {
+      "initiator": 31,
+      "responder": 88
+    }
+  },
+  "transport": {
+    "mode": "quic",
+    "peer_data": ""
+  },
+  "timeouts": {
+    "probe_timeout_ms": 2000,
+    "summary_wait_ms": 20000,
+    "go_wait_ms": 5000,
+    "handshake_timeout_ms": 20000,
+    "handover_timeout_ms": 2000,
+    "transport_timeout_ms": 10000,
+    "max_rounds": 5
+  },
+  "plan": {
+    "id": "p-7f3a",
+    "pair_class": "pdf_x_seq",
+    "rounds_max": 5,
+    "ladder": [
+      "pdf_x_seq_r1",
+      "pdf_x_seq_r2",
+      "pdf_x_seq_r3",
+      "pdf_x_seq_r4_birthday",
+      "pdf_x_seq_r5_birthday"
+    ],
+    "budget": {
+      "max_packets": 2500,
+      "max_pps": 200,
+      "max_distinct_targets": 1024,
+      "max_sockets": 8,
+      "max_new_per_sec": 100,
+      "birthday": "off"
+    },
+    "round1": {
+      "round": 1,
+      "variant": "pdf_x_seq_r1",
+      "budget": "balanced",
+      "window_ms": 800,
+      "seed": 2876543210,
+      "sides": [
+        {
+          "family": "udp4",
+          "role": "both",
+          "sockets": 1,
+          "max_packets": 19,
+          "max_pps": 150,
+          "max_new_per_sec": 100,
+          "max_distinct_ports": 17,
+          "stages": [
+            {
+              "kind": "direct",
+              "at_ms": 0,
+              "targets": [
+                "192.0.2.55:61001"
+              ],
+              "repeats": 3
+            },
+            {
+              "kind": "predict",
+              "at_ms": 20,
+              "ip": "192.0.2.55",
+              "anchor": 61005,
+              "steps": [
+                2
+              ],
+              "span": 16
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

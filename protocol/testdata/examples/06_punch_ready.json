@@ -1,0 +1,11 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "role": "responder",
+  "elapsed_ms": 7,
+  "families": [
+    {
+      "family": "udp4",
+      "sockets": 1
+    }
+  ]
+}

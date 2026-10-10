@@ -1,0 +1,252 @@
+{
+  "name": "pres_x_pres",
+  "pair_class": "pres_x_pres",
+  "side_a": "initiator",
+  "rounds": [
+    {
+      "round": 1,
+      "variant": "pres_r1",
+      "budget": "balanced",
+      "window_ms": 1500,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 26,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 8,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.8:40008"
+                ],
+                "repeats": 5
+              },
+              {
+                "kind": "fresh",
+                "at_ms": 0,
+                "ip": "203.0.113.8",
+                "count": 7,
+                "repeats": 3
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 26,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 8,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.7:40007"
+                ],
+                "repeats": 5
+              },
+              {
+                "kind": "fresh",
+                "at_ms": 0,
+                "ip": "203.0.113.7",
+                "count": 7,
+                "repeats": 3
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 2,
+      "variant": "pres_r2",
+      "budget": "heavy",
+      "window_ms": 2500,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 75,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 25,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.8:40008"
+                ],
+                "repeats": 3
+              },
+              {
+                "kind": "fresh",
+                "at_ms": 0,
+                "ip": "203.0.113.8",
+                "count": 24,
+                "repeats": 3
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 1,
+            "max_packets": 75,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 25,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.7:40007"
+                ],
+                "repeats": 3
+              },
+              {
+                "kind": "fresh",
+                "at_ms": 0,
+                "ip": "203.0.113.7",
+                "count": 24,
+                "repeats": 3
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 3,
+      "variant": "rnd_x_rnd_r2",
+      "budget": "balanced",
+      "window_ms": 1200,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 8,
+            "max_packets": 48,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 33,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.8:40008"
+                ],
+                "repeats": 2
+              },
+              {
+                "kind": "predict",
+                "at_ms": 0,
+                "ip": "203.0.113.8",
+                "anchor": 40008,
+                "steps": [
+                  1
+                ],
+                "span": 32
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 8,
+            "max_packets": 48,
+            "max_pps": 150,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 33,
+            "stages": [
+              {
+                "kind": "direct",
+                "at_ms": 0,
+                "targets": [
+                  "203.0.113.7:40007"
+                ],
+                "repeats": 2
+              },
+              {
+                "kind": "predict",
+                "at_ms": 0,
+                "ip": "203.0.113.7",
+                "anchor": 40007,
+                "steps": [
+                  1
+                ],
+                "span": 32
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "round": 4,
+      "variant": "rnd_x_rnd_r3_birthday_both",
+      "budget": "heavy",
+      "window_ms": 3000,
+      "final": true,
+      "sides": [
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 16,
+            "max_packets": 256,
+            "max_pps": 300,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 256,
+            "stages": [
+              {
+                "kind": "random",
+                "at_ms": 0,
+                "ip": "203.0.113.8",
+                "count": 256
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "family": "udp4",
+            "role": "both",
+            "sockets": 16,
+            "max_packets": 256,
+            "max_pps": 300,
+            "max_new_per_sec": 100,
+            "max_distinct_ports": 256,
+            "stages": [
+              {
+                "kind": "random",
+                "at_ms": 0,
+                "ip": "203.0.113.7",
+                "count": 256
+              }
+            ]
+          }
+        ]
+      ]
+    }
+  ]
+}

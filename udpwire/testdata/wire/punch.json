@@ -1,0 +1,74 @@
+[
+  {
+    "name": "punch/low-ttl",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 14,
+    "nonce": "d0d1d2d3d4d5d6d7d8d9dadb",
+    "plain_len": 150,
+    "header": {
+      "type": "punch",
+      "role": "responder",
+      "low_ttl": true,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 2,
+      "sock": 133,
+      "cand": 12305,
+      "aux": 0,
+      "seq": 1000,
+      "ts": 2000,
+      "echo_seq": 0,
+      "echo_ts": 0
+    },
+    "tlvs": {
+      "observed": "",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": null,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "0606028530110000000003e8000007d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "wire": "0ed0d1d2d3d4d5d6d7d8d9dadb6d9fc328cf087e1075329e5fa8137f24ac3e29542145dcb3da399df5a2b62dfbc674218265525c11e9d2171e86b9333134c65f1a9c1f10a972d435c53812d557fffbe4a9ecedad26646ff62da222ba6a8412b90e3af2510d9498fefab453ea1953aa8affdb44c65297712dbe1b4aa2f56adbe1875f70d0f363ad24fc88498064bc5f0e6d0f712da4036f6c58769bc088278c8bed666e2c15bdda975e99e1d0b37d50891846f9"
+  },
+  {
+    "name": "punch/min-wire-53",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 15,
+    "nonce": "e0e1e2e3e4e5e6e7e8e9eaeb",
+    "plain_len": 24,
+    "header": {
+      "type": "punch",
+      "role": "initiator",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 1,
+      "sock": 0,
+      "cand": 0,
+      "aux": 0,
+      "seq": 1001,
+      "ts": 2001,
+      "echo_seq": 0,
+      "echo_ts": 0
+    },
+    "tlvs": {
+      "observed": "",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": null,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "0601010000000000000003e9000007d10000000000000000",
+    "wire": "0fe0e1e2e3e4e5e6e7e8e9eaeb87a240b82d188d83b52e4b63c35e8dec5eb9afb302a0dfa4a5c2ee4b8a2afbbdc1bdd40ed8079cc6"
+  }
+]

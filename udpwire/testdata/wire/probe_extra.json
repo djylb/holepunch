@@ -1,0 +1,38 @@
+[
+  {
+    "name": "probe_extra/v4-min",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 11,
+    "nonce": "a0a1a2a3a4a5a6a7a8a9aaab",
+    "plain_len": 44,
+    "header": {
+      "type": "probe_extra",
+      "role": "server",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 0,
+      "sock": 1,
+      "cand": 65535,
+      "aux": 5,
+      "seq": 11,
+      "ts": 2,
+      "echo_seq": 77,
+      "echo_ts": 123456
+    },
+    "tlvs": {
+      "observed": "198.51.100.20:1",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": null,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "03030001ffff00050000000b000000020000004d0001e240011200000000000000000000ffffc63364140001",
+    "wire": "0ba0a1a2a3a4a5a6a7a8a9aaab95ad6c58cd9512dfda894910fe7d1229e5080e096cb14519a2fb2acf75d502e530f9f35c8986154ee7e60baceae50adb3cf7a97d3c852f2662e0f034"
+  }
+]

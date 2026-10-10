@@ -1,0 +1,33 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "role": "initiator",
+  "round": 2,
+  "elapsed_ms": 640,
+  "fire_skew_ms": 0,
+  "status": "confirmed",
+  "families": [
+    {
+      "family": "udp4",
+      "hit": true,
+      "seen_from": [
+        "192.0.2.55:61019"
+      ],
+      "peer_seen_us": true,
+      "sent": 41,
+      "recv": 6,
+      "distinct_ports": 5
+    }
+  ],
+  "path": {
+    "family": "udp4",
+    "local": "192.168.1.20:51820",
+    "remote": "192.0.2.55:61019",
+    "round": 2,
+    "epoch": 1,
+    "sock": 0,
+    "cand": 32771,
+    "cand_kind": "targets",
+    "kind": "public",
+    "rtt_ms": 44
+  }
+}

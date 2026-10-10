@@ -1,0 +1,13 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "role": "initiator",
+  "kind": "peer_seen",
+  "round": 1,
+  "family": "udp4",
+  "remote": "192.0.2.55:61003",
+  "local": "192.168.1.20:51820",
+  "sock": 0,
+  "cand": 4096,
+  "type": 6,
+  "first": true
+}

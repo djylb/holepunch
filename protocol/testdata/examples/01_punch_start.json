@@ -1,0 +1,64 @@
+{
+  "session_id": "8Qm2s1Kc0b7ZtW9xPq3LrA",
+  "role": "initiator",
+  "token": "T3v1x0q5bJ8mH1YVt0rG2cN4cPq7Lw9yZr6sQ1eA2kM",
+  "wire": {
+    "route_id": "m9xZyQ2k1W0pS7aR3tU5vg",
+    "payload_min": 93,
+    "payload_max": 271
+  },
+  "control": {
+    "version": 1,
+    "features": [
+      "sandwich"
+    ]
+  },
+  "probe": {
+    "v": 3,
+    "observers": [
+      {
+        "id": 0,
+        "addr": "203.0.113.7:3478",
+        "group": 0
+      },
+      {
+        "id": 1,
+        "addr": "203.0.113.7:3479",
+        "group": 0
+      },
+      {
+        "id": 2,
+        "addr": "203.0.113.7:3480",
+        "group": 0
+      }
+    ],
+    "extra": true,
+    "second_socket": true,
+    "siblings": 2
+  },
+  "timeouts": {
+    "probe_timeout_ms": 2000,
+    "summary_wait_ms": 20000,
+    "go_wait_ms": 5000,
+    "handshake_timeout_ms": 20000,
+    "handover_timeout_ms": 2000,
+    "transport_timeout_ms": 10000,
+    "max_rounds": 5
+  },
+  "policy": {
+    "budget": {
+      "max_packets": 3000,
+      "max_pps": 300,
+      "max_distinct_targets": 1024,
+      "max_sockets": 40,
+      "max_new_per_sec": 100,
+      "birthday": "conservative"
+    },
+    "port_mapping": {
+      "upnp": true,
+      "pcp": true,
+      "natpmp": true,
+      "lease_seconds": 3600
+    }
+  }
+}

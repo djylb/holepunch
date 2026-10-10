@@ -1,0 +1,110 @@
+[
+  {
+    "name": "accept",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 7,
+    "nonce": "202122232425262728292a2b",
+    "plain_len": 160,
+    "header": {
+      "type": "accept",
+      "role": "responder",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 2,
+      "sock": 133,
+      "cand": 12305,
+      "aux": 1,
+      "seq": 1002,
+      "ts": 2150,
+      "echo_seq": 42,
+      "echo_ts": 2100
+    },
+    "tlvs": {
+      "observed": "",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": 40,
+      "slot": null,
+      "paths": null
+    },
+    "plaintext": "0902028530110001000003ea000008660000002a0000083405040000002800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "wire": "07202122232425262728292a2b0f361ea350cfa0031ae48814b6e3d74be24252875005bab08804c2ef682bb8004734b1cff5c13bcfbcbac11794dcfe24da7ef13f7d05c7f476b806ce5b6fe4f7645da27c411513e2d7e9550214259ed2a2f11b415b84fd060eae59213032fe6951f1009fe2ea76573e1d995e815a75d947664423c891c75c0e4f1ab2db41410f4887d9b3f6a8767ff7daa0a9ec494ce7827623f217c99b852b449b2436b55f5f5f40d43587ee2058acc078e2ba421300"
+  },
+  {
+    "name": "accept/extra-slot",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 11,
+    "nonce": "606162636465666768696a6b",
+    "plain_len": 60,
+    "header": {
+      "type": "accept",
+      "role": "responder",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 2,
+      "sock": 134,
+      "cand": 65535,
+      "aux": 3,
+      "seq": 1004,
+      "ts": 2160,
+      "echo_seq": 44,
+      "echo_ts": 2120
+    },
+    "tlvs": {
+      "observed": "",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": 41,
+      "slot": 2,
+      "paths": null
+    },
+    "plaintext": "09020286ffff0003000003ec000008700000002c00000848050400000029060102000000000000000000000000000000000000000000000000000000",
+    "wire": "0b606162636465666768696a6b53248339b49bb10e27950a0c286848f1002109ed327dbcdd8ddff8930102c6c7a30a9994b627e8b3dcaecdc66ac58c4465baaef829db2193d63eb1478573c5c1bde6827764c2db8f35d5dba8"
+  },
+  {
+    "name": "accept/room",
+    "token": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "route": "202122232425262728292a2b2c2d2e2f",
+    "b0": 12,
+    "nonce": "707172737475767778797a7b",
+    "plain_len": 64,
+    "header": {
+      "type": "accept",
+      "role": "responder",
+      "low_ttl": false,
+      "retx": false,
+      "fa": false,
+      "fb": false,
+      "fc": false,
+      "round": 2,
+      "sock": 133,
+      "cand": 65535,
+      "aux": 3,
+      "seq": 1005,
+      "ts": 2161,
+      "echo_seq": 0,
+      "echo_ts": 0
+    },
+    "tlvs": {
+      "observed": "",
+      "extra_port": 0,
+      "cookie": 0,
+      "sandwich": null,
+      "rx_count": 42,
+      "slot": null,
+      "paths": 7
+    },
+    "plaintext": "09020285ffff0003000003ed00000871000000000000000005040000002a07010700000000000000000000000000000000000000000000000000000000000000",
+    "wire": "0c707172737475767778797a7b08c488d8f9451e95886978b218777f6b6af27198767a38a8c7f96731d1d58b96405741e4cd6caddee02c5738471aabb4f1cada2d0fffc2faf9d659887f0b2a6be41a6b1819c6f900bb82cfc32e05f148"
+  }
+]

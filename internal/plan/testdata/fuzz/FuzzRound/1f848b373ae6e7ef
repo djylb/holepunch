@@ -1,0 +1,11 @@
+go test fuzz v1
+byte('\f')
+byte('\x01')
+byte('>')
+byte('\t')
+uint16(2919)
+byte('\x00')
+int16(1)
+float32(0)
+uint32(0)
+uint64(844424930132010)
