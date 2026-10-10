@@ -21,10 +21,12 @@ func TestProbeEcho(t *testing.T) {
 	w := testworld.New(t, testworld.Options{})
 	hostC := w.Client(w.NATHost(nattest.PortRestricted()), nil)
 	ctx, cancel := context.WithCancel(context.Background())
+	handling := make(chan struct{}, 1)
 	echoed := make(chan int, 1)
 	served := make(chan error, 1)
 	go func() {
 		served <- hostC.Serve(ctx, client.Registration{HostID: "echo", TransportMode: mode}, func(ctx context.Context, s *client.Session) {
+			handling <- struct{}{}
 			echoed <- echo(ctx, s)
 		})
 	}()
@@ -43,6 +45,15 @@ func TestProbeEcho(t *testing.T) {
 	s, err := dialC.Open(context.Background(), client.OpenRequest{HostID: "echo", TransportMode: mode})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Until the host has handed over too (mostly before us, later on a slow
+	// runner), its session reads the punched socket and takes a ping as
+	// handover evidence instead of passing it on: wait for the handler,
+	// which runs after the handover.
+	select {
+	case <-handling:
+	case <-time.After(5 * time.Second):
+		t.Fatal("echo handler not started")
 	}
 	var out bytes.Buffer
 	report(&out, s)
