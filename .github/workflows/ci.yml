@@ -90,6 +90,10 @@ jobs:
           cache-dependency-path: |
             go.sum
             standalone/go.sum
+      # The load tests (-tags load, Unix only) are run by hand; vet keeps
+      # them compiling.
+      - name: vet load
+        run: go vet -tags load ./e2e/
       - name: e2e
         env:
           HOLEPUNCH_E2E_LEVEL: pr
