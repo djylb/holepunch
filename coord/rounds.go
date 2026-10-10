@@ -676,7 +676,7 @@ func (s *Session) stopRulesLocked(class RoundClass, now time.Duration) *terminal
 	case s.remainingLocked(now) < minWindow+a.d,
 		st.cur.final,
 		st.nonRescue >= int(s.to.MaxRounds) && !rescueNext:
-		return s.stopTermLocked("")
+		return s.stopTermLocked("", "")
 	}
 	for r := range 2 {
 		if s.budgetLeftLocked(r, now) < minRoundBudget {
@@ -687,11 +687,11 @@ func (s *Session) stopRulesLocked(class RoundClass, now time.Duration) *terminal
 }
 
 // stopTermLocked is the end of an unconfirmed punch: the planner's stop
-// reason, or the attribution from both sides' evidence (plan.Attribute;
+// reason and detail, or the attribution from both sides' evidence (plan.Attribute;
 // hard_symmetric_random only when both sides are RND, or when natprobe
 // measured the pair as one only the two cheap rounds can open and they ran
 // — whether the planner ended the ladder or max_rounds did).
-func (s *Session) stopTermLocked(reason protocol.Reason) *terminal {
+func (s *Session) stopTermLocked(reason protocol.Reason, stopDetail string) *terminal {
 	st := &s.st
 	code, detail := plan.AttributeDetail(st.ev)
 	if reason == "" {
@@ -699,6 +699,9 @@ func (s *Session) stopTermLocked(reason protocol.Reason) *terminal {
 	}
 	if reason != code {
 		detail = ""
+	}
+	if stopDetail != "" {
+		detail = stopDetail
 	}
 	return plannerEnd(reason, detail)
 }
@@ -783,9 +786,9 @@ func (s *Session) applyRoundLocked(gen uint64, k int, d decision, nowT time.Time
 	case !s.takeDecisionLocked(d):
 		fx.end(&terminal{code: protocol.ReasonInternal, detail: "panic:planner"})
 	case d.dec.Stop != "":
-		s.planEndLocked(&fx, s.stopTermLocked(d.dec.Stop), now)
+		s.planEndLocked(&fx, s.stopTermLocked(d.dec.Stop, d.dec.StopDetail), now)
 	case k > maxRound:
-		s.planEndLocked(&fx, s.stopTermLocked(""), now)
+		s.planEndLocked(&fx, s.stopTermLocked("", ""), now)
 	default:
 		if term := s.prepareRoundLocked(k, d.dec, now); term != nil {
 			s.planEndLocked(&fx, term, now)

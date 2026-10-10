@@ -160,7 +160,7 @@ func (s *Session) deadlineLocked(now time.Duration) effects {
 			}
 			fx.end(goneTerm(roleOf(g)))
 		case now >= st.punchDeadline:
-			fx.end(s.stopTermLocked(""))
+			fx.end(s.stopTermLocked("", ""))
 		case !st.cur.evaluating:
 			fx.merge(s.endRoundLocked(now))
 		}

@@ -561,11 +561,22 @@ func usableAddr(a netip.AddrPort, fam protocol.Family) bool {
 // maxRelayOnlyTargets).
 func (st *sessionState) allUnverified() bool {
 	for _, f := range st.cls.Families {
-		if !st.pair.Unverified[f] {
-			return false
+		if !st.pair.Unverified[f] || lanObservedFamily(st.views, f) {
+			return false // a LAN-observed family keeps the tighter unverified bounds
 		}
 	}
 	return len(st.cls.Families) > 0
+}
+
+// lanObservedFamily reports whether a side of family f is LAN-observed
+// (Traits.LANObserved).
+func lanObservedFamily(views [2]protocol.PeerView, f protocol.Family) bool {
+	for _, v := range views {
+		if fv, ok := familyView(v, f); ok && fv.Traits.LANObserved {
+			return true
+		}
+	}
+	return false
 }
 
 // isLAN reports whether ip is a private, shared (CGN) or IPv4 link-local

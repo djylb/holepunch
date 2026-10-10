@@ -192,7 +192,7 @@ func TestProtocolTable(t *testing.T) {
 	checkFields(t, "Endpoint", typeOf[Endpoint](), "addr", "src", "sock", "v")
 	checkFields(t, "Traits", typeOf[Traits](), "family", "no_nat", "mapping", "mapping_conf", "filtering", "filtering_conf", "port_alloc",
 		"port_alloc_conf", "port_step", "port_velocity", "port_noisy", "port_anchor", "port_anchor_ms", "port_lo", "port_hi", "first_preserved",
-		"multi_exit", "multi_homed", "drifted", "hairpin", "cgnat", "cross_ip", "path_dependent?", "public_ip", "observed", "samples", "provisional")
+		"multi_exit", "multi_homed", "drifted", "hairpin", "cgnat", "cross_ip", "path_dependent?", "lan_observed?", "public_ip", "observed", "samples", "provisional")
 	checkFields(t, "TraitsUpdate", typeOf[TraitsUpdate](), "family", "mapping?", "mapping_conf?", "filtering?", "filtering_conf?",
 		"port_step?", "port_velocity?", "hairpin?", "source")
 	checkFields(t, "PlanSpec", typeOf[PlanSpec](), "id", "pair_class", "rounds_max", "ladder?", "budget", "round1", "mode?", "advice?", "background_only?")

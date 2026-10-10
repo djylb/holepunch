@@ -39,8 +39,9 @@ go get github.com/djylb/holepunch
   that only admit known UDP protocols let the flow through. Send rate, new
   targets and distinct ports are capped per session.
 - **Many network shapes.** IPv4 and IPv6, dual stack, same LAN, same host,
-  shared upstream NAT, UPnP/NAT-PMP/PCP port mapping, and overlay interfaces
-  such as Tailscale or WireGuard (ranked last, and can be excluded).
+  shared upstream NAT, clients on the server's own LAN, UPnP/NAT-PMP/PCP port
+  mapping, and overlay interfaces such as Tailscale or WireGuard (ranked last,
+  and can be excluded).
 - **Several paths.** Optionally hand over more than one confirmed path, for
   example one per address family.
 - **Bounded resources.** Every session has hard limits on packets, sockets,
@@ -123,6 +124,20 @@ err = sess.Attach(protocol.RoleResponder, connB, coord.AttachOptions{})
 
 Once `Attach` returns nil the connection belongs to the session, which closes
 it when the session ends. `Config.OnResult` receives every session's outcome.
+
+### Clients on the server's LAN
+
+A client that reaches the server over a LAN route, or through a router
+hairpin that keeps the source address, is seen at its private address
+(`protocol.Traits.LANObserved`; the result warns `lan_observed` and the
+client's diagnostics carry the hint `server_sees_lan`). Two such clients on one
+LAN connect over it. With a peer elsewhere, the server knows no public address
+of the LAN client, so by default it is reached at the addresses its STUN
+servers and port mapping reported, with direct sends only and a small packet
+cap. `coord.Config.VerifiedTargetsOnly` (`holepunchd -verified-targets-only`)
+refuses such self-reported addresses. Letting the server see these clients at
+their public address (a hairpin with source NAT, or no LAN route to the
+server's public IP) avoids the restriction altogether.
 
 The package examples run the whole flow on a simulated Internet
 (`go test -run Example .`), and the `standalone` module is a complete

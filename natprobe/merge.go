@@ -34,7 +34,9 @@ type MergeDiag struct {
 //   - the filtering uses the server's sent counts and the client's seen
 //     counts, the latter capped by the former;
 //   - self-reported STUN and port-mapping addresses must pass the endpoint
-//     constraints; an admitted STUN value is a hint that can neither raise
+//     constraints (nat.ObsTable.AdmitReported: on a verified IP, or, for a
+//     LAN-observed family without MergeOptions.VerifiedTargetsOnly, any
+//     global address); an admitted STUN value is a hint that can neither raise
 //     natprobe's conclusions above Medium nor overturn them; one that
 //     contradicts them is counted (MergeDiag.STUNConflicts), and one
 //     at another port of natprobe's single mapping marks the traits
@@ -49,19 +51,33 @@ type MergeDiag struct {
 // (protocol.CheckOrigin), else Merge returns that validation error. Merge
 // is safe for concurrent use and never panics.
 func (h *Handle) Merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey) (view protocol.PeerView, diag MergeDiag, err error) {
+	return h.MergeWith(role, rep, mem, key, MergeOptions{})
+}
+
+// MergeOptions tunes Merge.
+type MergeOptions struct {
+	// VerifiedTargetsOnly keeps a LAN-observed family (Traits.LANObserved)
+	// to verified endpoints: by default its global STUN and port-mapping
+	// addresses become unverified endpoints, the only public addresses the
+	// peer can aim at (coord.Config.VerifiedTargetsOnly).
+	VerifiedTargetsOnly bool
+}
+
+// MergeWith is Merge with options; Merge uses the zero MergeOptions.
+func (h *Handle) MergeWith(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts MergeOptions) (view protocol.PeerView, diag MergeDiag, err error) {
 	if h == nil || h.e == nil {
 		return view, diag, errors.New("natprobe: nil handle")
 	}
 	if !role.IsPunch() {
 		return view, diag, &protocol.ValidationError{Reason: protocol.ReasonInvalidArgument, Detail: "role", Msg: "merge role must be initiator or responder"}
 	}
-	if perr := life.Safe("natprobe/merge", func() { view, diag, err = h.merge(role, rep, mem, key) }); perr != nil {
+	if perr := life.Safe("natprobe/merge", func() { view, diag, err = h.merge(role, rep, mem, key, opts) }); perr != nil {
 		return protocol.PeerView{}, MergeDiag{}, perr
 	}
 	return view, diag, err
 }
 
-func (h *Handle) merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey) (protocol.PeerView, MergeDiag, error) {
+func (h *Handle) merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts MergeOptions) (protocol.PeerView, MergeDiag, error) {
 	var diag MergeDiag
 	view := protocol.PeerView{Families: []protocol.FamilyView{}}
 	if err := protocol.CheckOrigin(rep, h.e.id, role); err != nil {
@@ -74,7 +90,7 @@ func (h *Handle) merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsM
 			continue
 		}
 		seen = append(seen, fr.Family)
-		view.Families = append(view.Families, h.mergeFamily(fr, obs, mem, key, &diag))
+		view.Families = append(view.Families, h.mergeFamily(fr, obs, mem, key, opts, &diag))
 	}
 	return view, diag, nil
 }
@@ -95,7 +111,7 @@ type familyMerge struct {
 	diag      *MergeDiag
 }
 
-func (h *Handle) mergeFamily(fr protocol.FamilyReport, obs []ServerObservation, mem TraitsMemory, key TraitsKey, diag *MergeDiag) protocol.FamilyView {
+func (h *Handle) mergeFamily(fr protocol.FamilyReport, obs []ServerObservation, mem TraitsMemory, key TraitsKey, opts MergeOptions, diag *MergeDiag) protocol.FamilyView {
 	m := &familyMerge{h: h, f: fr.Family, alt: map[uint8]bool{}, answered: map[slotKey]bool{}, diag: diag}
 	var observers []nat.Observer
 	for _, s := range obs {
@@ -116,6 +132,7 @@ func (h *Handle) mergeFamily(fr protocol.FamilyReport, obs []ServerObservation, 
 		m.socks = append(m.socks, nat.SocketMeta{ID: sr.ID, Kind: sr.Kind, Local: sr.Local})
 	}
 	m.t = nat.NewTable(m.f, m.socks, observers)
+	m.t.SetReportedFallback(!opts.VerifiedTargetsOnly)
 	m.socks = m.t.Sockets() // the sockets the table accepted
 	m.mergeRows(fr)
 	m.mergeFilters(fr)
@@ -273,12 +290,11 @@ func (m *familyMerge) mergeSelfReported(fr protocol.FamilyReport) {
 	if !found {
 		return
 	}
-	verified := m.t.VerifiedIPs()
 	for _, row := range fr.STUN {
 		if !row.Observed.IsValid() {
 			continue
 		}
-		if !nat.AdmitSelfReported(nat.SourceSTUN, unmapAP(row.Observed), verified) {
+		if !m.t.AdmitReported(nat.SourceSTUN, unmapAP(row.Observed)) {
 			m.diag.RejectedEndpoints++
 			continue
 		}
@@ -286,7 +302,7 @@ func (m *familyMerge) mergeSelfReported(fr protocol.FamilyReport) {
 			time.Duration(row.RTTMs)*time.Millisecond, 0)
 	}
 	if pm := fr.PortMap; pm != nil && pm.External.IsValid() {
-		if nat.AdmitSelfReported(nat.SourcePortMap, unmapAP(pm.External), verified) {
+		if m.t.AdmitReported(nat.SourcePortMap, unmapAP(pm.External)) {
 			m.t.Record(nat.PointKey{Socket: primary.ID, Source: nat.SourcePortMap}, pm.External, 0, 0, 0)
 		} else {
 			m.diag.RejectedEndpoints++

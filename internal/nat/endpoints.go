@@ -70,6 +70,38 @@ func AdmitSelfReported(src Source, a netip.AddrPort, verified []netip.Addr) bool
 	return false
 }
 
+// SetReportedFallback sets whether a LAN-observed table (Traits.LANObserved)
+// admits the global addresses its client reported — STUN answers and a
+// port mapping's external address — although no server observation verifies
+// their IP: the server saw the client only at private addresses, so it
+// verifies no public IP the client could be reached at. They stay
+// unverified endpoints, which the coordinator and the peer aim Direct stages
+// at only (the unverified mode). It changes nothing for a table that is not
+// LAN-observed.
+func (t *ObsTable) SetReportedFallback(on bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.reportedFallback = on
+}
+
+// AdmitReported reports whether a self-reported address of source src may
+// enter the table: AdmitSelfReported, or, with the reported fallback on a
+// LAN-observed table, a global unicast STUN or port-mapping address.
+func (t *ObsTable) AdmitReported(src Source, a netip.AddrPort) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.admitReportedLocked(src, a, t.verifiedIPsLocked(t.classScopeLocked()))
+}
+
+func (t *ObsTable) admitReportedLocked(src Source, a netip.AddrPort, verified []netip.Addr) bool {
+	if AdmitSelfReported(src, a, verified) {
+		return true
+	}
+	ip := a.Addr().Unmap()
+	return t.reportedFallback && (src == SourceSTUN || src == SourcePortMap) && a.Port() != 0 &&
+		ScopeOf(ip) == ScopeGlobal && t.family.Matches(ip) && t.lanObservedLocked()
+}
+
 // NoteOverlay records the host's overlay addresses of the table's family
 // (FamilyReport.Overlay): addresses on overlay,
 // tunnel and virtual-bridge interfaces, on which the primary socket also
@@ -90,7 +122,7 @@ func (t *ObsTable) NoteOverlay(addrs []netip.Addr) {
 // Endpoints returns what a server-side table may hand to the peer, at most 12
 // and without repeats, in this order: verified server observations (primary,
 // second, sibling sockets, each by mapping creation order); STUN and
-// port-mapping addresses that pass AdmitSelfReported; the primary socket's
+// port-mapping addresses that pass AdmitReported; the primary socket's
 // local port on its first verified IP, unless an observation holds it already
 // (EndpointLocalPort: a NAT that keeps the local port on the path toward the
 // peer maps it there); at most four LAN addresses, the local addresses of the
@@ -139,7 +171,7 @@ func (t *ObsTable) Endpoints() []protocol.Endpoint {
 	}
 	for _, src := range [...]Source{SourceSTUN, SourcePortMap} {
 		for _, r := range t.rows {
-			if r.Key.Source == src && r.Observed.IsValid() && AdmitSelfReported(src, r.Observed, verified) {
+			if r.Key.Source == src && r.Observed.IsValid() && t.admitReportedLocked(src, r.Observed, verified) {
 				add(r.Observed, selfReportedSource(src), r.Key.Socket, false)
 			}
 		}

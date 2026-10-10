@@ -276,7 +276,10 @@ type AnchorRefresh struct {
 
 // RoundDecision is the planner's per-round output.
 type RoundDecision struct {
-	Stop        protocol.Reason // non-empty -> stop; Sides is empty
+	Stop protocol.Reason // non-empty -> stop; Sides is empty
+	// StopDetail is the detail of a Stop (punch_result.detail); empty
+	// takes the attribution's detail when it names the same reason.
+	StopDetail  string
 	VariantName string
 	Budget      protocol.BudgetClass // the highest class of the running families
 	// Sides are by role; a family side's Sandwich is set where
@@ -313,9 +316,12 @@ func (DefaultPlanner) Classify(in ClassifyInput) Classification {
 		return Classification{Reject: protocol.ReasonNoCommonFamily}
 	}
 	cl := Classification{Families: fams}
+	// Relay-only mode: no family verified at all. A family unverified only
+	// because a side is LAN-observed keeps the tighter unverified bounds.
 	relayOnly := true
 	for _, fam := range fams {
-		relayOnly = relayOnly && in.Pair.Unverified[fam]
+		lanObserved := familyTraits(in.Initiator, fam).LANObserved || familyTraits(in.Responder, fam).LANObserved
+		relayOnly = relayOnly && in.Pair.Unverified[fam] && !lanObserved
 	}
 	cl.background = in.Mode == protocol.ModeBackground
 	for _, fam := range fams {
@@ -445,7 +451,7 @@ func (DefaultPlanner) Round(in RoundInput) RoundDecision {
 		if bindBlocked {
 			return RoundDecision{Stop: protocol.ReasonLocalPortBindFailed}
 		}
-		return RoundDecision{Stop: TerminalReason(in.Evidence, hopeless)}
+		return stopBeforeContact(in, hopeless)
 	}
 
 	// budget_hit with no candidate and a not-lower next round -> stop.
@@ -459,7 +465,7 @@ func (DefaultPlanner) Round(in RoundInput) RoundDecision {
 	sides, win := buildSides(in, picks, roundClass)
 	if !initiates(sides) {
 		// Every stage was dropped (a blocked path and no Direct target).
-		return RoundDecision{Stop: TerminalReason(in.Evidence, hopeless)}
+		return stopBeforeContact(in, hopeless)
 	}
 
 	dec := RoundDecision{
@@ -900,6 +906,22 @@ func applySandwich(dec *RoundDecision, in RoundInput, picks []familyPick) {
 			}
 		}
 	}
+}
+
+// DetailNoTarget is the stop detail of a session in which, before its first
+// round, neither side had an address it may aim at: no verified public
+// address and no shared LAN or overlay — for example two clients the server
+// saw only at private addresses (Traits.LANObserved) on different LANs.
+const DetailNoTarget = "no_target"
+
+// stopBeforeContact ends a ladder with nothing left to run: before the first
+// round it is candidate_timeout with DetailNoTarget, since no packet could
+// be aimed at all; later the attribution of the evidence.
+func stopBeforeContact(in RoundInput, hopeless bool) RoundDecision {
+	if len(in.Prev) == 0 {
+		return RoundDecision{Stop: protocol.ReasonCandidateTimeout, StopDetail: DetailNoTarget}
+	}
+	return RoundDecision{Stop: TerminalReason(in.Evidence, hopeless)}
 }
 
 // initiates reports whether any side has a stage that sends.

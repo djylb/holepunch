@@ -94,6 +94,9 @@ type ObsTable struct {
 	inbound   []inboundEvidence
 	hairpin   protocol.Tri
 	overlay   []netip.Addr // the host's overlay addresses (NoteOverlay)
+	// reportedFallback lets a LAN-observed table admit the global
+	// addresses its client reported (SetReportedFallback).
+	reportedFallback bool
 }
 
 // NewTable returns an empty table of family f with the given sockets (the
