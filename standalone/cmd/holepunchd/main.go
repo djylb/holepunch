@@ -25,12 +25,7 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		if !errors.Is(err, flag.ErrHelp) {
-			_, _ = fmt.Fprintln(os.Stderr, "holepunchd:", err)
-		}
-		os.Exit(1)
-	}
+	os.Exit(cli.Status(os.Stderr, "holepunchd", run(os.Args[1:])))
 }
 
 // maxSTUN is the number of STUN servers a probe spec lists at most.
@@ -102,6 +97,9 @@ func run(args []string) error {
 		return err
 	}
 	log := cli.Logger(o.debug)
+	if strings.TrimSpace(o.token) == "" {
+		log.Warn("no -auth-token: any client that reaches the server can register hosts and open sessions")
+	}
 	tlsCfg, err := serverTLS(o, log)
 	if err != nil {
 		return err
@@ -122,12 +120,13 @@ func run(args []string) error {
 	if err := probe.Start(); err != nil {
 		return fmt.Errorf("natprobe: %w", err)
 	}
-	observers := append(probe.Observers(protocol.FamilyUDP4), probe.Observers(protocol.FamilyUDP6)...)
-	for _, ob := range observers {
+	spec := probe.ProbeSpec()
+	spec.STUN = o.stun
+	for _, ob := range spec.Observers {
 		log.Info("natprobe observer", "id", ob.ID, "addr", ob.Addr, "alt", ob.Alt)
 	}
 
-	b, err := broker.New(broker.Config{Coord: coordConfig(o, reg, observers, log)})
+	b, err := broker.New(broker.Config{Coord: coordConfig(o, reg, spec, log)})
 	if err != nil {
 		return err
 	}
@@ -222,17 +221,15 @@ func bindAdvertise(v string) (bind, adv netip.Addr, err error) {
 	return bind, adv, nil
 }
 
-// coordConfig configures the coordinator: the observers every client
-// probes, the operator's limits, and logging of every session's end (and of
-// every event with -debug).
-func coordConfig(o options, reg *natprobe.Registry, observers []protocol.ObserverSpec, log *slog.Logger) coord.Config {
+// coordConfig configures the coordinator: the probe spec every client
+// receives, the operator's limits, and logging of every session's end (and
+// of every event with -debug).
+func coordConfig(o options, reg *natprobe.Registry, spec protocol.ProbeSpec, log *slog.Logger) coord.Config {
 	cfg := coord.Config{
-		Registry: reg,
-		DefaultProbe: protocol.ProbeSpec{
-			V: protocol.ProbeSpecVersion, Observers: observers, ExtraReply: !o.noExtraReply, STUN: o.stun,
-		},
-		Budget: coord.BudgetConfig{AllowExtreme: o.allowExtreme},
-		Limits: coord.Limits{MaxSessions: o.maxSessions},
+		Registry:     reg,
+		DefaultProbe: spec,
+		Budget:       coord.BudgetConfig{AllowExtreme: o.allowExtreme},
+		Limits:       coord.Limits{MaxSessions: o.maxSessions},
 		OnResult: func(r coord.Result) {
 			log.Info("session", "id", r.SessionID, "host", r.Labels["host_id"], "dialer", r.Labels["dialer_id"],
 				"outcome", r.Outcome, "code", r.Code, "detail", r.Detail, "rounds", len(r.Rounds), "pair", r.PairClass)

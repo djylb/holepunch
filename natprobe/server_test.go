@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -243,6 +244,42 @@ func TestServerLoopback(t *testing.T) {
 	}
 	if err := s.Start(); err == nil {
 		t.Fatal("restart after close")
+	}
+}
+
+// ProbeSpec lists the live observers of both families with the server's
+// extra-reply setting and the second-socket probe.
+func TestServerProbeSpec(t *testing.T) {
+	for _, noExtra := range []bool{false, true} {
+		reg := NewRegistry(RegistryConfig{})
+		s, err := NewServer(ServerConfig{Registry: reg, Groups: loGroup(), NoExtraReply: noExtra})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec := s.ProbeSpec(); spec.Observers != nil || spec.V != protocol.ProbeSpecVersion {
+			t.Fatalf("before Start: %+v", spec)
+		}
+		if err := s.Start(); err != nil {
+			t.Fatal(err)
+		}
+		spec := s.ProbeSpec()
+		want := s.Observers(protocol.FamilyUDP4)
+		if !slices.Equal(spec.Observers, want) || len(want) != 3 {
+			t.Fatalf("observers %+v, want %+v", spec.Observers, want)
+		}
+		if spec.V != protocol.ProbeSpecVersion || spec.ExtraReply == noExtra || !spec.SecondSocket || spec.STUN != nil {
+			t.Fatalf("NoExtraReply=%v: spec %+v", noExtra, spec)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if spec := s.ProbeSpec(); spec.Observers != nil {
+			t.Fatalf("after Close: %+v", spec.Observers)
+		}
+	}
+	var nilS *Server
+	if spec := nilS.ProbeSpec(); spec.Observers != nil || spec.V != protocol.ProbeSpecVersion {
+		t.Fatalf("nil server: %+v", spec)
 	}
 }
 

@@ -24,7 +24,7 @@ type Timer = clock.Timer
 type Rate struct{ PerSec, Burst int }
 
 // ProbeFunc returns the ProbeSpec a role receives in punch_start
-// (normally built from natprobe.Server.Observers). It runs in NewSession,
+// (normally built from natprobe.Server.ProbeSpec). It runs in NewSession,
 // outside every lock and inside a recover boundary; an error or a panic fails
 // NewSession.
 type ProbeFunc func(role protocol.Role, opts *SessionOptions) (protocol.ProbeSpec, error)
@@ -56,7 +56,8 @@ type Config struct {
 	// Probe builds each role's ProbeSpec; nil uses DefaultProbe.
 	Probe ProbeFunc
 	// DefaultProbe is the ProbeSpec used when Probe is nil and the session
-	// options give none.
+	// options give none: normally natprobe.Server.ProbeSpec of the server
+	// whose Registry this is. Its zero V is ProbeSpecVersion.
 	DefaultProbe protocol.ProbeSpec
 	// Timeouts are the protocol timeouts of the sessions (zero fields:
 	// protocol.DefaultTimeouts); summary_wait_ms is computed per link.

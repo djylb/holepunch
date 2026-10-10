@@ -208,6 +208,28 @@ func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec {
 	return out
 }
 
+// ProbeSpec returns the ProbeSpec that sends clients to this server, for
+// coord.Config.DefaultProbe: the live observers of both families, extra
+// replies unless the server was configured with NoExtraReply, and the
+// second-socket probe, which tells the port allocation of a symmetric NAT
+// apart. The caller adds its third-party STUN servers, if any:
+//
+//	spec := probe.ProbeSpec()
+//	spec.STUN = stunServers
+//	co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: spec})
+//
+// Call it after Start; before Start, and after Close, the spec has no
+// observers.
+func (s *Server) ProbeSpec() protocol.ProbeSpec {
+	spec := protocol.ProbeSpec{V: protocol.ProbeSpecVersion, SecondSocket: true}
+	if s == nil {
+		return spec
+	}
+	spec.ExtraReply = !s.cfg.NoExtraReply
+	spec.Observers = append(s.Observers(protocol.FamilyUDP4), s.Observers(protocol.FamilyUDP6)...)
+	return spec
+}
+
 // Stats returns a snapshot of the counters.
 func (s *Server) Stats() ServerStats {
 	if s == nil {

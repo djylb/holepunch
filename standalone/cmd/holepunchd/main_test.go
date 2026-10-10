@@ -53,9 +53,9 @@ func TestCoordConfig(t *testing.T) {
 		t.Fatalf("-stun: %+v", p.stun)
 	}
 	o.stun = p.stun
-	obs := []protocol.ObserverSpec{{ID: 1}}
-	cfg := coordConfig(o, nil, obs, nil)
-	if cfg.DefaultProbe.ExtraReply || len(cfg.DefaultProbe.Observers) != 1 || cfg.DefaultProbe.V != protocol.ProbeSpecVersion || len(cfg.DefaultProbe.STUN) != 1 ||
+	spec := protocol.ProbeSpec{V: protocol.ProbeSpecVersion, Observers: []protocol.ObserverSpec{{ID: 1}}, STUN: o.stun}
+	cfg := coordConfig(o, nil, spec, nil)
+	if len(cfg.DefaultProbe.Observers) != 1 || cfg.DefaultProbe.V != protocol.ProbeSpecVersion || len(cfg.DefaultProbe.STUN) != 1 ||
 		!cfg.Budget.AllowExtreme || cfg.Limits.MaxSessions != 7 || cfg.Observer == nil || cfg.OnResult == nil {
 		t.Fatalf("%+v", cfg)
 	}
