@@ -4,20 +4,23 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/udpwire"
 )
 
-// The registry runs no goroutine of its own.
+// The registry runs no goroutine of its own. The check is against the
+// goroutines running at the start, not their number: one of an earlier test
+// that ends meanwhile would lower the count.
 func TestRegistryNoGoroutine(t *testing.T) {
-	before := runtime.NumGoroutine()
+	base := goleak.IgnoreCurrent()
 	clk := newManualClock()
 	reg := NewRegistry(RegistryConfig{Clock: clk.Now})
 	for i := range 10000 {
@@ -27,8 +30,11 @@ func TestRegistryNoGoroutine(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if reg.Len() != 10000 || runtime.NumGoroutine() != before {
-		t.Fatalf("len %d goroutines %d→%d", reg.Len(), before, runtime.NumGoroutine())
+	if reg.Len() != 10000 {
+		t.Fatalf("len %d", reg.Len())
+	}
+	if err := goleak.Find(base); err != nil {
+		t.Fatal(err)
 	}
 	clk.Advance(2 * time.Second)
 	removed := 0
@@ -38,8 +44,11 @@ func TestRegistryNoGoroutine(t *testing.T) {
 		}
 		removed += n
 	}
-	if removed != 10000 || reg.Len() != 0 || runtime.NumGoroutine() != before {
-		t.Fatalf("removed %d len %d goroutines %d", removed, reg.Len(), runtime.NumGoroutine())
+	if removed != 10000 || reg.Len() != 0 {
+		t.Fatalf("removed %d len %d", removed, reg.Len())
+	}
+	if err := goleak.Find(base); err != nil {
+		t.Fatal(err)
 	}
 }
 

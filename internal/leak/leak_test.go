@@ -290,7 +290,7 @@ func TestUDPConnCapabilitiesAndComparability(t *testing.T) {
 
 func TestConcurrentOpenClose(t *testing.T) {
 	tn := NewTrackingNetwork(udpNetwork{})
-	var wg sync.WaitGroup
+	var wg, closers sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
 		go func() {
@@ -301,7 +301,7 @@ func TestConcurrentOpenClose(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				go func() { _ = pc.Close() }()
+				closers.Go(func() { _ = pc.Close() })
 				_ = tn.Open()
 				_ = tn.Stats()
 				_ = tn.OpenConns()
@@ -309,11 +309,10 @@ func TestConcurrentOpenClose(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	for tn.Open() != 0 && ctx.Err() == nil {
-		time.Sleep(time.Millisecond)
-	}
+	// The tracker counts a Close before the wrapped conn closes: wait for
+	// every Close to return, so that no descriptor of this test is still
+	// open when the next one counts them.
+	closers.Wait()
 	if c := tn.Stats().ByPurpose["birthday"]; c != (Count{Opened: 200, Closed: 200}) {
 		t.Fatalf("Counts = %v", c)
 	}

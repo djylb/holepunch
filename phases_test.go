@@ -682,7 +682,11 @@ type failingWrites struct{ net.Conn }
 func (failingWrites) Write([]byte) (int, error) { return 0, syscall.EPIPE }
 
 // A control write failure while probing ends the session at once with
-// control_interrupted.
+// control_interrupted, the failed write as its cause. The observers never
+// answer and the probe timeout is its 10 s maximum, so the session is still
+// probing when the first frame it writes (the pong or a progress frame)
+// fails. With answering observers, probing could finish, queue probe_report
+// and reach reported before a slow writer got to its first write.
 func TestControlWriteFailure(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
@@ -693,12 +697,21 @@ func TestControlWriteFailure(t *testing.T) {
 	sess := w.newSession()
 	l := newSrvLink(t, s, protocol.RoleInitiator, sess.sid)
 	defer l.close()
-	l.send(w.startFor(sess, protocol.RoleInitiator, testTimeouts(), nil))
+	to := testTimeouts()
+	to.ProbeTimeoutMs = 10000
+	ps := w.startFor(sess, protocol.RoleInitiator, to, nil)
+	for i := range ps.Probe.Observers {
+		ps.Probe.Observers[i].Addr = netipAP("192.0.2.200", 3478+i)
+	}
+	l.send(ps)
 	l.send(protocol.Ping{Seq: 1})
 	r := <-res
 	var e *Error
 	if !errors.As(r.err, &e) || e.Reason != protocol.ReasonControlInterrupted || e.Phase != protocol.PhaseProbing {
 		t.Fatalf("got %v", r.err)
+	}
+	if !errors.Is(e, syscall.EPIPE) {
+		t.Fatalf("cause %v, want the failed write's EPIPE", e.Err)
 	}
 }
 

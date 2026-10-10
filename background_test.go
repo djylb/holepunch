@@ -90,7 +90,8 @@ func TestPacedSockets(t *testing.T) {
 	// The responder filters the initiator's packets (port-restricted, and
 	// it never sends): the round runs its whole window.
 	w := newWorld(t)
-	ps := &pairScript{w: w, timeouts: to, round: pacedPlan}
+	var goAt time.Time
+	ps := &pairScript{w: w, timeouts: to, round: pacedPlan, beforeGo: func(int) { goAt = time.Now() }}
 	var binds *countBinds
 	pr := runPair(t, w, [2]*nattest.NATConfig{prc(), prc()}, ps, func(i int, o *Options) {
 		if i == 0 {
@@ -105,8 +106,12 @@ func TestPacedSockets(t *testing.T) {
 	if len(at) != 11 {
 		t.Fatalf("%d paced sockets bound, want 11", len(at))
 	}
-	if span := at[len(at)-1].Sub(at[0]); span < 150*time.Millisecond {
-		t.Fatalf("11 paced sockets bound within %v: not paced at 50 a second", span)
+	// Slot j opens j/50 s after the round fires, or later when the sender
+	// runs late; then the slots after it catch up, so the span from the
+	// first bind to the last says nothing. The round fires after the go
+	// was written, so the last slot cannot open within 220 ms of it.
+	if after := at[len(at)-1].Sub(goAt); after < 220*time.Millisecond {
+		t.Fatalf("last of 11 paced sockets bound %v after the go: not paced at 50 a second", after)
 	}
 	if rr := ps.rounds[0]; len(rr) == 0 || rr[0].Families[0].Halted || rr[0].Families[0].BindFailed != 0 {
 		t.Fatalf("round results %+v", rr)
