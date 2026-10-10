@@ -3,6 +3,11 @@
 // direct UDP path to the peer the coordinator pairs it with and hands the
 // winning socket to the caller.
 //
+// The package example runs a whole deployment on a simulated Internet —
+// natprobe, the coordinator (package coord) and two clients behind NATs —
+// and ExampleAttachSession shows the client side against a real server,
+// with the handling of a failure.
+//
 // # Integration
 //
 // The caller establishes an authenticated, encrypted stream to the
