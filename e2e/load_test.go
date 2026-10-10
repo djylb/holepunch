@@ -1,4 +1,4 @@
-//go:build load
+//go:build load && unix
 
 package e2e
 
@@ -29,8 +29,8 @@ import (
 
 // Load tests: the coordinator's control plane with 1000 sessions of scripted
 // clients (TestLoadControlPlane), and the whole chain with 1000 pairs of real
-// clients (TestLoadClients). Run with -tags load; HOLEPUNCH_E2E_LOAD_N changes
-// the number of sessions (pairs).
+// clients (TestLoadClients). Run with -tags load, on Unix (getrusage);
+// HOLEPUNCH_E2E_LOAD_N changes the number of sessions (pairs).
 
 const envLoadN = "HOLEPUNCH_E2E_LOAD_N"
 
