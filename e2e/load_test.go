@@ -1,4 +1,4 @@
-//go:build load
+//go:build load && unix
 
 package e2e
 
@@ -29,8 +29,8 @@ import (
 
 // Load tests: the coordinator's control plane with 1000 sessions of scripted
 // clients (TestLoadControlPlane), and the whole chain with 1000 pairs of real
-// clients (TestLoadClients). Run with -tags load; HOLEPUNCH_E2E_LOAD_N changes
-// the number of sessions (pairs).
+// clients (TestLoadClients). Run with -tags load, on Unix (getrusage);
+// HOLEPUNCH_E2E_LOAD_N changes the number of sessions (pairs).
 
 const envLoadN = "HOLEPUNCH_E2E_LOAD_N"
 
@@ -225,7 +225,7 @@ func (s *scripted) run(ctx context.Context, peer netip.AddrPort, park <-chan str
 		return err
 	}
 	time.Sleep(time.Duration(g.DelayMs) * time.Millisecond)
-	path := &protocol.PathInfo{Family: protocol.FamilyUDP4, Local: s.local, Remote: peer, Round: 1, Epoch: 1, CandKind: protocol.CandDirect, RTTMs: 10}
+	path := &protocol.PathInfo{Family: protocol.FamilyUDP4, Local: s.local, Remote: peer, Round: 1, Epoch: 1, CandKind: protocol.CandDirect, Kind: protocol.PathPublic, RTTMs: 10}
 	rr := protocol.RoundResult{SessionID: sum.SessionID, Role: s.role, Round: 1, ElapsedMs: 1, Status: protocol.RoundConfirmed, Path: path,
 		Families: []protocol.FamilyOutcome{{Family: protocol.FamilyUDP4, Hit: true, Sent: 4, Recv: 2}}}
 	if err := s.send(ctx, &rr); err != nil {
