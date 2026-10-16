@@ -226,6 +226,10 @@ func TestRefreshWanted(t *testing.T) {
 		t.PortNoisy = true
 		return t
 	}
+	down := func(t protocol.Traits) protocol.Traits {
+		t.PortStep = -1
+		return t
+	}
 	now := 2 * time.Second
 	for _, c := range []struct {
 		name    string
@@ -238,6 +242,7 @@ func TestRefreshWanted(t *testing.T) {
 		{"pdf_x_seq quiet and fresh", pdfTraits(f), seq(6, 1800, 0), false, [2]bool{false, false}},
 		{"pdf_x_seq stale", pdfTraits(f), seq(6, 1000, 0), false, [2]bool{false, true}},
 		{"pdf_x_seq velocity", pdfTraits(f), seq(6, 1800, 12), false, [2]bool{false, true}},
+		{"pdf_x_seq downward velocity", pdfTraits(f), down(seq(6, 1800, -12)), false, [2]bool{false, true}},
 		{"pdf_x_seq foreign ports between the probes", pdfTraits(f), noisy(seq(6, 1800, 0)), false, [2]bool{false, true}},
 		{"seq_x_rnd: the RND side predicts the SEQ side", seq(3, 1000, 0), rndTraits(f), false, [2]bool{true, false}},
 		{"seq_x_rnd under its verdict: hopeless, never refreshed", seq(3, 1000, 0), rndTraits(f), true, [2]bool{false, false}},

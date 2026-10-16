@@ -135,8 +135,63 @@ type faultCell struct {
 	injected atomic.Bool
 	mu       sync.Mutex
 	at       time.Time // injection instant
-	stop     chan struct{}
+	// h runs the cell's goroutines next to the session: triggers, silences
+	// and the faults that act on their own (a flood, a server shutdown).
+	h *cellHelpers
 }
+
+// cellHelpers are the goroutines a fault cell runs next to its session. They
+// end with stop, and end joins them before the cell is checked, so that
+// nothing a fault does overlaps the assertions or outlives the cell.
+type cellHelpers struct {
+	mu    sync.Mutex
+	wg    sync.WaitGroup
+	stop  chan struct{}
+	ended bool
+}
+
+func newCellHelpers() *cellHelpers { return &cellHelpers{stop: make(chan struct{})} }
+
+// spawn runs f on a goroutine of its own, unless the cell has ended.
+func (h *cellHelpers) spawn(f func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.ended {
+		return
+	}
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		f()
+	}()
+}
+
+// end closes stop and waits up to d for the helpers to return; it reports
+// whether they did.
+func (h *cellHelpers) end(d time.Duration) bool {
+	h.mu.Lock()
+	if !h.ended {
+		h.ended = true
+		close(h.stop)
+	}
+	h.mu.Unlock()
+	joined := make(chan struct{})
+	go func() {
+		h.wg.Wait()
+		close(joined)
+	}()
+	tm := time.NewTimer(d)
+	defer tm.Stop()
+	select {
+	case <-joined:
+		return true
+	case <-tm.C:
+		return false
+	}
+}
+
+// helperJoin bounds the wait for a cell's helpers once the session ended.
+const helperJoin = 5 * time.Second
 
 // fire injects the fault once.
 func (fc *faultCell) fire() {
@@ -368,7 +423,7 @@ func faultRows() []*faultRow {
 				return faultExpect{}, false
 			}},
 		{name: "server_restart", dropHeld: true, inject: func(fc *faultCell) {
-			go func() { _ = fc.w.co.Close() }()
+			fc.h.spawn(func() { _ = fc.w.co.Close() })
 		}, expect: func(p phase) (faultExpect, bool) {
 			// Before punching: punch_abort{server_shutdown}, or only EOF on a
 			// link whose abort could not be written.
@@ -460,7 +515,7 @@ func faultRows() []*faultRow {
 				return e, true
 			}
 		}},
-		{name: "udp_flood", victim: nattest.FullCone, inject: func(fc *faultCell) { go fc.flood() },
+		{name: "udp_flood", victim: nattest.FullCone, inject: func(fc *faultCell) { fc.h.spawn(fc.flood) },
 			expect: func(p phase) (faultExpect, bool) {
 				switch p {
 				case phStartWait, phResponderDone:
@@ -561,7 +616,7 @@ func (fc *faultCell) flood() {
 	defer tick.Stop()
 	for {
 		select {
-		case <-fc.stop:
+		case <-fc.h.stop:
 			return
 		case <-tick.C:
 		}
@@ -580,26 +635,20 @@ func (fc *faultCell) flood() {
 // evaluated) is held until the initiator has written its own, and the fault
 // fires then.
 func (fc *faultCell) arm(r *run) {
-	release := func(h *hold) {
-		go func() {
-			<-fc.stop
-			h.Release()
-		}()
-	}
 	switch {
 	case fc.ph == phStartWait || fc.ph == phProbing && fc.row.probeAtStart:
 		h := r.taps[observed].holdNext(toClient, controlwire.TypePunchStart, nil)
-		go func() {
+		fc.h.spawn(func() {
 			select {
 			case <-h.Reached():
 				fc.fire()
 				if fc.row.dropHeld {
 					h.Drop()
 				}
-			case <-fc.stop:
+			case <-fc.h.stop:
 			}
 			h.Release()
-		}()
+		})
 		return
 	case fc.ph == phSummaryWait || fc.ph == phGoWait || fc.ph == phBetweenRounds:
 	default:
@@ -612,18 +661,17 @@ func (fc *faultCell) arm(r *run) {
 	}
 	peer := r.taps[1-observed].holdNext(toServer, typ, pred)
 	own := r.taps[observed].when(toServer, typ, pred)
-	go func() {
+	fc.h.spawn(func() {
 		select {
 		case <-own:
 			fc.fire()
 			if fc.row.dropHeld {
 				peer.Drop()
 			}
-		case <-fc.stop:
+		case <-fc.h.stop:
 		}
 		peer.Release()
-	}()
-	release(peer)
+	})
 }
 
 // progressTrigger returns the initiator's OnProgress: it fires the fault at
@@ -643,12 +691,12 @@ func (fc *faultCell) progressTrigger() func(protocol.Progress) {
 }
 
 // applySilence installs the cell's UDP silence between the peers.
-func (fc *faultCell) applySilence(r *run) { silencePeers(r, fc.sides, fc.exp.quiet, fc.stop) }
+func (fc *faultCell) applySilence(r *run) { silencePeers(r, fc.sides, fc.exp.quiet, fc.h) }
 
 // silencePeers drops every packet between the two sides, for the whole
-// session or until the second go reaches each side; stop ends the helper
-// goroutines.
-func silencePeers(r *run, sides [2]*side, mode silence, stop <-chan struct{}) {
+// session or until the second go reaches each side; the goroutines that lift
+// the silence are helpers of h.
+func silencePeers(r *run, sides [2]*side, mode silence, h *cellHelpers) {
 	if mode == silenceNone {
 		return
 	}
@@ -663,13 +711,13 @@ func silencePeers(r *run, sides [2]*side, mode silence, stop <-chan struct{}) {
 			return ok && g.Round == 2
 		})
 		net := sides[i].net
-		go func() {
+		h.spawn(func() {
 			select {
 			case <-lift:
 				net.dropFrom(nil)
-			case <-stop:
+			case <-h.stop:
 			}
-		}()
+		})
 	}
 }
 
@@ -686,7 +734,7 @@ func (fc *faultCell) heal() {
 
 // runFault runs one cell and returns its violations.
 func runFault(t *testing.T, row *faultRow, ph phase, exp faultExpect, seed int64) []string {
-	fc := &faultCell{row: row, ph: ph, exp: exp, stop: make(chan struct{})}
+	fc := &faultCell{row: row, ph: ph, exp: exp, h: newCellHelpers()}
 	if row.peerTarget || ph == phResponderDone {
 		fc.target = 1 - observed
 	}
@@ -711,13 +759,15 @@ func runFault(t *testing.T, row *faultRow, ph phase, exp faultExpect, seed int64
 	}
 	r, err := newRun(fc.w, fc.sides, spec)
 	if err != nil {
-		_ = fc.w.close()
-		return []string{err.Error()}
+		return fc.w.abandon(err)
 	}
 	fc.r = r
 	r.execute()
-	close(fc.stop)
-	v := fc.check()
+	var v []string
+	if !fc.h.end(scaled(helperJoin)) {
+		v = append(v, fmt.Sprintf("the cell's helper goroutines did not end within %v", scaled(helperJoin)))
+	}
+	v = append(v, fc.check()...)
 	fc.heal()
 	name := fmt.Sprintf("fault/%s/%s", row.name, ph)
 	cr := &cellRun{c: &cell{name: name, class: classFail}, seed: seed, w: fc.w, sides: fc.sides, r: r}
@@ -727,9 +777,7 @@ func runFault(t *testing.T, row *faultRow, ph phase, exp faultExpect, seed int64
 	}
 	v = append(v, cr.checkResources()...)
 	if len(v) > 0 {
-		if p, err := cr.dump(t, v, "fault"); err == nil {
-			v = append(v, "dump: "+p)
-		}
+		v = append(v, cr.dumpNote(t, v, "fault"))
 	}
 	if err := fc.w.close(); err != nil {
 		v = append(v, fmt.Sprintf("world close: %v", err))
@@ -788,6 +836,9 @@ func (fc *faultCell) check() []string {
 		}
 		if n := oi.diag.Counters.LeakedGoroutines; n != 0 {
 			add("%s: %d leaked goroutines", roles[i], n)
+		}
+		if err := r.taps[i].logComplete(); err != nil {
+			add("%s: %v", roles[i], err)
 		}
 	}
 	return v

@@ -57,8 +57,11 @@ func TestSTUNFlag(t *testing.T) {
 		{[]string{"-stun", "stun.example:3478", "-stun", "192.0.2.1:3478"}, []string{"stun.example:3478", "192.0.2.1:3478"}},
 	} {
 		o, err := parse(append([]string{"-probe-ip", "1.2.3.4"}, c.args...))
-		if err != nil || !slices.Equal(o.stun, c.want) {
-			t.Fatalf("%v: stun %v, %v; want %v", c.args, o.stun, err, c.want)
+		if err != nil {
+			t.Fatalf("%v: %v", c.args, err)
+		}
+		if !slices.Equal(o.stun, c.want) {
+			t.Fatalf("%v: stun %v, want %v", c.args, o.stun, c.want)
 		}
 	}
 

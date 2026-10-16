@@ -887,8 +887,7 @@ func checkID(path, s string) error {
 		return violation(path, "%d bytes, want 1..%d", len(s), maxSessionID)
 	}
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '_' || c == '-') {
+		if c := s[i]; !nameChar(rune(c)) && (c < 'A' || c > 'Z') && c != '-' {
 			return violation(path, "byte %q outside [A-Za-z0-9_-]", c)
 		}
 	}
@@ -932,7 +931,9 @@ func checkMeta(path string, meta map[string]string, maxKeys int) error {
 			return violation(path, "key of %d bytes", len(k))
 		}
 		if len(v) > maxMetaValue {
-			return violation(path+"."+k, "value of %d bytes > %d", len(v), maxMetaValue)
+			// The key is the sender's text: it stays out of the detail,
+			// which goes on the wire.
+			return violation(path, "value of key %q: %d bytes > %d", k, len(v), maxMetaValue)
 		}
 	}
 	total := 0
@@ -982,12 +983,15 @@ func isName(s string, max int) bool {
 		return false
 	}
 	for i := 1; i < len(s); i++ {
-		c := s[i]
-		if !('a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '_') {
+		if !nameChar(rune(s[i])) {
 			return false
 		}
 	}
 	return true
 }
+
+// nameChar reports whether r is in [a-z0-9_], the characters of names and
+// field names.
+func nameChar(r rune) bool { return 'a' <= r && r <= 'z' || '0' <= r && r <= '9' || r == '_' }
 
 func finite(f float32) bool { return f-f == 0 }

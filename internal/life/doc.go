@@ -18,7 +18,9 @@
 // All Group methods are safe for concurrent use. Close is idempotent; every
 // caller waits for the first one to finish and receives the same error.
 // Close must not be called synchronously from a goroutine of the same group:
-// the join would wait for the caller itself until the join bound expires.
+// the join would wait for the caller itself until the join bound expires. Nor
+// may the Close method of an owned resource close its group: that call would
+// wait for itself forever.
 //
 // # Ownership
 //

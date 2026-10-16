@@ -89,8 +89,7 @@ func (c *Client) Serve(ctx context.Context, reg Registration, h Handler) error {
 		if sctx.Err() != nil {
 			return nil
 		}
-		var f *proto.Fail
-		if errors.As(err, &f) && !f.Code.Retryable() {
+		if permanent(err) {
 			return err
 		}
 		c.log.Info("registration link lost", "host", reg.HostID, "err", err, "retry_in", backoff)
@@ -258,6 +257,19 @@ func (c *Client) serveIncoming(ctx context.Context, in proto.Incoming, reg Regis
 	if perr := life.Safe("client.Handler", func() { h(ctx, sess) }); perr != nil {
 		c.log.Warn("handler panicked", "session", sess.ID(), "err", perr)
 	}
+}
+
+// permanent reports whether err is a refusal of the server that retrying
+// cannot cure. err may come from Config.Dial or from its connection, whose
+// methods are the caller's code: it is inspected inside a recover boundary,
+// and an error that panics there counts as transient.
+func permanent(err error) bool {
+	var fatal bool
+	_ = life.Safe("client.retryable", func() {
+		var f *proto.Fail
+		fatal = errors.As(err, &f) && !f.Code.Retryable()
+	})
+	return fatal
 }
 
 // pause waits d unless ctx ends first; it reports whether the wait

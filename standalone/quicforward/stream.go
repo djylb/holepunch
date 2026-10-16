@@ -75,38 +75,59 @@ func readFrame(r io.Reader, v any) error {
 
 // OpenStream opens a forward stream to target ("" for the host's default
 // target) and returns it once the host has connected the target. A refusal
-// wraps ErrRefused.
+// wraps ErrRefused. ctx bounds the whole setup, within streamSetupTimeout.
 func (c *Conn) OpenStream(ctx context.Context, target string) (net.Conn, error) {
+	sc, _, err := c.openStream(ctx, target)
+	return sc, err
+}
+
+// openStream is OpenStream. unanswered reports a failure after the stream
+// was opened and before the host answered, which a connection that still
+// works does not produce; waiting for a stream that the peer's stream limit
+// does not grant yet is no such failure.
+func (c *Conn) openStream(ctx context.Context, target string) (_ net.Conn, unanswered bool, _ error) {
 	ctx, cancel := context.WithTimeout(ctx, streamSetupTimeout)
 	defer cancel()
 	st, err := c.qc.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	sc := newStreamConn(st, c.qc)
-	deadline, _ := ctx.Deadline()
-	if err := st.SetDeadline(deadline); err != nil {
+	ans, err := request(ctx, st, target)
+	if err != nil {
 		_ = sc.Close()
-		return nil, err
-	}
-	var ans streamAnswer
-	if err := writeFrame(st, streamRequest{Target: target}); err != nil {
-		_ = sc.Close()
-		return nil, err
-	}
-	if err := readFrame(st, &ans); err != nil {
-		_ = sc.Close()
-		return nil, err
+		return nil, true, err
 	}
 	if ans.Error != "" {
 		_ = sc.Close()
-		return nil, fmt.Errorf("%w: %s", ErrRefused, ans.Error)
+		return nil, false, fmt.Errorf("%w: %s", ErrRefused, ans.Error)
 	}
-	if err := st.SetDeadline(time.Time{}); err != nil {
-		_ = sc.Close()
-		return nil, err
+	return sc, false, nil
+}
+
+// request writes a stream's request and reads the host's answer within ctx,
+// whose end interrupts the wait; the stream is left without deadlines.
+func request(ctx context.Context, st *quic.Stream, target string) (streamAnswer, error) {
+	var ans streamAnswer
+	deadline, _ := ctx.Deadline()
+	if err := st.SetWriteDeadline(deadline); err != nil {
+		return ans, err
 	}
-	return sc, nil
+	if err := writeFrame(st, streamRequest{Target: target}); err != nil {
+		return ans, err
+	}
+	if err := st.SetWriteDeadline(time.Time{}); err != nil {
+		return ans, err
+	}
+	restore := life.InterruptRead(ctx, st)
+	err := readFrame(st, &ans)
+	if rerr := restore(); err == nil {
+		err = rerr
+	}
+	if err != nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	return ans, err
 }
 
 // streamConn presents a QUIC stream as a net.Conn with half-closes.

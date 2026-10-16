@@ -3,6 +3,7 @@ package quicforward
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"net/netip"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch"
+	"github.com/djylb/holepunch/nattest"
+	"github.com/djylb/holepunch/standalone/client"
+	"github.com/djylb/holepunch/standalone/internal/testworld"
 	"github.com/djylb/holepunch/standalone/proto"
 )
 
@@ -147,4 +151,172 @@ func FuzzStreamRequest(f *testing.F) {
 			t.Fatalf("resolved %q", target)
 		}
 	})
+}
+
+// TestIdentityTLS: each side accepts only the pinned peer, and no
+// connection can be resumed: the host issues no session ticket, so a
+// client with a session cache still makes a full handshake, pin check
+// included, every time.
+func TestIdentityTLS(t *testing.T) {
+	host, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialer, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	impostor, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := nattest.NewNetwork()
+	defer func() { _ = n.Close() }()
+	type outcome struct {
+		state                tls.ConnectionState
+		clientErr, serverErr error
+	}
+	handshake := func(server, client *tls.Config) outcome {
+		a, b := n.Pipe(nattest.PipeConfig{})
+		defer func() { _ = a.Close() }()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srvErr := make(chan error, 1)
+		go func() {
+			defer func() { _ = b.Close() }()
+			srv := tls.Server(b, server)
+			err := srv.HandshakeContext(ctx)
+			if err == nil {
+				// A byte after the handshake: the client reads it, and with it
+				// any session ticket the server sent first.
+				_, err = srv.Write([]byte{1})
+			}
+			srvErr <- err
+		}()
+		cl := tls.Client(a, client)
+		err := cl.HandshakeContext(ctx)
+		if err == nil {
+			_ = cl.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_, err = cl.Read(make([]byte, 1))
+		}
+		return outcome{cl.ConnectionState(), err, <-srvErr}
+	}
+
+	server := host.serverTLS(dialer.pin)
+	if !server.SessionTicketsDisabled {
+		t.Fatal("host issues session tickets")
+	}
+	cache := tls.NewLRUClientSessionCache(4)
+	for range 2 {
+		cfg := dialer.clientTLS(host.pin)
+		cfg.ClientSessionCache = cache
+		o := handshake(server, cfg)
+		if o.clientErr != nil || o.serverErr != nil || o.state.DidResume {
+			t.Fatalf("pinned peers: client %v, server %v, resumed %v", o.clientErr, o.serverErr, o.state.DidResume)
+		}
+	}
+	if o := handshake(impostor.serverTLS(dialer.pin), dialer.clientTLS(host.pin)); o.clientErr == nil {
+		t.Fatal("dialer accepted an impostor host")
+	}
+	if o := handshake(server, impostor.clientTLS(host.pin)); o.serverErr == nil {
+		t.Fatal("host accepted an impostor dialer")
+	}
+}
+
+// quicPair punches a quicforward session in a World and returns both ends
+// of its QUIC connection; the host end accepts no stream.
+func quicPair(t *testing.T) (host, dial *Conn) {
+	t.Helper()
+	w := testworld.New(t, testworld.Options{})
+	hostID, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialID, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostC := w.Client(w.NATHost(nattest.FullCone()), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	sessions := make(chan *client.Session, 1)
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		_ = hostC.Serve(ctx, client.Registration{HostID: "office", TransportMode: Mode, TransportData: hostID.TransportData()},
+			func(ctx context.Context, s *client.Session) {
+				sessions <- s
+				<-ctx.Done()
+			})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-served
+	})
+	for deadline := time.Now().Add(10 * time.Second); len(w.Broker.Snapshot().Hosts) == 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("host not registered")
+		}
+		if !pause(ctx, 5*time.Millisecond) {
+			t.Fatal("canceled")
+		}
+	}
+	dialC := w.Client(w.NATHost(nattest.FullCone()), nil)
+	ds, err := dialC.Open(ctx, client.OpenRequest{HostID: "office", TransportMode: Mode, TransportData: dialID.TransportData()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ds.Close() })
+	var hs *client.Session
+	select {
+	case hs = <-sessions:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no session on the host")
+	}
+	type accepted struct {
+		c   *Conn
+		err error
+	}
+	acc := make(chan accepted, 1)
+	go func() {
+		c, err := Accept(ctx, hs, hostID)
+		acc <- accepted{c, err}
+	}()
+	dial, err = Dial(ctx, ds, dialID)
+	a := <-acc
+	if err != nil || a.err != nil {
+		t.Fatalf("dial %v, accept %v", err, a.err)
+	}
+	t.Cleanup(func() {
+		_ = dial.Close()
+		_ = a.c.Close()
+	})
+	return a.c, dial
+}
+
+// TestOpenStreamUnanswered: a stream the host never answers marks the
+// connection as dead (unanswered), a stream the host's stream limit does
+// not grant yet does not; and the end of ctx ends the wait for either.
+func TestOpenStreamUnanswered(t *testing.T) {
+	_, dial := quicPair(t)
+	open := func() (unanswered bool, d time.Duration, err error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		start := time.Now()
+		_, unanswered, err = dial.openStream(ctx, "")
+		return unanswered, time.Since(start), err
+	}
+	if unanswered, d, err := open(); !unanswered || !errors.Is(err, context.DeadlineExceeded) || d > 5*time.Second {
+		t.Fatalf("no answer: unanswered %v, %v after %v", unanswered, err, d)
+	}
+	for i := 0; ; i++ {
+		if _, err := dial.qc.OpenStream(); err != nil {
+			break
+		}
+		if i > 1<<16 {
+			t.Fatal("no stream limit")
+		}
+	}
+	if unanswered, d, err := open(); unanswered || !errors.Is(err, context.DeadlineExceeded) || d > 5*time.Second {
+		t.Fatalf("stream limit: unanswered %v, %v after %v", unanswered, err, d)
+	}
 }

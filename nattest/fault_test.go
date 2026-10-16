@@ -293,3 +293,37 @@ func TestInboxFullAndReadBuffer(t *testing.T) {
 		t.Fatalf("%+v", st)
 	}
 }
+
+// TestMarkHandoverPicksTheReceivingSocket: a specific address selects the
+// socket that receives at it, never a wildcard of the other family on the
+// same port; an unspecified one selects deterministically.
+func TestMarkHandoverPicksTheReceivingSocket(t *testing.T) {
+	n := newNet(t)
+	lo4, hi4 := netip.MustParseAddr("198.51.100.20"), netip.MustParseAddr("198.51.100.21")
+	h := n.PublicHost(hi4, lo4, netip.IPv6Unspecified())
+	v6 := h.Addrs()[2]
+	wild4 := listenOn(t, h, "udp4", netip.AddrPortFrom(netip.Addr{}, 5000))
+	at6 := listenOn(t, h, "udp6", netip.AddrPortFrom(v6, 5000))
+	byLow := listenOn(t, h, "udp4", netip.AddrPortFrom(lo4, 6000))
+	listenOn(t, h, "udp4", netip.AddrPortFrom(hi4, 6000))
+	for _, tc := range []struct {
+		local netip.AddrPort
+		want  udp
+	}{
+		{netip.AddrPortFrom(v6, 5000), at6},
+		{netip.AddrPortFrom(lo4, 5000), wild4},
+		{netip.AddrPortFrom(netip.IPv6Unspecified(), 5000), at6},
+		{netip.AddrPortFrom(netip.Addr{}, 5000), wild4},
+		{netip.AddrPortFrom(netip.Addr{}, 6000), byLow},
+	} {
+		for range 8 { // a map-order pick would differ between calls
+			got, err := h.MarkHandover(tc.local)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.(callerConn).c != tc.want.(*conn) {
+				t.Fatalf("MarkHandover(%v) chose %v, want %v", tc.local, got.LocalAddr(), tc.want.LocalAddr())
+			}
+		}
+	}
+}

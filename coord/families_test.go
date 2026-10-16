@@ -110,11 +110,14 @@ func TestLANNeedsSameLAN(t *testing.T) {
 						t.Fatalf("LAN stage %+v", st)
 					}
 				}
-			} else if !slices.ContainsFunc(r.eventsOf(EvTargetRejected), func(e Event) bool {
-				d := e.Data.(TargetRejectedData)
-				return d.Rule == "not_same_lan" && d.Addr == c.lanR
-			}) {
-				t.Fatal("no not_same_lan rejection")
+			} else {
+				// Events reach the observer on a goroutine of their own.
+				eventually(t, "a not_same_lan rejection", func() bool {
+					return slices.ContainsFunc(r.eventsOf(EvTargetRejected), func(e Event) bool {
+						d := e.Data.(TargetRejectedData)
+						return d.Rule == "not_same_lan" && d.Addr == c.lanR
+					})
+				})
 			}
 			p.s.Abort(protocol.ReasonCanceled, "")
 			r.wait(p.s)

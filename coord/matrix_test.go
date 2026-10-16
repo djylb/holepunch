@@ -245,7 +245,7 @@ func TestStalledQueue(t *testing.T) {
 		fx := s.sendPingLocked(0)
 		s.mu.Unlock()
 		s.apply(fx)
-		if fx.term != nil || len(fx.close) > 0 {
+		if fx.term != nil || fx.sendErr[0] != nil {
 			break
 		}
 		s.mu.Lock()
@@ -255,6 +255,55 @@ func TestStalledQueue(t *testing.T) {
 	res := r.wait(s)
 	if res.Code != protocol.ReasonPeerOffline || res.Detail != detailStalled {
 		t.Fatalf("result %+v", res)
+	}
+}
+
+// TestStalledRearmsFromNow: a link lost to a full write queue while punching
+// re-arms the session timer from the clock's now, not from the session's last
+// update, so the round's deadline ends the session on time.
+func TestStalledRearmsFromNow(t *testing.T) {
+	r := newRig(t)
+	p := r.pair(SessionOptions{})
+	p.punching()
+	p.s.mu.Lock()
+	left := p.s.st.cur.deadline - p.s.since(r.clk.Now())
+	p.s.mu.Unlock()
+	// Time passes without an update, as when a round's deadline ended it and
+	// the next round's go stalls.
+	r.clk.Advance(left / 2)
+	p.s.apply(p.s.stalled(0))
+	r.clk.Advance(left - left/2)
+	if res := r.wait(p.s); res.Code != protocol.ReasonControlInterrupted || res.FailedRole != protocol.RoleInitiator {
+		t.Fatalf("result %+v", res)
+	}
+}
+
+// panickyErr is a connection's write error whose Is and As methods panic:
+// examining it runs caller code.
+type panickyErr struct{}
+
+func (panickyErr) Error() string   { return "panicky" }
+func (panickyErr) Is(_ error) bool { panic("is") }
+func (panickyErr) As(_ any) bool   { panic("as") }
+
+// TestPanickyConnError: a link whose connection fails with an error that
+// panics when examined is lost like any other — peer_offline, the other side
+// told — because the coordinator examines such errors outside the session
+// mutex and in a recover boundary; the panics are counted.
+func TestPanickyConnError(t *testing.T) {
+	r := newRig(t)
+	p, fc := r.matrixPair(StateProbing)
+	fc.FailWrites(panickyErr{})
+	pingNow(r, p)
+	if a := expectAbort(t, p.cl[1]); a.By != protocol.RoleInitiator || a.Code != protocol.ReasonPeerOffline {
+		t.Fatalf("abort %+v", a)
+	}
+	res := r.wait(p.s)
+	if res.Code != protocol.ReasonPeerOffline || res.FailedRole != protocol.RoleInitiator {
+		t.Fatalf("result %+v", res)
+	}
+	if r.c.Stats().Panics == 0 {
+		t.Fatal("panic not counted")
 	}
 }
 

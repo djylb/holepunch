@@ -264,7 +264,7 @@ func (m Mapping) String() string { n := mappingNames(); return enumString(n[:], 
 // Valid reports whether m is a defined value.
 //
 //goland:noinspection GoMixedReceiverTypes
-func (m Mapping) Valid() bool { return int(m) < len(mappingNames()) }
+func (m Mapping) Valid() bool { return m <= MapAPDM }
 
 // MarshalText encodes m as its wire name; an out-of-range value is an error.
 //
@@ -290,7 +290,7 @@ func (f Filtering) String() string { n := filteringNames(); return enumString(n[
 // Valid reports whether f is a defined value.
 //
 //goland:noinspection GoMixedReceiverTypes
-func (f Filtering) Valid() bool { return int(f) < len(filteringNames()) }
+func (f Filtering) Valid() bool { return f <= FiltNotPDF }
 
 // MarshalText encodes f as its wire name; an out-of-range value is an error.
 //
@@ -316,7 +316,7 @@ func (a PortAlloc) String() string { n := portAllocNames(); return enumString(n[
 // Valid reports whether a is a defined value.
 //
 //goland:noinspection GoMixedReceiverTypes
-func (a PortAlloc) Valid() bool { return int(a) < len(portAllocNames()) }
+func (a PortAlloc) Valid() bool { return a <= AllocPreserveFresh }
 
 // MarshalText encodes a as its wire name; an out-of-range value is an error.
 //
@@ -342,7 +342,7 @@ func (c Conf) String() string { n := confNames(); return enumString(n[:], uint8(
 // Valid reports whether c is a defined value.
 //
 //goland:noinspection GoMixedReceiverTypes
-func (c Conf) Valid() bool { return int(c) < len(confNames()) }
+func (c Conf) Valid() bool { return c <= ConfHigh }
 
 // MarshalText encodes c as its wire name; an out-of-range value is an error.
 //
@@ -368,7 +368,7 @@ func (t Tri) String() string { n := triNames(); return enumString(n[:], uint8(t)
 // Valid reports whether t is a defined value.
 //
 //goland:noinspection GoMixedReceiverTypes
-func (t Tri) Valid() bool { return int(t) < len(triNames()) }
+func (t Tri) Valid() bool { return t <= TriTrue }
 
 // MarshalText encodes t as its wire name; an out-of-range value is an error.
 //

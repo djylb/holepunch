@@ -617,3 +617,26 @@ func TestRepliesFollowAdmittingMapping(t *testing.T) {
 		})
 	}
 }
+
+// TestRepliesFollowAdmittingMappingAtScale: the flows that admitted inbound
+// packets open are bounded by MaxMappings, not by a small fixed number: a
+// mapping that admits a hundred peers answers each through itself.
+func TestRepliesFollowAdmittingMappingAtScale(t *testing.T) {
+	n := newNet(t)
+	nat := n.NAT(NATConfig{Mapping: APDM, Filtering: EIF, PortAlloc: Sequential})
+	c := listen(t, nat.Host(), 4000)
+	_, o := observer(t, n, 1)
+	m := srcAt(t, c, o)
+	for i := range 100 {
+		_, peer := observer(t, n, uint16(2+i))
+		send(t, peer, m, "in")
+		_, from := recvNow(t, c)
+		send(t, c, from, "reply")
+		if _, src := recvNow(t, peer); src != m {
+			t.Fatalf("reply to peer %d left from %v, not the admitting mapping %v", i, src, m)
+		}
+	}
+	if st := nat.Stats(); st.MappingsActive != 1 {
+		t.Fatalf("%d mappings, want 1", st.MappingsActive)
+	}
+}

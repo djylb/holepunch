@@ -146,11 +146,16 @@ func (rt *runtime) punchLoop() (*candidate.Action, error) {
 		return nil, err
 	}
 	for {
-		next := earliest(whenIf(!gotGo, keepalive), whenIf(!gotGo, goDeadline), handshakeDeadline, gapEnd, grace, handoverDeadline)
-		if cur != nil && !cur.fired {
-			next = earliest(next, cur.fireAt)
-		} else if cur != nil && cur.ctx.Err() == nil {
-			next = earliest(next, cur.end)
+		// Once expired, the handshake deadline stays in the past: left in,
+		// it would hold the timer at zero and spin until the grace ends.
+		next := earliest(whenIf(!gotGo, keepalive), whenIf(!gotGo, goDeadline), whenIf(!handshakeExpired, handshakeDeadline),
+			gapEnd, grace, handoverDeadline)
+		if cur != nil && cur.ctx.Err() == nil { // a stopped round neither fires nor ends
+			if cur.fired {
+				next = earliest(next, cur.end)
+			} else {
+				next = earliest(next, cur.fireAt)
+			}
 		}
 		timer.Reset(max(next.Sub(rt.clk.Now()), 0))
 		select {
@@ -160,8 +165,11 @@ func (rt *runtime) punchLoop() (*candidate.Action, error) {
 			return nil, context.Cause(rt.pg.Context())
 		case <-st.wake:
 		case g := <-rt.ctl.goCh:
-			if confirmHandled || ctlDead || handshakeExpired {
-				continue
+			// A go read before the local Confirm may still be queued when
+			// the nomination goroutine confirms: it starts no round, and
+			// round_result{confirmed} reports the round that confirmed.
+			if confirmHandled || st.confirmed.Load() || ctlDead || handshakeExpired {
+				break
 			}
 			if !gotGo {
 				gotGo = true
@@ -215,7 +223,10 @@ func (rt *runtime) punchLoop() (*candidate.Action, error) {
 		now := rt.clk.Now()
 		if st.confirmed.Load() && !confirmHandled {
 			confirmHandled = true
-			goDeadline, handshakeDeadline, gapEnd, grace = time.Time{}, time.Time{}, time.Time{}, time.Time{}
+			// Only the handover is left to wait for. A Confirm can come before
+			// the first go; the keepalive, renewed no more, would then spin the
+			// loop once passed.
+			keepalive, goDeadline, handshakeDeadline, gapEnd, grace = time.Time{}, time.Time{}, time.Time{}, time.Time{}, time.Time{}
 			handoverDeadline = st.confirmTime().Add(time.Duration(rt.timeouts.HandoverTimeoutMs) * time.Millisecond)
 			rt.reportConfirmed(cur)
 			if cur != nil {
@@ -233,7 +244,7 @@ func (rt *runtime) punchLoop() (*candidate.Action, error) {
 			}
 			continue
 		}
-		if cur != nil && !cur.fired && !now.Before(cur.fireAt) {
+		if cur != nil && !cur.fired && cur.ctx.Err() == nil && !now.Before(cur.fireAt) {
 			rt.fire(cur, now)
 		}
 		if cur != nil && cur.ctx.Err() == nil && cur.fatal.Load() != nil {
@@ -348,7 +359,7 @@ func (rt *runtime) startRound(g stamped[protocol.PunchGo], pending carried) *rou
 	if gm.Round == 1 && goPlan == nil {
 		goPlan = &rt.summary.Plan.Round1
 	}
-	rp, _ := cloneRound(*goPlan).Normalize()
+	rp, _ := goPlan.Normalize()
 	rp, _ = rp.ClampTo(rt.sessBudget)
 	delay := min(time.Duration(gm.DelayMs)*time.Millisecond, maxGoDelay)
 	if rt.abl.NoRTTAlign {
@@ -653,6 +664,9 @@ func (fr *familyRound) execute(context.Context) {
 			direct = dropTarget(direct, it.to)
 			spray = dropTarget(spray, it.to)
 			held, again = dropTarget(held, it.to), dropTarget(again, it.to)
+		case errors.Is(err, errRejected):
+			// The gate's target limits refused it: nothing was written,
+			// so it is no write failure.
 		default:
 			if rt.sender.writeBlocked(rt.clk.Now()) {
 				r := protocol.ReasonUDPBlocked
@@ -710,9 +724,11 @@ func socketsBeforeFiring(side protocol.FamilySide) int {
 // pacedSocket returns the paced socket of slot, binding it on first use on
 // the primary's IP; nil once the peer heard us, after a halt, or when the
 // bind failed — counted in bind_failed, and a run of haltBindRun failures
-// in a background round halts it. Hearing the peer is not enough: after a
-// one-way round the birthday aims these sockets at the source heard, and
-// only a reply from one of them can reach the peer.
+// in a background round halts it. A socket the session's socket budget or
+// index space refuses is no such failure: it says nothing about the host,
+// and the sockets already open keep sending. Hearing the peer is not
+// enough: after a one-way round the birthday aims these sockets at the
+// source heard, and only a reply from one of them can reach the peer.
 func (fr *familyRound) pacedSocket(ctx context.Context, slot int) *udpSock {
 	if slot >= len(fr.paced) {
 		return nil
@@ -728,6 +744,9 @@ func (fr *familyRound) pacedSocket(ctx context.Context, slot int) *udpSock {
 	s, err := rt.socks.pacedSocket(ctx, fr.w.primary, pacedPurpose)
 	if err != nil {
 		fr.lateFailed.Add(1)
+		if errors.Is(err, errNoSockets) {
+			return nil
+		}
 		if fr.bindRun++; fr.bindRun >= haltBindRun && fr.background() {
 			fr.halted.Store(true)
 		}

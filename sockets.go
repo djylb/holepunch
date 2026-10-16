@@ -58,6 +58,7 @@ var (
 // for the duration of the hop-limit change and the write.
 type udpSock struct {
 	conn  net.PacketConn
+	owner *connOwner // the session group's handle on conn
 	fam   protocol.Family
 	id    uint8 // header sock value: family<<7 | index
 	local netip.AddrPort
@@ -235,10 +236,13 @@ func (s *udpSock) read(buf []byte) (int, netip.AddrPort, error) {
 // readLoop is the socket's only reader (no polling, no AfterFunc).
 // A losing socket's loop ends when the session group closes the socket;
 // the winner's ends on stopRead. A read timeout the library did not ask for
-// is cleared and counted. An ICMP report — Windows delivers them on
+// is cleared. An ICMP report — Windows delivers them on
 // unconnected sockets too, as WSAECONNRESET or WSAENETRESET — is a soft
-// signal about an earlier datagram, never a reason to stop reading. Any
-// other error ends the loop and removes the socket from the candidates.
+// signal about an earlier datagram, never a reason to stop reading; nor is
+// a datagram larger than the buffer, which Windows reports as an error
+// where Unix truncates it: it is no holepunch packet, and anyone can send
+// one. Any other error ends the loop and removes the socket from the
+// candidates.
 func (s *udpSock) readLoop(rt *runtime) {
 	defer close(s.readDone)
 	buf := make([]byte, readBufferSize)
@@ -257,6 +261,9 @@ func (s *udpSock) readLoop(rt *runtime) {
 				return
 			case udpicmp.IsReport(err):
 				rt.noteICMP(s)
+				continue
+			case oversized(err):
+				rt.fam(s.fam).cnt.drop(dropForeign)
 				continue
 			}
 			rt.readFailed(s)
@@ -357,6 +364,14 @@ func (p *socketPool) commit(s *udpSock) {
 	p.byLocal[s.local] = s
 }
 
+// connOwner is the session group's handle on a socket: a pointer, so the
+// group tells sockets apart by identity even when the Network's conn type
+// cannot be compared.
+type connOwner struct{ conn net.PacketConn }
+
+// Close closes the socket.
+func (o *connOwner) Close() error { return o.conn.Close() }
+
 // open binds one socket, records its concrete local address and hop control,
 // hands it to the session group and starts its read loop. A typed-nil conn
 // from the Network is a failed bind.
@@ -371,7 +386,8 @@ func (p *socketPool) open(ctx context.Context, fam protocol.Family, laddr netip.
 		return nil, err
 	}
 	name := purpose + ":" + string(fam) + ":" + strconv.Itoa(int(index))
-	if !rt.g.Own(name, conn) {
+	owner := &connOwner{conn: conn}
+	if !rt.g.Own(name, owner) {
 		p.unreserve()
 		return nil, net.ErrClosed
 	}
@@ -382,7 +398,7 @@ func (p *socketPool) open(ctx context.Context, fam protocol.Family, laddr netip.
 		}
 	}
 	s := &udpSock{
-		conn: conn, fam: fam, id: nat.SocketID(fam, index), local: local,
+		conn: conn, owner: owner, fam: fam, id: nat.SocketID(fam, index), local: local,
 		turn: make(chan struct{}, 1), readDone: make(chan struct{}), op: rt.opener,
 	}
 	s.hop = newHopCtl(conn, fam == protocol.FamilyUDP6, &rt.cnt.callbackPanics)
@@ -590,9 +606,10 @@ func (p *socketPool) sandwichHelper(ctx context.Context, primary *udpSock) *udpS
 	return s
 }
 
-// release closes s before the session ends — a round's sandwich helper — and
-// gives its place in the socket budget back. Its read loop ends on the
-// close. A socket the closing session group already took is left to it.
+// release closes s before the session ends — a round's sandwich helper,
+// fresh or paced socket, or a refresh socket — and gives its place in the
+// socket budget back. Its read loop ends on the close. A socket the closing
+// session group already took is left to it.
 func (p *socketPool) release(s *udpSock) {
 	p.mu.Lock()
 	p.all = slices.DeleteFunc(p.all, func(x *udpSock) bool { return x == s })
@@ -600,7 +617,7 @@ func (p *socketPool) release(s *udpSock) {
 		delete(p.byLocal, s.local)
 	}
 	p.mu.Unlock()
-	if !p.rt.g.Disown(s.conn) {
+	if !p.rt.g.Disown(s.owner) {
 		return
 	}
 	if pe := life.Safe("socket.close", func() { _ = s.conn.Close() }); pe != nil {

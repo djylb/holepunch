@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -43,11 +44,25 @@ func TestIdleZeroPolling(t *testing.T) {
 	cc := &countingClock{inner: clock.System{}}
 	so := newSolo(t, w, nil, func(o *Options) { o.Clock = cc })
 	to := testTimeouts()
-	to.GoWaitMs = 15000
+	to.SummaryWaitMs, to.GoWaitMs = 15000, 15000
 	so.start(to)
 	_, self := so.report()
 	idle := func(what string) {
-		time.Sleep(150 * time.Millisecond) // let the phase settle
+		// Let the phase settle: wait for a quiet 150 ms, however long a
+		// loaded machine takes to get there (bounded well within the
+		// session's waits).
+		settle := time.Now().Add(2 * time.Second)
+		for prev := cc.calls.Load(); ; {
+			time.Sleep(150 * time.Millisecond)
+			cur := cc.calls.Load()
+			if cur == prev {
+				break
+			}
+			if time.Now().After(settle) {
+				t.Fatalf("%s: the clock is never idle", what)
+			}
+			prev = cur
+		}
 		before := cc.calls.Load()
 		time.Sleep(time.Second)
 		if d := cc.calls.Load() - before; d != 0 {
@@ -62,6 +77,43 @@ func TestIdleZeroPolling(t *testing.T) {
 	idle("waiting for go")
 	so.cancel()
 	so.wantFailure(so.result(5*time.Second), protocol.ReasonCanceled)
+}
+
+// A callback that blocks past the cleanup's join bound leaves its delivery
+// goroutine behind when AttachSession returns: from then on it calls
+// OnProgress no more, though events are still queued.
+func TestProgressNotCalledAfterReturn(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	release := make(chan struct{})
+	var unblock sync.Once
+	t.Cleanup(func() { unblock.Do(func() { close(release) }) }) // on a failure too
+	var calls atomic.Int32
+	var returned, late atomic.Bool
+	so := newSolo(t, w, nil, func(o *Options) {
+		o.OnProgress = func(protocol.Progress) {
+			if returned.Load() {
+				late.Store(true)
+			}
+			if calls.Add(1) == 1 {
+				<-release // probe_started: the session goes on and queues more
+			}
+		}
+	})
+	so.start(testTimeouts())
+	so.report()
+	so.cancel()
+	r := so.result(joinBound + 5*time.Second)
+	returned.Store(true)
+	unblock.Do(func() { close(release) })
+	e := so.wantError(r, protocol.ReasonCanceled)
+	if e.Diagnostics.Counters.LeakedGoroutines == 0 {
+		t.Fatal("the join did not give up on the blocked delivery goroutine")
+	}
+	time.Sleep(progressDrainLimit + 200*time.Millisecond) // a delivery would come at once
+	if late.Load() {
+		t.Fatalf("OnProgress called after AttachSession returned (%d calls)", calls.Load())
+	}
 }
 
 // The local budget caps the session: with nothing heard back the session
@@ -173,7 +225,7 @@ func TestSystemNetworkNoFDLeak(t *testing.T) {
 		defer func() { _ = b.Close() }()
 		tn := leak.NewTrackingNetwork(SystemNetwork())
 		res := runClient(context.Background(), a, Options{ControlSecurity: protocol.ControlSecurityDeclared, Network: tn, LocalAddr: lo})
-		l := newSrvLink(t, b, protocol.RoleInitiator, sid)
+		l := newSrvLink(t, b)
 		defer l.close()
 		to := testTimeouts()
 		to.SummaryWaitMs = 1000

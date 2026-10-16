@@ -1,12 +1,16 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/djylb/holepunch/controlwire"
@@ -38,7 +42,8 @@ type frameEvent struct {
 	Size int
 }
 
-// maxTapEvents bounds the frames a tap keeps.
+// maxTapEvents bounds the frames a tap keeps; the frames past it are only
+// counted (tap.dropped), and a run whose tap dropped any fails its checks.
 const maxTapEvents = 2048
 
 // tap is the coordinator's end of one control link, interposed on the
@@ -65,6 +70,7 @@ type tap struct {
 
 	mu       sync.Mutex
 	events   []frameEvent
+	dropped  int // frames not kept beyond maxTapEvents
 	holds    []*hold
 	watchers []*watcher
 	subs     []*watcher    // persistent: every matching frame
@@ -168,6 +174,18 @@ func (t *tap) log() []frameEvent {
 	return append([]frameEvent(nil), t.events...)
 }
 
+// logComplete returns nil when the log holds every frame it should, or an
+// error naming how many it dropped: the assertions on the log would then
+// miss frames.
+func (t *tap) logComplete() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.dropped == 0 {
+		return nil
+	}
+	return fmt.Errorf("control log full: %d frames kept, %d dropped", len(t.events), t.dropped)
+}
+
 // frameLen returns the length of the first complete frame of b, or 0.
 func frameLen(b []byte) int {
 	if len(b) < controlwire.HeaderSize {
@@ -205,8 +223,12 @@ func (t *tap) note(d direction, typ controlwire.Type, m protocol.Message, size i
 	ev := frameEvent{Dir: d, Type: typ, At: time.Now(), Msg: m, Size: size}
 	t.frames.Add(1)
 	t.mu.Lock()
-	if (!t.light || lightKept(typ)) && len(t.events) < maxTapEvents {
-		t.events = append(t.events, ev)
+	if !t.light || lightKept(typ) {
+		if len(t.events) < maxTapEvents {
+			t.events = append(t.events, ev)
+		} else {
+			t.dropped++
+		}
 	}
 	ws := t.watchers[:0:0]
 	for _, w := range t.watchers {
@@ -323,6 +345,11 @@ func (t *tap) Read(b []byte) (int, error) {
 			continue
 		}
 		if t.rerr != nil {
+			if t.rerr == io.EOF && len(t.rbuf) > 0 {
+				// a partial frame before EOF goes to the coordinator as is
+				t.ready = len(t.rbuf)
+				break
+			}
 			return 0, t.rerr
 		}
 		t.mu.Lock()
@@ -340,10 +367,6 @@ func (t *tap) Read(b []byte) (int, error) {
 		t.rbuf = append(t.rbuf, buf[:n]...)
 		if err != nil {
 			t.rerr = err
-			if err == io.EOF && len(t.rbuf) > 0 && frameLen(t.rbuf) == 0 {
-				// a partial frame before EOF goes to the coordinator as is
-				t.ready = len(t.rbuf)
-			}
 		}
 	}
 	n := copy(b, t.rbuf[:t.ready])
@@ -442,4 +465,69 @@ func (s *ctlSpy) returned() (inflight int, rdl, wdl time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return int(s.inflight.Load()), s.rdl, s.wdl
+}
+
+// TestTapRead checks the coordinator's side of a tap: a held client frame
+// reaches it only once released, a dropped one never, and the bytes of a
+// frame cut short by the client's close arrive as they are, then io.EOF.
+func TestTapRead(t *testing.T) {
+	n := nattest.NewNetwork(nattest.WithEventLog(0))
+	defer func() { _ = n.Close() }()
+	cli, srv := n.Pipe(nattest.PipeConfig{})
+	tp := newTap(srv)
+	defer func() { _ = tp.Close() }()
+	frame := func(typ controlwire.Type, payload string) []byte {
+		b := []byte{'h', 'p', controlwire.Version, byte(typ), 0, 0, 0, 0}
+		binary.BigEndian.PutUint32(b[4:], uint32(len(payload)))
+		return append(b, payload...)
+	}
+	held := tp.holdNext(toServer, controlwire.TypeProgress, nil)
+	dropped := tp.holdNext(toServer, controlwire.TypePong, nil)
+	first, second, third := frame(controlwire.TypeProgress, "one"), frame(controlwire.TypePong, "two"), frame(controlwire.TypeRoundResult, "three")
+	tail := frame(controlwire.TypePunchResult, "cut short")[:10]
+	go func() {
+		<-held.Reached()
+		held.Release()
+		<-dropped.Reached()
+		dropped.Drop()
+	}()
+	var stream []byte
+	for _, b := range [][]byte{first, second, third, tail} {
+		stream = append(stream, b...)
+	}
+	if _, err := cli.Write(stream); err != nil {
+		t.Fatal(err)
+	}
+	if err := cli.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(tp)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if want := slices.Concat(first, third, tail); !bytes.Equal(got, want) {
+		t.Fatalf("coordinator read %q, want %q", got, want)
+	}
+	if err := tp.logComplete(); err != nil {
+		t.Fatal(err)
+	}
+	if l := tp.log(); len(l) != 2 || l[0].Type != controlwire.TypeProgress || l[1].Type != controlwire.TypeRoundResult {
+		t.Fatalf("log %+v, want the delivered progress and round_result", l)
+	}
+}
+
+// TestTapLogOverflow checks that a tap whose log is full says so instead of
+// silently losing the later frames.
+func TestTapLogOverflow(t *testing.T) {
+	tp := &tap{closed: make(chan struct{})}
+	for range maxTapEvents {
+		tp.note(toServer, controlwire.TypeProgress, nil, controlwire.HeaderSize)
+	}
+	if err := tp.logComplete(); err != nil {
+		t.Fatalf("full log: %v", err)
+	}
+	tp.note(toServer, controlwire.TypePunchResult, nil, controlwire.HeaderSize)
+	if err := tp.logComplete(); err == nil {
+		t.Fatal("a frame past the log's bound went unreported")
+	}
 }

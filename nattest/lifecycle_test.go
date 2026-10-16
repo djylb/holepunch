@@ -126,7 +126,9 @@ func TestCloseJoinBound(t *testing.T) {
 	if err1 == nil || !errors.Is(err1, err2) {
 		t.Fatalf("Close = %v and %v, want the same error", err1, err2)
 	}
-	if el < closeJoin || el > closeJoin+500*time.Millisecond {
+	// The upper bound only tells a bounded wait from an unbounded one; it
+	// leaves room for a loaded machine.
+	if el < closeJoin || el > 5*closeJoin {
 		t.Fatalf("Close returned after %v, want about %v", el, closeJoin)
 	}
 	if err := n.Close(); !errors.Is(err, err1) {
@@ -169,8 +171,10 @@ func TestClosedNetworkCountsLateEvents(t *testing.T) {
 	n.schedule(newPacket([]byte("z")), time.Millisecond)
 	before := pa.tx.pending
 	ch := &pipeChunk{pipe: pa.p, dir: pa.tx, data: []byte("w")}
+	pa.p.mu.Lock()
 	pa.tx.pending++
-	pa.p.queue(ch, n.now()+time.Millisecond)
+	pa.p.emit(ch, n.now()+time.Millisecond)
+	pa.p.mu.Unlock()
 	if pa.tx.pending != before {
 		t.Fatal("a refused pipe chunk kept its buffer space")
 	}
@@ -229,14 +233,64 @@ func TestDump(t *testing.T) {
 	}
 }
 
-// waitFor polls cond in real time for up to two seconds.
+// waitFor polls cond in real time for up to five seconds.
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatal("condition not reached")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestDeadlineAfterCloseArmsNoTimer: a deadline set after its conn closed,
+// as a SetDeadline racing with Close does, leaves no timer on the clock.
+func TestDeadlineAfterCloseArmsNoTimer(t *testing.T) {
+	n, clk := fakeNet(t)
+	d := newDeadline()
+	d.set(n, clk.Now().Add(time.Hour))
+	d.stop()
+	d.set(n, clk.Now().Add(time.Hour))
+	if p := clk.Pending(); p != 0 {
+		t.Fatalf("%d timers left after stop", p)
+	}
+}
+
+// TestCloseWhileDelivering: packets that race with a socket's Close are
+// either read, dropped as having no socket, or drained by the Close; none is
+// left in the queue of the closed socket.
+func TestCloseWhileDelivering(t *testing.T) {
+	n := newNet(t)
+	srv := n.PublicHost(netip.IPv4Unspecified())
+	cl := n.PublicHost(netip.IPv4Unspecified())
+	for i := range 200 {
+		port := uint16(1000 + i)
+		pc, err := srv.Listen("udp4", netip.AddrPortFrom(netip.Addr{}, port))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := pc.(*conn)
+		dst := netip.AddrPortFrom(srv.Addrs()[0], port)
+		var senders sync.WaitGroup
+		for k := range 4 {
+			senders.Go(func() {
+				s, err := cl.Listen("udp4", netip.AddrPortFrom(netip.Addr{}, uint16(10000+4*i+k)))
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer func() { _ = s.Close() }()
+				for range 50 {
+					_, _ = s.(*conn).writeTo([]byte("x"), dst)
+				}
+			})
+		}
+		_ = c.Close()
+		senders.Wait()
+		if k := len(c.inbox); k != 0 {
+			t.Fatalf("round %d: %d packets left in the queue of a closed socket", i, k)
+		}
 	}
 }

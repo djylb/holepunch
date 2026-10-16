@@ -225,7 +225,7 @@ func (ct *control) onSummary(f controlwire.Frame) {
 		return
 	}
 	ct.mu.Lock()
-	ct.round1 = cloneRound(m.Plan.Round1) // prepare normalizes the summary's in place
+	ct.round1 = m.Plan.Round1 // plans are values: Normalize and ClampTo return copies
 	ct.mu.Unlock()
 	ct.summaryCh <- stamped[protocol.ProbeSummary]{m, f.At}
 }

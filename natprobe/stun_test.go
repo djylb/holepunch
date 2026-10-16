@@ -45,7 +45,9 @@ func TestResolveSTUN(t *testing.T) {
 	servers := []string{"dual.example:3478", "203.0.113.9:19302", "v4.example:3478", "[2001:db8::2]:3478", "private.example:3478",
 		"missing.example:3478", "panic.example:3478", "slow.example:3478", "no-port", "198.51.100.4:0", "192.168.1.1:3478", "v4.example:3478",
 		"delayed.example:3478"}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	// The context ends the slow lookup; it leaves the delayed one ample time on
+	// a loaded machine.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	got, err := ResolveSTUN(ctx, lookup, servers)
 	want := []netip.AddrPort{

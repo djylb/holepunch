@@ -182,8 +182,8 @@ func (d *dialer) open(ctx context.Context) (*forwarding, error) {
 }
 
 // drop retires conn if it is still the current connection: a stream that
-// failed without the host's answer means the connection is unusable even
-// if QUIC has not noticed yet, and the next get opens a new session.
+// was opened and never answered means the connection is unusable even if
+// QUIC has not noticed yet, and the next get opens a new session.
 func (d *dialer) drop(conn *Conn) {
 	d.mu.Lock()
 	cur := d.cur
@@ -222,10 +222,10 @@ func (d *dialer) forward(ctx context.Context, g *life.Group, lc net.Conn, target
 		log.Info("no forward session", "err", err)
 		return
 	}
-	sc, err := conn.OpenStream(ctx, target)
+	sc, unanswered, err := conn.openStream(ctx, target)
 	if err != nil {
 		log.Info("stream failed", "target", target, "err", err)
-		if !errors.Is(err, ErrRefused) {
+		if unanswered {
 			d.drop(conn)
 		}
 		return

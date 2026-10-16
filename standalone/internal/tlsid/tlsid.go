@@ -65,16 +65,22 @@ func ParsePin(s string) (string, error) {
 	return p, nil
 }
 
-// VerifyPin returns a tls.Config.VerifyPeerCertificate that accepts a peer
-// only if its leaf certificate has the pin want (ParsePin form). It is meant
-// for configurations whose chain verification is off (InsecureSkipVerify, or
-// a server with tls.RequireAnyClientCert): the pin replaces it.
-func VerifyPin(want string) func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-		if len(rawCerts) == 0 {
+// VerifyPin returns a tls.Config.VerifyConnection that accepts a peer only
+// if its leaf certificate has the pin want (ParsePin form). It is meant for
+// configurations whose chain verification is off (InsecureSkipVerify, or a
+// server with tls.RequireAnyClientCert): the pin replaces it.
+//
+// It is a VerifyConnection, not a VerifyPeerCertificate: crypto/tls skips
+// VerifyPeerCertificate when it resumes a session, which would accept a
+// ticket from a connection to another peer without any pin check.
+// VerifyConnection runs on every handshake, resumed ones included, and sees
+// the certificate a resumed session carries over.
+func VerifyPin(want string) func(tls.ConnectionState) error {
+	return func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 {
 			return ErrPin
 		}
-		got := Pin(rawCerts[0])
+		got := Pin(cs.PeerCertificates[0].Raw)
 		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 			return ErrPin
 		}

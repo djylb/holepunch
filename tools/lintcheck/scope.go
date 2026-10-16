@@ -55,6 +55,12 @@ func (s *scope) declareFields(lists ...*ast.FieldList) {
 // signatures and type declarations are not visited.
 type walker struct {
 	visit func(n ast.Node, sc *scope)
+	// later counts the function literals being walked that are not called
+	// where they are written: their bodies run later, whenever the value is
+	// called.
+	later int
+	// called holds the literals called on the spot (func() { ... }()).
+	called map[*ast.FuncLit]bool
 }
 
 func (w *walker) funcDecl(fd *ast.FuncDecl) {
@@ -211,10 +217,25 @@ func (w *walker) expr(e ast.Expr, sc *scope) {
 			return false
 		}
 		w.visit(n, sc)
-		if fl, ok := n.(*ast.FuncLit); ok {
+		switch n := n.(type) {
+		case *ast.CallExpr:
+			if fl, ok := ast.Unparen(n.Fun).(*ast.FuncLit); ok {
+				if w.called == nil {
+					w.called = map[*ast.FuncLit]bool{}
+				}
+				w.called[fl] = true
+			}
+		case *ast.FuncLit:
+			later := !w.called[n]
+			if later {
+				w.later++
+			}
 			in := newScope(sc)
-			in.declareFields(fl.Type.TypeParams, fl.Type.Params, fl.Type.Results)
-			w.stmts(fl.Body.List, in)
+			in.declareFields(n.Type.TypeParams, n.Type.Params, n.Type.Results)
+			w.stmts(n.Body.List, in)
+			if later {
+				w.later--
+			}
 			return false
 		}
 		return true

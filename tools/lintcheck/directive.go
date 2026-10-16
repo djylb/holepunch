@@ -86,6 +86,9 @@ func (c *checker) directives(p *pkg, report bool) {
 			for _, cm := range g.List {
 				name, rest, ok := parseDirective(cm.Text)
 				if !ok {
+					if fixed, spaced := spacedDirective(cm.Text); spaced && report {
+						c.report(cm.Pos(), ruleDirective, "a space after // makes this a plain comment, not a directive; write %s", fixed)
+					}
 					continue
 				}
 				msg := ""
@@ -113,6 +116,21 @@ func addGroups(m map[*ast.CommentGroup][]*ast.Ident, fld *ast.Field) {
 			m[g] = append(m[g], fld.Names...)
 		}
 	}
+}
+
+// spacedDirective reports whether a comment is a known directive written
+// with spaces after the // ("// holepunch:callback"), which Go and this
+// tool read as prose: the check it should switch on would silently stay
+// off. fixed is the comment as a directive. A sentence that merely starts
+// with a directive's name is prose and not reported.
+func spacedDirective(text string) (fixed string, spaced bool) {
+	body, ok := strings.CutPrefix(text, "//")
+	if !ok || body == "" || body[0] != ' ' && body[0] != '\t' {
+		return "", false
+	}
+	fixed = "//" + strings.TrimLeft(body, " \t")
+	name, rest, ok := parseDirective(fixed)
+	return fixed, ok && rest == "" && (name == dirCallback || name == dirNetImpl)
 }
 
 // parseDirective splits a //holepunch:name comment. rest is any text after

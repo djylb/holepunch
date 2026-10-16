@@ -91,6 +91,17 @@ func TestPredictConstraints(t *testing.T) {
 	}
 }
 
+// A window of several steps is filled from all of them: a large step
+// does not end the sweep while a smaller one still has ports to add.
+func TestPredictSeveralSteps(t *testing.T) {
+	for _, steps := range [][]int16{{1, 30000}, {30000, -2}, {-7, 1000, 3}} {
+		got := predictPortValues(40000, steps, 200, func(p uint16) bool { return avoidPort(p, nil) })
+		if len(got) != 200 {
+			t.Errorf("steps %v: %d ports, want 200", steps, len(got))
+		}
+	}
+}
+
 // The consecutive-run <= 3 constraint is HARD, including dense small sets
 // (predict step 1 with narrow spans, and pools whose size equals the count).
 func TestConsecutiveRunDenseHard(t *testing.T) {

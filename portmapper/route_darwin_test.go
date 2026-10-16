@@ -11,7 +11,7 @@ import (
 
 // referenceGateway asks route(8) for the default gateway.
 func referenceGateway(t *testing.T) (netip.Addr, string, bool) {
-	out, err := exec.Command("route", "-n", "get", "default").Output()
+	out, err := exec.CommandContext(t.Context(), "route", "-n", "get", "default").Output()
 	if err != nil {
 		t.Logf("route(8) unavailable, comparison skipped: %v", err)
 		return netip.Addr{}, "", false

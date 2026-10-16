@@ -212,7 +212,7 @@ func (rt *runtime) finish(win *candidate.Action, cause error) (*Session, error) 
 			f = fail(protocol.ReasonInternal, "winner_missing", nil)
 		}
 	default:
-		f = classify(rt.callerCtx, cause)
+		rt.step("finish.classify", func() { f = classify(rt.callerCtx, cause) }, &f)
 	}
 
 	// 1
@@ -273,6 +273,9 @@ func (rt *runtime) finish(win *candidate.Action, cause error) (*Session, error) 
 	}
 	// 6
 	_ = rt.g.Close(joinBound)
+	if rt.sink != nil {
+		rt.sink.closed.Store(true) // a delivery the join gave up on calls OnProgress no more
+	}
 	if rt.deadline != nil {
 		rt.deadline.Stop()
 	}

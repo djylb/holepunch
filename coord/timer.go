@@ -1,36 +1,26 @@
 package coord
 
 import (
-	"errors"
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/protocol"
 )
 
-// sendMarkedLocked queues m on link r with an RTT mark. A reliable
-// frame that does not fit the write queue loses the link (stalled); an
-// encoding failure is a defect (internal). Other send errors mean the write
-// side already stopped, which the link's Done reports.
+// sendMarkedLocked queues m on link r with an RTT mark. An encoding failure
+// is a defect (internal). A send error goes to the effects, examined outside
+// the lock: a reliable frame that does not fit the write queue loses the link
+// (stalled), any other error means the write side already stopped, which the
+// link's Done reports.
 func (s *Session) sendMarkedLocked(r int, m protocol.Message, mark *atomic.Int64) effects {
-	l := s.st.links[r]
-	err := l.sendMarked(m, mark, s.epoch)
-	switch {
-	case err == nil:
-		return effects{}
-	case errors.Is(err, controlwire.ErrQueueFull):
-		return s.linkLostLocked(r, errStalled, s.st.updated)
-	case errors.Is(err, controlwire.ErrFrameTooLarge), isValidation(err):
+	f, err := protocol.Marshal(m)
+	if err != nil {
 		return effects{term: &terminal{code: protocol.ReasonInternal, detail: truncate("encode: "+err.Error(), maxDetail)}}
 	}
-	return effects{}
-}
-
-func isValidation(err error) bool {
-	var v *protocol.ValidationError
-	return errors.As(err, &v)
+	var fx effects
+	fx.sendErr[r] = s.st.links[r].sendMarked(f, mark, s.epoch)
+	return fx
 }
 
 // sendPingLocked writes the next ping of link r (at most 8 per link).

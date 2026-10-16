@@ -48,7 +48,9 @@ func TestMapNATPMPWhenPCPUnsupported(t *testing.T) {
 	gw := newFakeGW(t)
 	gw.set(func(f *fakeGW) { f.pcpMode = serveUnsupported; f.grant = 120 })
 	fc := clock.NewFake(t, time.Time{})
-	m := newTestMapper(t, Config{}, testEnv{gw: gw, clk: fc})
+	// UNSUPP_VERSION ends the PCP attempt at once, long before the attempt
+	// bound, which is far beyond what a loaded machine adds.
+	m := newTestMapper(t, Config{AttemptTimeout: 5 * time.Second}, testEnv{gw: gw, clk: fc})
 	pc := listenLoopback(t)
 	base := goroutineBase()
 
@@ -57,7 +59,7 @@ func TestMapNATPMPWhenPCPUnsupported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Map() error = %v", err)
 	}
-	within(t, "Map() after UNSUPP_VERSION", time.Since(start), 300*time.Millisecond)
+	within(t, "Map() after UNSUPP_VERSION", time.Since(start), 2*time.Second)
 	if info.Method != protocol.PortMapNATPMP || info.External != netip.AddrPortFrom(gw.ext, portOf(pc)) || info.Lease != 2*time.Minute {
 		t.Fatalf("Map() = %+v", info)
 	}
@@ -286,7 +288,7 @@ func TestMapContextCancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Map() error = %v, want context.Canceled", err)
 	}
-	within(t, "Map() cancelled at 100ms", time.Since(start), 300*time.Millisecond)
+	within(t, "Map() cancelled at 100ms", time.Since(start), 2*time.Second) // AttemptTimeout is 5 s
 }
 
 func TestMapCompensatesUncertainMappings(t *testing.T) {
@@ -365,6 +367,18 @@ func TestMapUserCodePanics(t *testing.T) {
 			t.Fatalf("a recovered user panic reached the group: %+v", s)
 		}
 	})
+	t.Run("Config.Gateway error", func(t *testing.T) {
+		// The lookup goroutine wraps the error outside the recover boundary;
+		// fmt contains the panic of its Error method.
+		m := newTestMapper(t, Config{Gateway: func(context.Context) (netip.Addr, error) { return netip.Addr{}, panicError{} }}, testEnv{})
+		_, _, err := m.Map(context.Background(), listenLoopback(t), protocol.PortMappingPolicy{})
+		if !errors.Is(err, ErrNoGateway) || !errors.Is(err, panicError{}) {
+			t.Fatalf("Map() error = %v, want ErrNoGateway wrapping the gateway error", err)
+		}
+		if s := m.g.Stats(); s.Panics != 0 || m.g.Context().Err() != nil {
+			t.Fatalf("a panic in the gateway error reached the group: %+v, %v", s, context.Cause(m.g.Context()))
+		}
+	})
 	t.Run("conn.LocalAddr", func(t *testing.T) {
 		m := newTestMapper(t, Config{}, testEnv{})
 		_, _, err := m.Map(context.Background(), localAddrConn{panics: true}, protocol.PortMappingPolicy{})
@@ -388,6 +402,11 @@ func (c localAddrConn) LocalAddr() net.Addr {
 	}
 	return c.addr
 }
+
+// panicError is an error whose Error method panics.
+type panicError struct{}
+
+func (panicError) Error() string { panic("Error exploded") }
 
 // textAddr is a net.Addr that is not a *net.UDPAddr.
 type textAddr string

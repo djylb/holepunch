@@ -328,7 +328,7 @@ func TestValidateClientMessages(t *testing.T) {
 		{"progress_detail_128", prog(func(m *Progress) { m.Detail = strings.Repeat("d", 128) }), true, "", ""},
 		{"progress_detail_129", prog(func(m *Progress) { m.Detail = strings.Repeat("d", 129) }), false, "", "detail"},
 		{"progress_meta_64", prog(func(m *Progress) { m.Meta = map[string]string{"k": strings.Repeat("v", 64)} }), true, "", ""},
-		{"progress_meta_65", prog(func(m *Progress) { m.Meta = map[string]string{"k": strings.Repeat("v", 65)} }), false, "", "meta.k"},
+		{"progress_meta_65", prog(func(m *Progress) { m.Meta = map[string]string{"k": strings.Repeat("v", 65)} }), false, "", "meta"},
 		{"progress_meta_17_keys_truncated_not_rejected", prog(func(m *Progress) {
 			m.Meta = map[string]string{}
 			for i := 0; i < 17; i++ {
@@ -580,6 +580,11 @@ func TestNormalizeClamps(t *testing.T) {
 	if !reflect.DeepEqual(original, in) {
 		t.Fatal("Normalize wrote its receiver")
 	}
+	st := g.Plan.Sides[0].Stages
+	_, _ = append(st[0].Targets, ap("203.0.113.9:9")), append(st[1].Steps, 9)
+	if !reflect.DeepEqual(original, in) {
+		t.Fatal("appending to the normalized lists wrote the receiver's")
+	}
 	s = &g.Plan.Sides[0]
 	light, _ := BudgetLight.Limits()
 	type limits struct {
@@ -669,6 +674,9 @@ func TestNormalizeOtherMessages(t *testing.T) {
 	if len(a.Targets) != 20 || a.Window.Hi != 1000 || len(a.Meta) != 10 {
 		t.Fatal("Normalize wrote the assist's targets, window or meta")
 	}
+	if _ = append(n.Targets, ap("203.0.113.9:9")); a.Targets[maxAssistTargets] != ap("192.0.2.1:9") {
+		t.Fatal("appending to the normalized targets wrote the assist's")
+	}
 	pr := sample[PunchResult]()
 	pr.Stats.Drops = map[string]uint32{}
 	for i := 0; i < 20; i++ {
@@ -702,6 +710,11 @@ func TestNormalizeOtherMessages(t *testing.T) {
 	rp, clamped = rp.ClampTo(Budget{MaxSockets: 2})
 	if !clamped || rp.Sides[0].Sockets != 1 || rp.Sides[0].FreshSockets() != 1 {
 		t.Fatalf("ClampTo with no room: %d + %d", rp.Sides[0].Sockets, rp.Sides[0].FreshSockets())
+	}
+	// One socket of each is the least a fresh stage runs with: a limit of 1
+	// cannot take it lower, and no value changes.
+	if one, clamped := rp.ClampTo(Budget{MaxSockets: 1}); clamped || !reflect.DeepEqual(one, rp) {
+		t.Fatalf("ClampTo(1) of one socket of each: clamped %v, %d + %d", clamped, one.Sides[0].Sockets, one.Sides[0].FreshSockets())
 	}
 	rp = sampleRoundPlan(1) // balanced: 8 sockets a side
 	rp.Sides[0].Stages[3] = freshStage(ap("192.0.2.55:61003"))

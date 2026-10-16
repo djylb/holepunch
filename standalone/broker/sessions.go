@@ -76,7 +76,7 @@ func (b *Broker) Open(req OpenRequest) (*Session, error) {
 	ticket, sum := newSecret()
 	s := &Session{b: b, cs: cs, host: h, ticketSum: sum, info: proto.SessionInfo{
 		SessionID: cs.ID(), HostID: req.HostID, DialerID: req.DialerID,
-		HostMetadata: hi.Metadata, DialerMetadata: maps.Clone(req.Metadata), Policy: policy,
+		HostMetadata: maps.Clone(h.metadata), DialerMetadata: maps.Clone(req.Metadata), Policy: policy,
 	}}
 	if err := b.index(s); err != nil {
 		cs.Abort(protocol.ReasonPeerOffline, "host_gone")
@@ -85,25 +85,32 @@ func (b *Broker) Open(req OpenRequest) (*Session, error) {
 	in := proto.Incoming{SessionID: cs.ID(), Ticket: ticket, DialerID: req.DialerID, DialerMetadata: maps.Clone(req.Metadata)}
 	if err := h.notify(in); err != nil {
 		cs.Abort(protocol.ReasonPeerOffline, "host_unreachable")
-		return nil, fmt.Errorf("%w: %v", ErrHostNotFound, err)
+		return nil, err
 	}
 	return s, nil
 }
 
-// policy runs the Authorize hook and canonicalises its policy.
+// policy runs the Authorize hook and canonicalises its policy. The hook
+// gets copies of the metadata, and its error is formatted inside the
+// recover boundary, since the error's methods are the hook's code too.
 func (b *Broker) policy(req OpenRequest, hi HostInfo) (proto.AccessPolicy, error) {
 	if b.authorize == nil {
 		return proto.AccessPolicy{}, nil
 	}
+	req.Metadata = maps.Clone(req.Metadata)
 	var (
 		p   proto.AccessPolicy
 		err error
 	)
-	if perr := life.Safe("broker.Authorize", func() { p, err = b.authorize(req, hi) }); perr != nil {
+	if perr := life.Safe("broker.Authorize", func() {
+		if p, err = b.authorize(req, hi); err != nil {
+			err = fmt.Errorf("%w: %v", ErrRefused, err)
+		}
+	}); perr != nil {
 		return proto.AccessPolicy{}, fmt.Errorf("%w: authorize failed", ErrRefused)
 	}
 	if err != nil {
-		return proto.AccessPolicy{}, fmt.Errorf("%w: %v", ErrRefused, err)
+		return proto.AccessPolicy{}, err
 	}
 	if len(p.Targets) > proto.MaxTargets {
 		return proto.AccessPolicy{}, fmt.Errorf("broker: Authorize returned %d targets > %d", len(p.Targets), proto.MaxTargets)

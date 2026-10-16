@@ -56,7 +56,9 @@ type World struct {
 	pipeDelay time.Duration
 }
 
-// New builds a World.
+// New builds a World. Each part is closed by the test's cleanup as soon as
+// it exists, so that a failure half-way leaks nothing; the cleanups run in
+// reverse: server, broker, natprobe, network.
 func New(t testing.TB, o Options) *World {
 	t.Helper()
 	w := &World{T: t, pipeDelay: o.PipeDelay}
@@ -64,6 +66,7 @@ func New(t testing.TB, o Options) *World {
 		w.pipeDelay = 10 * time.Millisecond
 	}
 	w.Net = nattest.NewNetwork(nattest.WithSeed(o.Seed))
+	t.Cleanup(func() { _ = w.Net.Close() })
 	w.Host = w.Net.PublicHost(netip.IPv4Unspecified())
 	w.Registry = natprobe.NewRegistry(natprobe.RegistryConfig{})
 	probe, err := natprobe.NewServer(natprobe.ServerConfig{
@@ -73,6 +76,7 @@ func New(t testing.TB, o Options) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = probe.Close() })
 	if err := probe.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +93,11 @@ func New(t testing.TB, o Options) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := w.Broker.Close(); err != nil {
+			t.Errorf("broker close: %v", err)
+		}
+	})
 	cert, pin, err := tlsid.New(ServerName, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -101,20 +110,15 @@ func New(t testing.TB, o Options) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.ClientTLS = &tls.Config{
-		MinVersion: tls.VersionTLS13, ServerName: ServerName,
-		InsecureSkipVerify: true, VerifyPeerCertificate: tlsid.VerifyPin(pin),
-	}
 	t.Cleanup(func() {
 		if err := w.Server.Close(); err != nil {
 			t.Errorf("server close: %v", err)
 		}
-		if err := w.Broker.Close(); err != nil {
-			t.Errorf("broker close: %v", err)
-		}
-		_ = probe.Close()
-		_ = w.Net.Close()
 	})
+	w.ClientTLS = &tls.Config{
+		MinVersion: tls.VersionTLS13, ServerName: ServerName,
+		InsecureSkipVerify: true, VerifyConnection: tlsid.VerifyPin(pin),
+	}
 	return w
 }
 

@@ -297,22 +297,39 @@ func (t *Table) getOrCreate(local, remote netip.AddrPort, fam protocol.Family, n
 }
 
 // evict drops the least useful candidate to make room: never the nominated
-// or confirmed pair; a non-responsive one before a responsive one; among
-// those, the one seen least recently.
+// or confirmed pair; a closed one first, then a non-responsive one before a
+// responsive one; among those, the one seen least recently, and the address
+// order last, so the choice does not depend on the map order.
 func (t *Table) evict() {
 	var victim *Candidate
 	for _, c := range t.cands {
 		if c.State == StateNominated || c.State == StateConfirmed {
 			continue
 		}
-		if victim == nil || (victim.Responsive && !c.Responsive) ||
-			(victim.Responsive == c.Responsive && c.LastSeen.Before(victim.LastSeen)) {
+		if victim == nil || evictBefore(c, victim) {
 			victim = c
 		}
 	}
 	if victim != nil {
 		delete(t.cands, pairKey{victim.Local, victim.Remote})
 	}
+}
+
+// evictBefore reports whether c is less useful than v.
+func evictBefore(c, v *Candidate) bool {
+	if cc, vc := c.State == StateClosed, v.State == StateClosed; cc != vc {
+		return cc
+	}
+	if c.Responsive != v.Responsive {
+		return !c.Responsive
+	}
+	if !c.LastSeen.Equal(v.LastSeen) {
+		return c.LastSeen.Before(v.LastSeen)
+	}
+	if d := c.Local.Compare(v.Local); d != 0 {
+		return d < 0
+	}
+	return c.Remote.Compare(v.Remote) < 0
 }
 
 // closeLocal moves every pair of the local socket to StateClosed.

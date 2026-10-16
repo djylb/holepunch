@@ -253,11 +253,12 @@ type ClassLimits struct {
 	MaxSockets       uint16
 }
 
-// Valid reports whether c is one of the four classes.
+// Valid reports whether c is one of the five classes.
 func (c BudgetClass) Valid() bool { return c.Rank() > 0 }
 
-// Rank orders the classes: light 1, balanced 2, heavy 3, extreme 4; 0 for
-// anything else. Consecutive rounds rise by at most one rank.
+// Rank orders the classes: light 1, balanced 2, heavy and background 3,
+// extreme 4; 0 for anything else. Consecutive rounds rise by at most one
+// rank.
 func (c BudgetClass) Rank() int {
 	switch c {
 	case BudgetLight:

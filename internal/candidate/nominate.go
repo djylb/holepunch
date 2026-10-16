@@ -243,22 +243,36 @@ func (m *Manager) Observe(now time.Time, local, remote netip.AddrPort, fam proto
 }
 
 // Success records a received peer packet on (local, remote). For the initiator
-// it starts the collection window on the first success. rttSample (now-echo_ts)
-// may be 0 when unknown.
+// it starts the collection window on the first success, and a pair that can
+// be nominated at once cuts a wait for a cooldown down to that window.
+// rttSample (now-echo_ts) may be 0 when unknown.
 func (m *Manager) Success(now time.Time, local, remote netip.AddrPort, fam protocol.Family, rttSample time.Duration) {
 	if m.inert {
 		return
 	}
-	m.tab.Success(now, local, remote, fam, rttSample)
+	c := m.tab.Success(now, local, remote, fam, rttSample)
 	if m.cur != nil && remote == m.cur.Remote && local == m.cur.Local {
 		m.lastRemoteAt = now
 	}
-	if !m.responder && m.phase == PhasePunching {
+	if m.responder {
+		return
+	}
+	switch m.phase {
+	case PhasePunching:
 		if rttSample > 0 {
 			m.firstRTT = rttSample
 		}
 		m.phase = PhaseCollect
 		m.collectAt = now.Add(m.nomDelay())
+	case PhaseCollect:
+		// Within the first window this never moves collectAt; after a roll
+		// that left only cooling-down pairs, a fresh pair need not wait
+		// for their cooldown.
+		if c.State != StateClosed && !c.CooldownUntil.After(now) {
+			m.collectAt = minTime(m.collectAt, now.Add(m.nomDelay()))
+		}
+	case PhaseNominating, PhaseSettling, PhaseReadying, PhaseAdopted, PhaseConfirmed, PhaseDone, PhaseFailed:
+		// A campaign runs or is over.
 	}
 }
 
@@ -394,13 +408,11 @@ func (m *Manager) fire(ev eventKind, now time.Time) []Action {
 }
 
 func (m *Manager) startNominating(now time.Time) []Action {
-	best := m.tab.Best(now)
-	if best == nil {
-		m.phase = PhasePunching
-		m.collectAt = time.Time{}
-		return nil
+	if best := m.tab.Best(now); best != nil {
+		return m.beginNominate(now, best)
 	}
-	return m.beginNominate(now, best)
+	m.awaitCandidate(now)
+	return nil
 }
 
 // beginNominate starts a nomination campaign for best at the next epoch.
@@ -466,8 +478,7 @@ func (m *Manager) rollEpoch(now time.Time) []Action {
 }
 
 // renominate releases the current pair and nominates the best remaining one
-// at the next epoch; with only cooling-down pairs left it waits for the
-// first cooldown to expire, and with none it returns to punching.
+// at the next epoch, or waits for one (awaitCandidate).
 func (m *Manager) renominate(now time.Time) []Action {
 	if m.cur.State == StateNominated {
 		m.cur.State = StateSucceeded
@@ -477,12 +488,19 @@ func (m *Manager) renominate(now time.Time) []Action {
 	}
 	m.cur, m.extras = nil, nil
 	m.secondBurstAt, m.resendAt = time.Time{}, time.Time{}
+	m.awaitCandidate(now)
+	return nil
+}
+
+// awaitCandidate leaves the initiator without a pair to nominate: with only
+// cooling-down pairs left it waits for the first cooldown to expire, and
+// with none it returns to punching, where the next success collects again.
+func (m *Manager) awaitCandidate(now time.Time) {
 	if at, ok := m.nextCooldownExpiry(now); ok {
 		m.phase, m.collectAt = PhaseCollect, at
 	} else {
 		m.phase, m.collectAt = PhasePunching, time.Time{}
 	}
-	return nil
 }
 
 // nextCooldownExpiry returns when the first responsive, open pair leaves its
@@ -772,6 +790,13 @@ func defaultClamp(v, def, lo, hi time.Duration) time.Duration {
 
 func maxTime(a, b time.Time) time.Time {
 	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
 		return a
 	}
 	return b

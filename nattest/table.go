@@ -77,16 +77,13 @@ type mapEntry struct {
 
 	// aliases are the keys of the flows that inbound packets opened on an
 	// endpoint-dependent mapping, as conntrack opens them: a reply to such a
-	// packet leaves through the mapping that admitted it.
+	// packet leaves through the mapping that admitted it. A mapping keeps at
+	// most MaxMappings of them, so that one that admits everyone stays
+	// bounded under a scan; a reply beyond them takes a mapping of its own.
 	aliases []mapKey
 
 	elem *list.Element // position in NAT.lru
 }
-
-// maxAliases bounds the inbound flows a mapping keeps: a mapping that
-// admits everyone would otherwise grow without bound under a scan. A reply
-// beyond them takes a mapping of its own.
-const maxAliases = 64
 
 // natFam is the state of one address family of a NAT device. It is guarded
 // by NAT.mu, except the fields that addressing reads under Network.topo:
@@ -416,7 +413,7 @@ func (nat *NAT) acceptInLocked(f *natFam, p *packet, now time.Duration) dropReas
 // already has a mapping for keeps it, and a proxy route opens none
 // (Route.Proxy).
 func (nat *NAT) trackInLocked(f *natFam, m *mapEntry, src netip.AddrPort) {
-	if r := f.rule(m.key.path); f.mode != modeTranslate || r.mapping == EIM || r.proxy || len(m.aliases) >= maxAliases {
+	if r := f.rule(m.key.path); f.mode != modeTranslate || r.mapping == EIM || r.proxy || len(m.aliases) >= nat.cfg.MaxMappings {
 		return
 	}
 	key, _ := nat.keyOut(f, m.in, src)

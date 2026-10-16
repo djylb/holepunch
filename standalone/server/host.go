@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -17,12 +18,51 @@ type hostLink struct {
 	raw  net.Conn // closing it fails a blocked write at once, unlike a TLS close
 
 	mu sync.Mutex // serialises writes: Incoming from dialers' goroutines, heartbeats from the reader
+	// A dialer can open a session as soon as the broker has registered the
+	// host: until Registered is written, its Incoming waits in queued.
+	registered bool
+	queued     []proto.Incoming
 }
 
-// Notify writes the Incoming; a failed write closes the link, whose reader
-// then unregisters the host.
+// errLinkLost is Notify's error. What failed concerns the host's
+// connection, and the dialer whose open fails is told no more.
+var errLinkLost = errors.New("server: registration link lost")
+
+// Notify writes the Incoming, or queues it until Registered is written; a
+// failed write closes the link, whose reader then unregisters the host.
 func (l *hostLink) Notify(in proto.Incoming) error {
-	return l.write(&in)
+	if err := l.deliver(&in); err != nil {
+		l.s.log.Debug("incoming write failed", "session", in.SessionID, "err", err)
+		return errLinkLost
+	}
+	return nil
+}
+
+// deliver writes or queues in. The write runs the connection's methods,
+// which may panic on this dialer's goroutine: the deferred unlock leaves
+// the lock free for the link's reader and the other dialers.
+func (l *hostLink) deliver(in *proto.Incoming) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.registered {
+		l.queued = append(l.queued, *in)
+		return nil
+	}
+	return l.writeLocked(in)
+}
+
+// welcome writes Registered, then the Incoming notices queued before it.
+func (l *hostLink) welcome(m *proto.Registered) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.registered = true
+	queued := l.queued
+	l.queued = nil
+	err := l.writeLocked(m)
+	for i := 0; err == nil && i < len(queued); i++ {
+		err = l.writeLocked(&queued[i])
+	}
+	return err
 }
 
 // Revoke closes the link: the broker gave the host ID to a new
@@ -31,11 +71,21 @@ func (l *hostLink) Revoke() { _ = l.raw.Close() }
 
 func (l *hostLink) write(m proto.Message) error {
 	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.writeLocked(m)
+}
+
+// writeLocked writes m with l.mu held. A write that fails or panics closes
+// the link: the stream may end in part of a frame.
+func (l *hostLink) writeLocked(m proto.Message) error {
+	written := false
+	defer func() {
+		if !written {
+			_ = l.raw.Close()
+		}
+	}()
 	err := proto.Write(l.conn, m, l.s.cfg.WriteTimeout)
-	l.mu.Unlock()
-	if err != nil {
-		_ = l.raw.Close()
-	}
+	written = err == nil
 	return err
 }
 
@@ -54,13 +104,13 @@ func (s *Server) serveHost(st *stream, m *proto.Register) {
 		return
 	}
 	defer h.Close()
-	if err := link.write(&proto.Registered{Credential: h.Credential(), HeartbeatMs: uint32(s.cfg.Heartbeat / time.Millisecond)}); err != nil {
+	if err := link.welcome(&proto.Registered{Credential: h.Credential(), HeartbeatMs: uint32(s.cfg.Heartbeat / time.Millisecond)}); err != nil {
 		return
 	}
 	s.registered.Add(1)
 	s.hostLinks(1)
 	defer s.hostLinks(-1)
-	s.log.Debug("host registered", "host", h.ID(), "remote", remote(st.raw))
+	s.log.Debug("host registered", "host", h.ID(), "remote", st.remote)
 	for {
 		if err := st.conn.SetReadDeadline(time.Now().Add(3 * s.cfg.Heartbeat)); err != nil {
 			return

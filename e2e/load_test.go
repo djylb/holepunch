@@ -7,10 +7,8 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"os"
 	"runtime"
 	"slices"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -35,8 +33,12 @@ import (
 const envLoadN = "HOLEPUNCH_E2E_LOAD_N"
 
 // loadN is the number of sessions of a load test.
-func loadN() int {
-	if v, err := strconv.Atoi(os.Getenv(envLoadN)); err == nil && v > 0 {
+func loadN(t *testing.T) int {
+	v, err := envCount(envLoadN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v > 0 {
 		return v
 	}
 	return 1000
@@ -65,6 +67,7 @@ func processUsage() usage {
 type sampler struct {
 	stop       chan struct{}
 	done       chan struct{}
+	once       sync.Once
 	goroutines atomic.Int64
 	heapInuse  atomic.Uint64
 }
@@ -97,8 +100,10 @@ func startSampler() *sampler {
 	return s
 }
 
+// end stops the sampler and waits for it; it is idempotent, so that a test
+// may also defer it.
 func (s *sampler) end() {
-	close(s.stop)
+	s.once.Do(func() { close(s.stop) })
 	<-s.done
 }
 
@@ -268,7 +273,7 @@ const (
 // dispatch latency of summary and go, NewSession throughput, zero wakeups
 // of idle sessions, and nothing left at the end.
 func TestLoadControlPlane(t *testing.T) {
-	n := loadN()
+	n := loadN(t)
 	net0 := nattest.NewNetwork(nattest.WithEventLog(0))
 	defer func() { _ = net0.Close() }()
 	co, err := coord.New(coord.Config{AllowUnverifiedTargets: true, Timeouts: e2eTimeouts(),
@@ -297,6 +302,7 @@ func TestLoadControlPlane(t *testing.T) {
 	runtime.GC()
 	g0, heap0, u0 := runtime.NumGoroutine(), heapInuse(), processUsage()
 	smp := startSampler()
+	defer smp.end()
 	park := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -371,8 +377,12 @@ func TestLoadControlPlane(t *testing.T) {
 	}
 	close(park)
 	wg.Wait()
-	for _, s := range sessions {
-		<-s.s.Done()
+	for i, s := range sessions {
+		select {
+		case <-s.s.Done():
+		case <-ctx.Done():
+			t.Fatalf("session %d did not end: %v", i, ctx.Err())
+		}
 	}
 	smp.end()
 	u1 := processUsage()
@@ -466,7 +476,7 @@ const (
 // cell, and records the success rates, CPU time, peak RSS, goroutines and
 // heap per session; everything must be released at the end.
 func TestLoadClients(t *testing.T) {
-	n := loadN()
+	n := loadN(t)
 	byName := map[string]*cell{}
 	for _, c := range cells() {
 		byName[c.name] = c
@@ -486,6 +496,7 @@ func TestLoadClients(t *testing.T) {
 
 	w := newWorld(t, worldConfig{seed: suite().seed, eventLog: -1,
 		limits: coord.Limits{NewSessions: coord.Rate{PerSec: -1}, MaxPending: 4096, MaxSessions: 4096}})
+	defer func() { _ = w.close() }() // a failed test's; the close below reports its errors
 	var runs []*run
 	var kinds []string
 	for _, m := range clientLoadMix {
@@ -503,6 +514,7 @@ func TestLoadClients(t *testing.T) {
 	runtime.GC()
 	g0, heap0, u0 := runtime.NumGoroutine(), heapInuse(), processUsage()
 	smp := startSampler()
+	defer smp.end()
 	start := time.Now()
 	var wg sync.WaitGroup
 	for _, r := range runs {

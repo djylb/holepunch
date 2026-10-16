@@ -22,13 +22,13 @@ func TestDelayedDeliveryRealClock(t *testing.T) {
 	start := time.Now()
 	send(t, c, addrOf(o), "1")
 	send(t, c, addrOf(o), "2")
-	if s, _ := recvWait(t, o, time.Second); s != "1" {
+	if s, _ := recvWait(t, o, 5*time.Second); s != "1" {
 		t.Fatalf("order: %q", s)
 	}
 	if el := time.Since(start); el < 40*time.Millisecond {
 		t.Fatalf("delivered after %v, want >= 40ms", el)
 	}
-	if s, _ := recvWait(t, o, time.Second); s != "2" {
+	if s, _ := recvWait(t, o, 5*time.Second); s != "2" {
 		t.Fatalf("order: %q", s)
 	}
 	if st := n.Stats(); st.EventsScheduled < 4 || st.EventsPending != 0 {

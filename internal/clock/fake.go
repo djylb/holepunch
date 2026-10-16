@@ -99,13 +99,13 @@ func (f *Fake) AdvanceTo(target time.Time) int {
 			f.report("clock: %d timers fired in one advance; a zero-delay timer probably re-arms itself", fired)
 			break
 		}
-		t, ok := f.popDue(target)
+		t, due, ok := f.popDue(target)
 		if !ok {
 			break
 		}
 		fired++
 		if t.fn != nil {
-			f.run(t)
+			f.run(t.fn, due)
 		}
 	}
 	f.moveTo(target)
@@ -198,15 +198,17 @@ func (f *Fake) unscheduleLocked(t *fakeTimer) bool {
 // popDue removes the earliest timer if it is due at target (or at the current
 // time, whichever is later), moves the clock to its deadline and, for a
 // channel timer, delivers the expiry. Delivery happens under the lock so that
-// Stop and Reset observe "pending" or "delivered" atomically.
-func (f *Fake) popDue(target time.Time) (*fakeTimer, bool) {
+// Stop and Reset observe "pending" or "delivered" atomically. It returns the
+// deadline the timer fired for: t.when is guarded by the lock and changes
+// when the timer is reset, also from its own callback.
+func (f *Fake) popDue(target time.Time) (*fakeTimer, time.Time, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.now.After(target) {
 		target = f.now
 	}
 	if len(f.timers) == 0 || f.timers[0].when.After(target) {
-		return nil, false
+		return nil, time.Time{}, false
 	}
 	t := heap.Pop(&f.timers).(*fakeTimer)
 	f.notifyLocked()
@@ -219,7 +221,7 @@ func (f *Fake) popDue(target time.Time) (*fakeTimer, bool) {
 		default:
 		}
 	}
-	return t, true
+	return t, t.when, true
 }
 
 func (f *Fake) moveTo(target time.Time) {
@@ -258,16 +260,16 @@ func (f *Fake) notifyLocked() {
 	}
 }
 
-// run calls an AfterFunc callback without holding the lock. A panic is
-// recovered and reported as a test failure: re-panicking would kill the test
-// binary, and FailNow is not allowed off the test goroutine.
-func (f *Fake) run(t *fakeTimer) {
+// run calls an AfterFunc callback due at due without holding the lock. A
+// panic is recovered and reported as a test failure: re-panicking would kill
+// the test binary, and FailNow is not allowed off the test goroutine.
+func (f *Fake) run(fn func(), due time.Time) {
 	defer func() {
 		if r := recover(); r != nil {
-			f.report("clock: AfterFunc callback due at %v panicked: %v\n%s", t.when, r, debug.Stack())
+			f.report("clock: AfterFunc callback due at %v panicked: %v\n%s", due, r, debug.Stack())
 		}
 	}()
-	t.fn()
+	fn()
 }
 
 func (f *Fake) report(format string, args ...any) {

@@ -12,6 +12,7 @@ import (
 const (
 	wsaENETUNREACH  syscall.Errno = 10051
 	wsaENETRESET    syscall.Errno = 10052
+	wsaEHOSTDOWN    syscall.Errno = 10064
 	wsaEHOSTUNREACH syscall.Errno = 10065
 )
 
@@ -71,6 +72,6 @@ func reportErrno(e syscall.Errno) bool {
 }
 
 func noRouteErrno(e syscall.Errno) bool {
-	return errors.Is(e, wsaEHOSTUNREACH) || errors.Is(e, wsaENETUNREACH) ||
-		errors.Is(e, syscall.EHOSTUNREACH) || errors.Is(e, syscall.ENETUNREACH)
+	return errors.Is(e, wsaEHOSTUNREACH) || errors.Is(e, wsaENETUNREACH) || errors.Is(e, wsaEHOSTDOWN) ||
+		errors.Is(e, syscall.EHOSTUNREACH) || errors.Is(e, syscall.ENETUNREACH) || errors.Is(e, syscall.EHOSTDOWN)
 }

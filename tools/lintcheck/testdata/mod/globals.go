@@ -31,12 +31,25 @@ var removed = map[int]bool{}    // want "noglobalstate"
 var ranged int                  // want "noglobalstate"
 var hook = func() {}            // want "noglobalstate"
 var Exported = 1                // want "noglobalstate"
+var lazyHits int                // want "noglobalstate"
+var registered int              // want "noglobalstate"
+var initRan int
+var handlers []func()
+
+// The literal runs whenever lazy is called, at run time; the one called on
+// the spot runs during initialisation.
+var lazy = func() { lazyHits++ }
+var _ = func() int { initRan++; return 0 }()
 
 type timeoutError struct{}
 
 func (*timeoutError) Error() string { return "timeout" }
 
-func init() { initOnly["x"] = true }
+func init() {
+	initOnly["x"] = true
+	initRan++
+	handlers = append(handlers, func() { registered++ })
+}
 
 func bump() { counter++ }
 
@@ -78,4 +91,6 @@ func usePools() {
 	once.Do(func() {})
 	_, _ = defaults, errTimeout
 	hook()
+	lazy()
+	_ = initRan + len(handlers)
 }

@@ -108,7 +108,7 @@ func checkInbound(t *testing.T, nat *NAT, f Filtering, socks []*conn, r *conn, k
 	}
 	m := ms[k%len(ms)]
 	src := r.localAP()
-	want := false
+	var want bool
 	switch f {
 	case EIF:
 		want = true

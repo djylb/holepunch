@@ -271,7 +271,9 @@ type NATConfig struct {
 	ExternalIPs []netip.Addr
 	ExitPolicy  ExitPolicy
 	// MaxMappings bounds the mapping table; the least recently used mapping
-	// is evicted when it is full. The default is 4096.
+	// is evicted when it is full. It also bounds the flows that admitted
+	// inbound packets open on one endpoint-dependent mapping. The default is
+	// 4096.
 	MaxMappings int
 
 	// ScanDefense enables scan detection; nil disables it.
@@ -334,8 +336,8 @@ type Classifier struct {
 	// means 5.
 	Window int
 	// Allow reports whether a datagram lets its flow through; nil allows
-	// STUN messages ([IsSTUN]). It is called under the device's lock and
-	// must not block.
+	// STUN messages ([IsSTUN]). It is called without any lock of the
+	// network held, must not block and must not keep payload.
 	Allow func(payload []byte) bool
 }
 

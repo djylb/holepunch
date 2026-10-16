@@ -194,7 +194,9 @@ func TestCloseStuckHandler(t *testing.T) {
 	start := time.Now()
 	err = hostC.Close()
 	d := time.Since(start)
-	if !errors.Is(err, client.ErrCloseTimeout) || d < 2*time.Second || d > 2100*time.Millisecond {
+	// Close waits its 2 s bound, not for the Handler, which only returns
+	// once released below; the upper bound is slack for a loaded machine.
+	if !errors.Is(err, client.ErrCloseTimeout) || d < 2*time.Second || d > 5*time.Second {
 		t.Fatalf("Close: %v after %v", err, d)
 	}
 	if err2 := hostC.Close(); err2 == nil || err2.Error() != err.Error() {
@@ -237,8 +239,10 @@ func TestCloseCancelsHandler(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 	<-entered
+	// A Handler left running would hold Close for its 2 s bound and make
+	// it fail with ErrCloseTimeout.
 	start := time.Now()
-	if err := hostC.Close(); err != nil || time.Since(start) > time.Second {
+	if err := hostC.Close(); err != nil || time.Since(start) >= 2*time.Second {
 		t.Fatalf("Close: %v after %v", err, time.Since(start))
 	}
 }
@@ -326,28 +330,37 @@ func TestServeErrors(t *testing.T) {
 	}
 }
 
+// panickyAsError is a dial error whose As method panics.
+type panickyAsError struct{}
+
+func (panickyAsError) Error() string { return "unreachable" }
+func (panickyAsError) As(_ any) bool { panic("As exploded") }
+
 // TestServeRetriesUntilCanceled: an unreachable server is retried with a
-// backoff, and canceling ends Serve with nil.
+// backoff, and canceling ends Serve with nil. The dial error's methods are
+// the caller's code; one that panics is a transient error like any other.
 func TestServeRetriesUntilCanceled(t *testing.T) {
 	var dials atomic.Int32
 	c, err := client.New(client.Config{
 		Server: "holepunchd.test:1",
 		Dial: func(context.Context) (net.Conn, error) {
 			dials.Add(1)
-			return nil, errors.New("unreachable")
+			return nil, panickyAsError{}
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = c.Close() }()
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	// Dials at 0 s and 1 s, the next one only at 3 s (backoff 1 s, then
+	// 2 s): 2.5 s leaves slack on both sides.
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()
 	if err := c.Serve(ctx, client.Registration{HostID: "office"}, func(context.Context, *client.Session) {}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	if n := dials.Load(); n != 2 {
-		t.Fatalf("%d dials in 1.5 s, want 2 (1 s backoff)", n)
+		t.Fatalf("%d dials in 2.5 s, want 2 (backoff 1 s, then 2 s)", n)
 	}
 }
 

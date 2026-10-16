@@ -99,7 +99,10 @@ func unpark(tb testing.TB, c *Coordinator, ps []parkedSession) {
 // link in controlwire and the session goroutine), one timer per session, no
 // read returning and no read deadline set while idle.
 func checkIdle(tb testing.TB, n int, idle time.Duration) (goroutinesPerSession float64, heapPerSession float64) {
-	c, err := New(Config{AllowUnverifiedTargets: true, Limits: Limits{NewSessions: Rate{PerSec: -1}, MaxPending: -1}})
+	// The longest ready timeout keeps the first parked sessions from ending
+	// (and reading) while the last are parked, on a slow or loaded machine.
+	c, err := New(Config{AllowUnverifiedTargets: true, Limits: Limits{NewSessions: Rate{PerSec: -1}, MaxPending: -1},
+		TTL: TTLConfig{ReadyTimeout: maxReady}})
 	if err != nil {
 		tb.Fatal(err)
 	}

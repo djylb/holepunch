@@ -111,6 +111,9 @@ func summarize(r any) (s string) {
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
 		s, cut = s[:i], true
 	}
+	// Repair before measuring: a replacement character is longer than the
+	// invalid byte it stands for.
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	if len(s) > maxPanicText {
 		n := maxPanicText
 		for n > 0 && !utf8.RuneStart(s[n]) {
@@ -118,7 +121,6 @@ func summarize(r any) (s string) {
 		}
 		s, cut = s[:n], true
 	}
-	s = strings.ToValidUTF8(s, "\uFFFD")
 	if cut {
 		s += "..."
 	}

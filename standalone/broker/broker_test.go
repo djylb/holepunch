@@ -11,6 +11,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch/coord"
+	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone/proto"
 )
@@ -350,15 +351,18 @@ func TestHostClose(t *testing.T) {
 // session is aborted and forgotten.
 func TestNotifyFailure(t *testing.T) {
 	for name, sig := range map[string]*signal{
-		"error": {err: errors.New("link down")},
-		"panic": {panics: true},
+		"error":         {err: errors.New("link down")},
+		"panic":         {panics: true},
+		"panicky error": {err: panickyError{}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(t, nil)
 			if _, err := r.b.Register(Registration{HostID: "office"}, sig); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := r.b.Open(OpenRequest{HostID: "office"}); !errors.Is(err, ErrHostNotFound) {
+			_, err := r.b.Open(OpenRequest{HostID: "office"})
+			var pe *life.PanicError
+			if !errors.Is(err, ErrHostNotFound) || errors.As(err, &pe) != (name != "error") {
 				t.Fatalf("open: %v", err)
 			}
 			if res := r.result(t); res.Code != protocol.ReasonPeerOffline || res.Detail != "host_unreachable" {
@@ -371,6 +375,12 @@ func TestNotifyFailure(t *testing.T) {
 	}
 }
 
+// panickyError is an error whose Error panics with itself: even fmt, which
+// recovers one panic in Error, panics again on it.
+type panickyError struct{}
+
+func (e panickyError) Error() string { panic(e) }
+
 func TestAuthorize(t *testing.T) {
 	cases := []struct {
 		name string
@@ -379,6 +389,7 @@ func TestAuthorize(t *testing.T) {
 	}{
 		{"refused", func(OpenRequest, HostInfo) (proto.AccessPolicy, error) { return proto.AccessPolicy{}, errors.New("no") }, ErrRefused},
 		{"panic", func(OpenRequest, HostInfo) (proto.AccessPolicy, error) { panic("boom") }, ErrRefused},
+		{"panicky error", func(OpenRequest, HostInfo) (proto.AccessPolicy, error) { return proto.AccessPolicy{}, panickyError{} }, ErrRefused},
 		{"bad target", func(OpenRequest, HostInfo) (proto.AccessPolicy, error) {
 			return proto.AccessPolicy{Targets: []string{"nope"}}, nil
 		}, nil},

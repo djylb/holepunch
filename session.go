@@ -79,16 +79,19 @@ func (s *Session) Close() error {
 		}
 		var closed []net.PacketConn
 		for _, c := range append([]net.PacketConn{s.conn}, s.extra...) {
-			if slices.Contains(closed, c) {
+			if slices.ContainsFunc(closed, func(x net.PacketConn) bool { return sameConn(x, c) }) {
 				continue
 			}
 			closed = append(closed, c)
 			var cerr error
-			if p := life.Safe("session.close", func() { cerr = c.Close() }); p != nil {
+			// The conn and its error are the Network's: both are inspected
+			// inside the boundary.
+			if p := life.Safe("session.close", func() {
+				if cerr = c.Close(); errors.Is(cerr, net.ErrClosed) {
+					cerr = nil
+				}
+			}); p != nil {
 				cerr = p
-			}
-			if errors.Is(cerr, net.ErrClosed) {
-				cerr = nil
 			}
 			errs = append(errs, cerr)
 		}
@@ -100,6 +103,19 @@ func (s *Session) Close() error {
 		}
 	})
 	return s.closeErr
+}
+
+// sameConn reports whether a and b are the same conn. A Network may return a
+// conn whose dynamic type == cannot compare, which panics; such conns count
+// as different, so one on two paths is closed twice (net.ErrClosed, the
+// usual answer to the second Close, is no error).
+func sameConn(a, b net.PacketConn) (same bool) {
+	defer func() {
+		if recover() != nil {
+			same = false
+		}
+	}()
+	return a == b
 }
 
 // ResidualFilter carries the parameters of udpwire.DropResidual for the

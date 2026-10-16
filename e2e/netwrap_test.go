@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"sync"
@@ -34,7 +35,6 @@ type clientNet struct {
 	listen    atomic.Pointer[func(purpose string)]
 	hop       atomic.Pointer[func(hops int)]
 	sent      map[netip.AddrPort]int // packets per destination, while recording
-	conns     []*wconn
 	mu        sync.Mutex
 	failReads atomic.Bool
 	rec       bool
@@ -89,11 +89,12 @@ func (c *clientNet) ListenPacket(ctx context.Context, network string, laddr neti
 	if err != nil {
 		return nil, err
 	}
-	w := &wconn{inner: pc.(innerConn), net: c, purpose: purpose}
-	c.mu.Lock()
-	c.conns = append(c.conns, w)
-	c.mu.Unlock()
-	return w, nil
+	inner, ok := pc.(innerConn)
+	if !ok {
+		_ = pc.Close()
+		return nil, fmt.Errorf("e2e: %T lacks the methods of a nattest socket", pc)
+	}
+	return &wconn{inner: inner, net: c}, nil
 }
 
 // InterfaceAddrs delegates to the Host.
@@ -123,9 +124,8 @@ type innerConn interface {
 
 // wconn is one wrapped socket.
 type wconn struct {
-	inner   innerConn
-	net     *clientNet
-	purpose string
+	inner innerConn
+	net   *clientNet
 }
 
 func (w *wconn) ReadFromUDPAddrPort(b []byte) (int, netip.AddrPort, error) {

@@ -60,31 +60,68 @@ type suiteConfig struct {
 	seed  int64
 }
 
-// suite returns the configuration; it is read once.
+// suite returns the configuration; it is read once. TestMain refuses an
+// environment that does not parse before any test runs.
 var suite = sync.OnceValue(func() suiteConfig {
+	c, err := loadSuite()
+	if err != nil {
+		panic(err)
+	}
+	return c
+})
+
+// loadSuite reads the configuration from the build tags and the
+// environment. A variable that is set but does not parse is an error: a
+// misspelt level or count must not quietly run something else.
+func loadSuite() (suiteConfig, error) {
 	c := suiteConfig{level: defaultLevel, seed: 1}
-	switch os.Getenv(envLevel) {
+	switch v := os.Getenv(envLevel); v {
+	case "":
 	case "nightly":
 		c.level = levelNightly
 	case "pr":
 		c.level = levelPR
+	default:
+		return c, fmt.Errorf("%s=%q: want pr or nightly", envLevel, v)
 	}
 	c.runs = prRuns
 	if c.level == levelNightly {
 		c.runs = nightlyRuns
 	}
-	if v, err := strconv.Atoi(os.Getenv(envRuns)); err == nil && v > 0 {
-		c.runs = v
+	runs, err := envCount(envRuns)
+	if err != nil {
+		return c, err
+	}
+	if runs > 0 {
+		c.runs = runs
 	}
 	if v := os.Getenv(envCells); v != "" {
-		c.cells = regexp.MustCompile(v)
+		if c.cells, err = regexp.Compile(v); err != nil {
+			return c, fmt.Errorf("%s: %w", envCells, err)
+		}
 	}
-	if v, err := strconv.ParseInt(os.Getenv(envSeed), 10, 64); err == nil {
-		c.seed = v
+	if v := os.Getenv(envSeed); v != "" {
+		if c.seed, err = strconv.ParseInt(v, 10, 64); err != nil {
+			return c, fmt.Errorf("%s=%q: %w", envSeed, v, err)
+		}
 	}
 	c.out = os.Getenv(envOut)
-	return c
-})
+	return c, nil
+}
+
+// envCount reads a count from the environment: 0 when the variable is unset,
+// an error when it is set to anything but a positive integer.
+func envCount(name string) (int, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s=%q: want a positive integer", name, v)
+	}
+	return n, nil
+}
 
 // failureDir returns the directory of a test's failure dumps: below
 // HOLEPUNCH_E2E_OUT when it is set, otherwise the test's temporary directory

@@ -28,6 +28,8 @@ type failureDump struct {
 	Coord      *coord.Result   `json:"coord,omitempty"`
 	Frames     [2][]dumpFrame  `json:"frames"`
 	Network    json.RawMessage `json:"network"`
+	// NetworkError is why the network dump is missing.
+	NetworkError string `json:"network_error,omitempty"`
 }
 
 type dumpClient struct {
@@ -93,7 +95,9 @@ func (cr *cellRun) dump(t testing.TB, violations []string, ablationName string) 
 		}
 	}
 	var nb bytes.Buffer
-	if err := cr.w.n.Dump(&nb); err == nil {
+	if err := cr.w.n.Dump(&nb); err != nil {
+		d.NetworkError = err.Error()
+	} else {
 		d.Network = nb.Bytes()
 	}
 	b, err := json.MarshalIndent(d, "", "  ")
@@ -106,4 +110,14 @@ func (cr *cellRun) dump(t testing.TB, violations []string, ablationName string) 
 	}
 	dir := failureDir(t)
 	return filepath.Join(dir, name), writeOut(dir, name, b)
+}
+
+// dumpNote writes the failure dump of a run with violations and returns the
+// line that points to it, or why it could not be written.
+func (cr *cellRun) dumpNote(t testing.TB, violations []string, ablationName string) string {
+	p, err := cr.dump(t, violations, ablationName)
+	if err != nil {
+		return fmt.Sprintf("failure dump: %v", err)
+	}
+	return "dump: " + p
 }

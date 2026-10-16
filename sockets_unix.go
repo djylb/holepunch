@@ -13,3 +13,7 @@ func getsockoptInt(fd uintptr, level, opt int) (int, error) {
 func setsockoptInt(fd uintptr, level, opt, v int) error {
 	return syscall.SetsockoptInt(int(fd), level, opt, v)
 }
+
+// oversized reports whether a read failed on a datagram larger than the
+// buffer: never on Unix, which truncates the datagram.
+func oversized(_ error) bool { return false }

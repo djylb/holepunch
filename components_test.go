@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/candidate"
+	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/udpwire"
@@ -160,6 +162,30 @@ func TestSessionClose(t *testing.T) {
 	}
 }
 
+// uncomparableConn is a conn whose dynamic type == cannot compare.
+type uncomparableConn struct {
+	_ [0]func() // makes the type uncomparable
+	net.PacketConn
+}
+
+// Session.Close takes every conn a Network may return, one whose type ==
+// cannot compare among them, also when it serves two paths.
+func TestSessionCloseUncomparableConn(t *testing.T) {
+	_, h := simHost(t)
+	c, err := h.ListenPacket(context.Background(), "udp4", netip.AddrPort{}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := uncomparableConn{PacketConn: c}
+	s := &Session{conn: u, extra: []net.PacketConn{u}}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := c.WriteTo([]byte{1}, net.UDPAddrFromAddrPort(netipAP("192.0.2.1", 9))); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("conn still open: %v", err)
+	}
+}
+
 // The OS network: loopback sockets, interface addresses, resolution, TTL
 // through syscall.Conn.
 func TestSystemNetwork(t *testing.T) {
@@ -298,6 +324,130 @@ func TestHandoverFailedAction(t *testing.T) {
 	case <-rt.punch.wake:
 	default:
 		t.Fatal("orchestrator not woken")
+	}
+}
+
+// A round whose fire instant lies past the handshake deadline is stopped
+// there and never fires, though its fire instant comes within the
+// confirmation grace: no fire progress, no punching phase, no evidence that
+// it ran. Meanwhile the loop waits for the grace's end without spinning on
+// the passed deadline.
+func TestStoppedRoundNeverFires(t *testing.T) {
+	fc := fakeClock(t)
+	_, h := simHost(t)
+	rt := newTestRuntime(t, fc, h)
+	rt.summary.Plan.Round1 = protocol.RoundPlan{Round: 1, Budget: protocol.BudgetLight, WindowMs: 3000}
+	t0 := fc.Now()
+	done := runPunchLoop(t, rt)
+	hs := t0.Add(rt.waits.handshake)
+
+	rt.ctl.goCh <- stamped[protocol.PunchGo]{msg: protocol.PunchGo{SessionID: "unit", Round: 1}, at: t0}
+	waitArmed(t, fc, t0, t0.Add(3*time.Second).Equal) // round 1 fired at once and runs to its window's end
+	// Round 2's go comes with the longest delay so late that it would fire
+	// 400 ms past the handshake deadline, within the 500 ms grace.
+	fc.AdvanceTo(hs.Add(400 * time.Millisecond).Add(-maxGoDelay))
+	r2 := protocol.RoundPlan{Round: 2, Budget: protocol.BudgetLight, WindowMs: 1000}
+	go2 := protocol.PunchGo{SessionID: "unit", Round: 2, DelayMs: uint16(maxGoDelay / time.Millisecond), Plan: &r2}
+	rt.ctl.goCh <- stamped[protocol.PunchGo]{msg: go2, at: fc.Now()}
+	waitArmed(t, fc, t0, hs.Equal) // round 2 preempted round 1 and waits for its fire instant
+	fc.AdvanceTo(hs)
+	// The handshake timeout stopped round 2: only the grace is left to wait
+	// for, neither round 2's fire instant nor the passed handshake deadline.
+	grace := hs.Add(confirmGrace)
+	waitArmed(t, fc, t0, grace.Equal)
+	fc.AdvanceTo(grace)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the punching ended without an error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the punch loop did not end at the grace's end")
+	}
+	if run := rt.curRound.Load(); run.plan.Round != 2 || run.fired {
+		t.Fatalf("round %d fired: %v", run.plan.Round, run.fired)
+	}
+}
+
+// A Confirm before the first go leaves only the handover timeout to wait for.
+// The keepalive is renewed only while the go is awaited: left armed, it
+// would hold the timer at zero from its instant on until the handover ends.
+func TestConfirmBeforeGo(t *testing.T) {
+	fc := fakeClock(t)
+	_, h := simHost(t)
+	rt := newTestRuntime(t, fc, h)
+	rt.timeouts.GoWaitMs = 15000 // the go deadline comes after the first keepalive
+	t0 := fc.Now()
+	done := runPunchLoop(t, rt)
+	goDeadline := rt.readyAt.Add(rt.waits.goWait)
+	keepalive := waitArmed(t, fc, t0, func(d time.Time) bool { return !d.After(goDeadline) }) // the loop's first wait
+	if !keepalive.Before(goDeadline) {
+		t.Fatalf("first wait ends at %v, want the keepalive before the go deadline", keepalive.Sub(t0))
+	}
+	// The handover started a second before the keepalive would be due and
+	// runs past it.
+	fc.AdvanceTo(keepalive.Add(-time.Second))
+	st := rt.punch
+	st.mu.Lock()
+	st.confirmAt = fc.Now()
+	st.mu.Unlock()
+	st.confirmed.Store(true)
+	st.notify()
+	handover := fc.Now().Add(time.Duration(rt.timeouts.HandoverTimeoutMs) * time.Millisecond)
+	if !handover.After(keepalive) {
+		t.Fatalf("the handover timeout %v ends before the keepalive", handover.Sub(t0))
+	}
+	waitArmed(t, fc, t0, handover.Equal)
+	fc.AdvanceTo(handover)
+	select {
+	case err := <-done:
+		var f *failure
+		if !errors.As(err, &f) || f.reason != protocol.ReasonHandoverTimeout {
+			t.Fatalf("got %v, want handover_timeout", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the punch loop did not end at the handover timeout")
+	}
+}
+
+// runPunchLoop runs rt's punching phase, from a punch_ready at the clock's
+// current instant, on its own goroutine over a control link nobody answers;
+// the channel receives the loop's error.
+func runPunchLoop(t *testing.T, rt *runtime) <-chan error {
+	t.Helper()
+	rt.computeWaits()
+	a, b := net.Pipe()
+	t.Cleanup(func() { _, _ = a.Close(), b.Close() })
+	if err := rt.ctl.open(a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.ctl.conn.Close() })
+	rt.pg = life.New(rt.g.Context())
+	t.Cleanup(func() { _ = rt.pg.Close(time.Second) })
+	rt.readyAt = rt.clk.Now()
+	done := make(chan error, 1)
+	go func() {
+		_, err := rt.punchLoop()
+		done <- err
+	}()
+	return done
+}
+
+// waitArmed waits, in real time, until the earliest timer of fc is due at a
+// deadline want accepts — the code under test armed it — and returns that
+// deadline. origin is the instant failures report the deadline from.
+func waitArmed(t *testing.T, fc *clock.Fake, origin time.Time, want func(time.Time) bool) time.Time {
+	t.Helper()
+	limit := time.Now().Add(5 * time.Second)
+	for {
+		next, ok := fc.Next()
+		if ok && want(next) {
+			return next
+		}
+		if time.Now().After(limit) {
+			t.Fatalf("the timer is due at %v (armed %v)", next.Sub(origin), ok)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

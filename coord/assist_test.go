@@ -30,7 +30,10 @@ func TestAssistRewrite(t *testing.T) {
 	a.Targets = []netip.AddrPort{mustAP("8.8.8.8:53")}
 	a.Window = &protocol.PortWindow{IP: netip.MustParseAddr("8.8.8.8"), Lo: 1, Hi: 2}
 	a.Source = protocol.TargetsInject
-	raw, _ := json.Marshal(a)
+	raw, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := p.cl[0].SendFrame(ctx(t), controlwire.TypeAssist, raw); err != nil {
 		t.Fatal(err)
 	}
@@ -39,8 +42,10 @@ func TestAssistRewrite(t *testing.T) {
 		got.Window != nil || got.Source != "" || got.Remote != pubR || got.Cand != 4097 {
 		t.Fatalf("forwarded %+v", got)
 	}
-	raw, _ = json.Marshal(&protocol.Assist{SessionID: p.s.ID(), Role: protocol.RoleInitiator, Kind: protocol.AssistPeerTargets,
-		Round: 1, Family: protocol.FamilyUDP4, Targets: []netip.AddrPort{pubR}})
+	if raw, err = json.Marshal(&protocol.Assist{SessionID: p.s.ID(), Role: protocol.RoleInitiator, Kind: protocol.AssistPeerTargets,
+		Round: 1, Family: protocol.FamilyUDP4, Targets: []netip.AddrPort{pubR}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := p.cl[0].SendFrame(ctx(t), controlwire.TypeAssist, raw); err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +182,35 @@ func TestInject(t *testing.T) {
 	if res.Counters.PeerTargets != 1 || len(r.waitEvents(EvPeerTargets, 1)) != 1 {
 		t.Fatalf("counters %+v", res.Counters)
 	}
+}
+
+// TestInjectBounds: an injected window at the top of the port range is
+// cut to 64 ports without wrapping around, and a malformed Meta is the
+// caller's invalid argument, not a busy link.
+func TestInjectBounds(t *testing.T) {
+	r := newRig(t)
+	p := r.pair(SessionOptions{})
+	p.punching()
+	p.s.mu.Lock()
+	p.s.st.pair.Unverified = nil // as with a registry: a window needs a verified family
+	p.s.mu.Unlock()
+	bad := protocol.Assist{Family: protocol.FamilyUDP4, Targets: []netip.AddrPort{pubR}, Meta: map[string]string{"": "x"}}
+	if err := p.s.Inject(protocol.RoleInitiator, bad); !invalidArgument(err) {
+		t.Fatalf("malformed meta: %v", err)
+	}
+	top := protocol.Assist{Family: protocol.FamilyUDP4, Window: &protocol.PortWindow{IP: pubR.Addr(), Lo: 65500, Hi: 65535}}
+	if err := p.s.Inject(protocol.RoleInitiator, top); err != nil {
+		t.Fatal(err)
+	}
+	got := expect[protocol.Assist](t, p.cl[0])
+	if w := got.Window; w == nil || w.Lo != 65500 || w.Hi != 65535 {
+		t.Fatalf("window %+v", got.Window)
+	}
+	if err := got.ValidateRelayed(); err != nil {
+		t.Fatalf("the client refuses the push: %v", err)
+	}
+	p.s.Abort(protocol.ReasonCanceled, "")
+	r.wait(p.s)
 }
 
 func TestSandwichWindow(t *testing.T) {

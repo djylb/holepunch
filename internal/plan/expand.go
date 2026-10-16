@@ -242,19 +242,19 @@ func predictPortValues(anchor uint16, steps []int16, span int, avoid func(uint16
 		}
 	}
 	// outward interval sweep until span is filled or the range is exhausted.
-	maxStep := 1
-	for _, s := range ss {
-		if v := abs(s); v > maxStep {
-			maxStep = v
-		}
+	// The smallest step sweeps slowest, so it decides when the sweep is
+	// done: a larger one stopping it would leave the window short.
+	minStep := abs(ss[0])
+	for _, s := range ss[1:] {
+		minStep = min(minStep, abs(s))
 	}
 	for k := 1; len(out) < span; k++ {
 		for _, s := range ss {
 			add(a + k*s)
 			add(a - k*s)
 		}
-		if 2*k*maxStep >= portRange {
-			break // both directions met: every port of the range was tried
+		if 2*k*minStep >= portRange {
+			break // both directions of the smallest step met
 		}
 	}
 	return out

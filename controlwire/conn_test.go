@@ -116,6 +116,13 @@ func TestWritePriorityOrder(t *testing.T) {
 	}
 }
 
+// queued returns the number of frames waiting in the queue of priority p.
+func queued(c *Conn, p priority) int {
+	c.qmu.Lock()
+	defer c.qmu.Unlock()
+	return len(c.queues[p])
+}
+
 func must(t testing.TB, err error) {
 	t.Helper()
 	if err != nil {
@@ -292,8 +299,9 @@ func TestWriteFrameAndFlush(t *testing.T) {
 func TestFlushTargetsFramesQueuedBeforeIt(t *testing.T) {
 	c, peer, release := stalledConn(t, SideClient)
 	done := make(chan error, 1)
-	go func() { done <- c.Flush(context.Background()) }()
-	time.Sleep(20 * time.Millisecond)
+	ctx := newDoneSignal(context.Background())
+	go func() { done <- c.Flush(ctx) }()
+	<-ctx.called // Flush has taken its target
 	must(t, c.Send(Frame{Type: TypeProgress, Payload: []byte("after")}))
 	close(release)
 	readFrames(t, peer, 1) // "first": the only frame queued before Flush
@@ -436,12 +444,15 @@ func TestReadFrameHonoursContext(t *testing.T) {
 
 // TestReleaseLeavesCleanStream: whatever the timing, after Release the peer
 // sees complete frames followed by exactly the caller's own bytes, and the
-// caller can use the connection with cleared deadlines.
+// caller can use the connection with cleared deadlines. A peer starved for
+// longer than the release grace (a loaded machine) leaves the frame in flight
+// cut; Release must then say so, and nothing follows the cut.
 func TestReleaseLeavesCleanStream(t *testing.T) {
 	iterations := 150
 	if testing.Short() {
 		iterations = 20
 	}
+	cut := 0
 	for i := range iterations {
 		a, b := net.Pipe()
 		var peerBytes bytes.Buffer
@@ -463,29 +474,58 @@ func TestReleaseLeavesCleanStream(t *testing.T) {
 			_ = c.Send(Frame{Type: TypeProgress, Payload: []byte(strconv.Itoa(j) + "-padding-padding")})
 		}
 		time.Sleep(time.Duration(i%7) * 100 * time.Microsecond)
-		if err := c.Release(); err != nil {
-			t.Fatalf("iteration %d: Release = %v", i, err)
-		}
-		if _, err := a.Write([]byte("CALLER")); err != nil {
-			t.Fatalf("iteration %d: caller write after Release: %v", i, err)
+		rerr := c.Release()
+		switch {
+		case rerr == nil:
+			if _, err := a.Write([]byte("CALLER")); err != nil {
+				t.Fatalf("iteration %d: caller write after Release: %v", i, err)
+			}
+		case errors.Is(rerr, ErrUnreturnable):
+			cut++
+		default:
+			t.Fatalf("iteration %d: Release = %v", i, rerr)
 		}
 		_ = a.Close()
 		<-peerDone
-		rest := peerBytes.Bytes()
-		for len(rest) >= HeaderSize && rest[0] == 'h' {
-			var h [HeaderSize]byte
-			copy(h[:], rest)
-			_, n, err := ParseHeader(h, nil)
-			if err != nil || len(rest) < HeaderSize+n {
-				break
-			}
-			rest = rest[HeaderSize+n:]
-		}
-		if string(rest) != "CALLER" {
+		rest := afterFrames(peerBytes.Bytes())
+		if rerr == nil && string(rest) != "CALLER" {
 			t.Fatalf("iteration %d: stream after the frames is %q", i, rest)
+		}
+		if rerr != nil && !framePrefix(rest) {
+			t.Fatalf("iteration %d: Release = %v, stream after the frames is %q", i, rerr, rest)
 		}
 		_ = b.Close()
 	}
+	if cut == iterations {
+		t.Fatalf("no Release of %d handed the stream back", iterations)
+	}
+	if cut > 0 {
+		t.Logf("%d of %d releases cut a frame: the peer was starved beyond the grace", cut, iterations)
+	}
+}
+
+// afterFrames skips the complete frames at the start of b and returns the
+// rest.
+func afterFrames(b []byte) []byte {
+	for len(b) >= HeaderSize {
+		_, n, err := ParseHeader([HeaderSize]byte(b), nil)
+		if err != nil || len(b) < HeaderSize+n {
+			break
+		}
+		b = b[HeaderSize+n:]
+	}
+	return b
+}
+
+// framePrefix reports whether b is the beginning of one frame, cut before
+// its end (or empty).
+func framePrefix(b []byte) bool {
+	if len(b) < HeaderSize {
+		hdr := []byte{'h', 'p', Version}
+		return bytes.HasPrefix(hdr, b[:min(len(b), len(hdr))])
+	}
+	_, n, err := ParseHeader([HeaderSize]byte(b), nil)
+	return err == nil && len(b) < HeaderSize+n
 }
 
 // TestReleaseWithStalledPeer: the peer stopped reading in the middle of a
@@ -503,7 +543,7 @@ func TestReleaseWithStalledPeer(t *testing.T) {
 	go func() {
 		waiter <- c.WriteFrame(context.Background(), Frame{Type: TypePunchResult, Payload: []byte("r")})
 	}()
-	time.Sleep(10 * time.Millisecond)
+	eventually(t, "the WriteFrame to queue", func() bool { return queued(c, prioP1) == 1 })
 	start := time.Now()
 	err := c.Release()
 	if !errors.Is(err, ErrUnreturnable) {

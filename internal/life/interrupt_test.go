@@ -3,6 +3,7 @@ package life
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -30,7 +31,7 @@ func TestInterruptReadUnblocksAndRestores(t *testing.T) {
 		if !errors.Is(err, os.ErrDeadlineExceeded) {
 			t.Fatalf("read error = %v, want deadline exceeded", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("read was not interrupted")
 	}
 	if err := restore(); err != nil {
@@ -47,23 +48,42 @@ func TestInterruptReadUnblocksAndRestores(t *testing.T) {
 	}
 }
 
-func TestRestoreTwiceReturnsImmediately(t *testing.T) {
+// countingDeadliner counts SetReadDeadline calls and fails the clearing one
+// with a distinct error per call.
+type countingDeadliner struct {
+	interrupts, clears atomic.Int32
+}
+
+func (c *countingDeadliner) SetReadDeadline(t time.Time) error {
+	if !t.IsZero() {
+		c.interrupts.Add(1)
+		return nil
+	}
+	return fmt.Errorf("clear %d", c.clears.Add(1))
+}
+
+// TestRestoreTwiceRunsOnce: later restores return the first result without
+// clearing again or waiting for another interrupt.
+func TestRestoreTwiceRunsOnce(t *testing.T) {
 	for _, interrupted := range []bool{false, true} {
-		a, b := net.Pipe()
+		d := &countingDeadliner{}
 		ctx, cancel := context.WithCancel(context.Background())
-		restore := InterruptRead(ctx, a)
+		restore := InterruptRead(ctx, d)
 		if interrupted {
 			cancel()
 		}
-		_ = restore()
-		start := time.Now()
-		_ = restore()
-		if d := time.Since(start); d > time.Millisecond {
-			t.Fatalf("interrupted=%v: second restore took %v", interrupted, d)
+		first := restore()
+		if again := restore(); !errors.Is(again, first) {
+			t.Fatalf("interrupted=%v: second restore = %v, want the first result %v", interrupted, again, first)
 		}
 		cancel()
-		_ = a.Close()
-		_ = b.Close()
+		want := int32(0)
+		if interrupted {
+			want = 1
+		}
+		if n, m := d.interrupts.Load(), d.clears.Load(); n != want || m != 1 {
+			t.Fatalf("interrupted=%v: %d interrupts and %d clears, want %d and 1", interrupted, n, m, want)
+		}
 	}
 }
 

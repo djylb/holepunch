@@ -90,8 +90,11 @@ func TestInvalidStart(t *testing.T) {
 	so := newSolo(t, w, nil, nil)
 	ps := w.startFor(so.s, so.role, testTimeouts(), nil)
 	ps.Token = protocol.Token{}
-	body, _ := json.Marshal(ps)
-	l := so.open()
+	body, err := json.Marshal(ps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	so.open()
 	if _, err := so.srvEnd.Write(rawFrame(1, byte(controlwire.TypePunchStart), body)); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +106,6 @@ func TestInvalidStart(t *testing.T) {
 	if e.Diagnostics == nil || e.Diagnostics.SessionID != so.s.sid {
 		t.Fatalf("diagnostics %+v", e.Diagnostics)
 	}
-	_ = l
 }
 
 // No observers: no_probe_endpoint, reported with punch_result.
@@ -167,15 +169,18 @@ func TestSummaryWaitTimeout(t *testing.T) {
 	so := newSolo(t, w, nil, nil)
 	to := testTimeouts()
 	to.SummaryWaitMs = 1000
+	began := time.Now()
 	so.start(to)
 	so.report()
-	began := time.Now()
-	e := so.wantError(so.result(10*time.Second), protocol.ReasonControlTimeout)
+	r := so.result(10 * time.Second)
+	e := so.wantError(r, protocol.ReasonControlTimeout)
 	if e.Detail != "summary_wait" || e.Phase != protocol.PhaseReported {
 		t.Fatalf("error %+v", e)
 	}
-	if time.Since(began) > 3500*time.Millisecond {
-		t.Fatalf("the summary wait took %v", time.Since(began))
+	// summary_wait_ms plus the 2 s slack, counted from punch_start; the
+	// rest is the cleanup.
+	if took := r.at.Sub(began); took < 3*time.Second-50*time.Millisecond || took > 4500*time.Millisecond {
+		t.Fatalf("the summary wait took %v", took)
 	}
 	so.checkControlReturned()
 }
@@ -526,15 +531,30 @@ func TestControlCutWhilePunching(t *testing.T) {
 	if _, ok := so.link.next(5*time.Second, protocol.MsgPunchReady); !ok {
 		t.Fatal("no ready")
 	}
+	goSent := time.Now()
 	so.link.send(protocol.PunchGo{SessionID: so.s.sid, Round: 1, WindowMs: r1.WindowMs})
-	time.Sleep(100 * time.Millisecond)
+	// Cut once round 1 runs, which go_received reports, however long the
+	// client takes to read the go.
+	for until := time.Now().Add(5 * time.Second); ; {
+		m, ok := so.link.next(time.Until(until), protocol.MsgProgress)
+		if !ok {
+			t.Fatal("no go_received")
+		}
+		if m.(*protocol.Progress).Stage == stageGoReceived {
+			break
+		}
+	}
 	cut := time.Now()
 	so.srvEnd.Cut()
 	r := so.result(5 * time.Second)
 	so.wantFailure(r, protocol.ReasonControlInterrupted)
-	took := r.at.Sub(cut)
 	window := time.Duration(r1.WindowMs) * time.Millisecond
-	if took < window-200*time.Millisecond || took > window+confirmGrace+time.Second {
+	// The round fires once the go is read and runs its whole window, then
+	// the grace; it started before the cut.
+	if since := r.at.Sub(goSent); since < window {
+		t.Fatalf("returned %v after the go, window %v", since, window)
+	}
+	if took := r.at.Sub(cut); took > window+confirmGrace+time.Second {
 		t.Fatalf("returned %v after the cut, window %v", took, window)
 	}
 }
@@ -695,7 +715,7 @@ func TestControlWriteFailure(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	res := runClient(context.Background(), failingWrites{c}, clientOpts(h))
 	sess := w.newSession()
-	l := newSrvLink(t, s, protocol.RoleInitiator, sess.sid)
+	l := newSrvLink(t, s)
 	defer l.close()
 	to := testTimeouts()
 	to.ProbeTimeoutMs = 10000

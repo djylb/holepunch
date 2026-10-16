@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/netip"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -48,6 +49,9 @@ func startServer(t *testing.T, cfg ServerConfig) *Server {
 type udpClient struct {
 	*client
 	conn *net.UDPConn
+	// stale holds the seqs of the probes of finished exchanges: their
+	// replies that come late are dropped by every read.
+	stale map[uint32]bool
 }
 
 func newUDPClient(t *testing.T, token protocol.Token, route protocol.RouteID) *udpClient {
@@ -57,7 +61,7 @@ func newUDPClient(t *testing.T, token protocol.Token, route protocol.RouteID) *u
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return &udpClient{client: newClient(t, token, route, udpwire.RoleInitiator), conn: conn}
+	return &udpClient{client: newClient(t, token, route, udpwire.RoleInitiator), conn: conn, stale: map[uint32]bool{}}
 }
 
 func (c *udpClient) local() netip.AddrPort { return c.conn.LocalAddr().(*net.UDPAddr).AddrPort() }
@@ -88,32 +92,140 @@ func waitBound(t *testing.T) time.Duration {
 	return max(time.Until(d)*9/10, time.Second)
 }
 
-// await reads replies until n arrived, waiting at most waitBound.
-func (c *udpClient) await(n int) []reply {
-	c.t.Helper()
-	return c.recv(n, waitBound(c.t))
-}
-
-// recv reads replies until n arrived or timeout: a positive wait uses
-// await; a fixed timeout only bounds a check that nothing arrives.
+// recv reads replies until n arrived or timeout. Replies that must come are
+// waited for by exchange, or by recv in a retry attempt; a fixed timeout
+// only bounds a check that nothing arrives.
 func (c *udpClient) recv(n int, timeout time.Duration) []reply {
 	c.t.Helper()
 	var out []reply
-	buf := make([]byte, 2048)
-	_ = c.conn.SetReadDeadline(time.Now().Add(timeout))
-	defer func() { _ = c.conn.SetReadDeadline(time.Time{}) }()
+	deadline := time.Now().Add(timeout)
 	for len(out) < n {
-		m, from, err := c.conn.ReadFromUDPAddrPort(buf)
+		r, err := c.read(deadline)
 		if err != nil {
 			break
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// read returns the next reply, skipping the late replies to finished
+// exchanges, or the error that ended the read: os.ErrDeadlineExceeded once
+// deadline has passed.
+func (c *udpClient) read(deadline time.Time) (reply, error) {
+	c.t.Helper()
+	buf := make([]byte, 2048)
+	_ = c.conn.SetReadDeadline(deadline)
+	defer func() { _ = c.conn.SetReadDeadline(time.Time{}) }()
+	for {
+		m, from, err := c.conn.ReadFromUDPAddrPort(buf)
+		if err != nil {
+			return reply{}, err
 		}
 		h, tl, ok := c.open(buf[:m])
 		if !ok {
 			c.t.Fatalf("undecodable reply from %v", from)
 		}
-		out = append(out, reply{h: h, tl: tl, from: netip.AddrPortFrom(from.Addr().Unmap(), from.Port())})
+		if !c.stale[h.EchoSeq] {
+			return reply{h: h, tl: tl, from: netip.AddrPortFrom(from.Addr().Unmap(), from.Port())}, nil
+		}
 	}
-	return out
+}
+
+// Loopback can drop a datagram on a loaded machine, so exchange sends its
+// probe again every retransmitEvery, for at most exchangeBound: one
+// exchange stays within the default rate and probe budget of a session, and
+// a test that makes several uses a session for each. retry gives a test
+// that cannot send a probe again the same bound, split into attempts whose
+// waits double from firstAttemptWait.
+const (
+	retransmitEvery  = 400 * time.Millisecond
+	exchangeBound    = 30 * time.Second
+	firstAttemptWait = time.Second
+)
+
+// exchange sends a probe built from o to `to` and returns the n replies to
+// one transmission of it. Until one transmission has them all, it sends the
+// probe again every retransmitEvery, each time with a fresh seq (the server
+// refuses a replayed one), for at most exchangeBound or a shorter waitBound,
+// and then returns the most replies one transmission got. Replies are
+// grouped by the seq they echo, so a reply to another transmission is never
+// counted with them, nor by a later read when it comes late; a reply to a
+// probe the exchange did not send fails the test. Each transmission is a
+// probe to the server, counted in its stats, rate and budget: tests that
+// count those exactly or test a limit send once in retry attempts, and a
+// check that no reply comes uses send and recv.
+func (c *udpClient) exchange(to netip.AddrPort, o probeOpts, n int) []reply {
+	c.t.Helper()
+	if o.seq != 0 {
+		c.t.Fatal("exchange: every transmission needs a fresh seq")
+	}
+	end := time.Now().Add(min(waitBound(c.t), exchangeBound))
+	var sent []uint32
+	defer func() {
+		for _, seq := range sent {
+			c.stale[seq] = true
+		}
+	}()
+	got := map[uint32][]reply{}
+	var best []reply
+	for {
+		o.seq = c.codec.NextSeq()
+		sent = append(sent, o.seq)
+		c.send(to, o)
+		next := time.Now().Add(retransmitEvery)
+		if next.After(end) {
+			next = end
+		}
+		for {
+			r, err := c.read(next)
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				break
+			}
+			if err != nil {
+				c.t.Fatalf("exchange: %v", err)
+			}
+			seq := r.h.EchoSeq
+			if !slices.Contains(sent, seq) {
+				c.t.Fatalf("exchange: reply %+v from %v to probe %d, which it did not send", r.h, r.from, seq)
+			}
+			got[seq] = append(got[seq], r)
+			if len(got[seq]) > len(best) {
+				best = got[seq]
+			}
+			if len(best) == n {
+				return best
+			}
+		}
+		if !time.Now().Before(end) {
+			return best
+		}
+	}
+}
+
+// retry runs attempt until it reports that every reply it waited for
+// arrived, for at most exchangeBound or a shorter waitBound, and fails the
+// test when no attempt did. It is for the tests that count the server's
+// probes, replies or quotas exactly and so cannot send a probe again: an
+// attempt starts its own server and client, sends each probe once and waits
+// at most wait for the replies, so a datagram lost on loopback costs an
+// attempt instead of the test. Only a missing reply may cost an attempt: a
+// count past the exact one fails the test even when replies are missing, as
+// another attempt must not hide it, and an attempt closes its server before
+// it reports false. Every attempt waits twice as long as the one before, so
+// a slow machine still gets its time.
+func retry(t *testing.T, attempt func(wait time.Duration) bool) {
+	t.Helper()
+	bound := min(waitBound(t), exchangeBound)
+	end := time.Now().Add(bound)
+	for wait := firstAttemptWait; ; wait *= 2 {
+		if attempt(min(wait, time.Until(end))) {
+			return
+		}
+		if !time.Now().Before(end) {
+			t.Fatalf("no attempt got all its replies within %v", bound)
+		}
+	}
 }
 
 func observerAddr(t *testing.T, s *Server, id uint8) netip.AddrPort {
@@ -184,8 +296,13 @@ func TestNewServerValidation(t *testing.T) {
 }
 
 // Loopback on the wire: explicit binding (the ack comes from the probed
-// address), the extra from the pool, observers, stats, close.
+// address), the extra from the pool, observers, stats, close. The stats
+// count each probe exactly, so a lost datagram costs a retry attempt.
 func TestServerLoopback(t *testing.T) {
+	retry(t, func(wait time.Duration) bool { return loopbackAttempt(t, wait) })
+}
+
+func loopbackAttempt(t *testing.T, wait time.Duration) bool {
 	reg := NewRegistry(RegistryConfig{})
 	s := startServer(t, ServerConfig{Registry: reg})
 	obs := s.Observers(protocol.FamilyUDP4)
@@ -202,9 +319,15 @@ func TestServerLoopback(t *testing.T) {
 	for _, o := range obs {
 		c.send(o.Addr, probeOpts{obs: o.ID, extra: true})
 	}
-	reps := c.await(6)
+	reps := c.recv(6, wait)
 	if len(reps) != 6 {
-		t.Fatalf("%d replies", len(reps))
+		st := s.Stats()
+		if st.Acks > 3 || st.Extras > 3 || st.PacketsIn > 3 {
+			t.Fatalf("%d of 6 replies, stats %+v", len(reps), st)
+		}
+		t.Logf("%d of 6 replies within %v; stats %+v", len(reps), wait, st)
+		_ = s.Close()
+		return false
 	}
 	acks := map[uint8]reply{}
 	for _, r := range reps {
@@ -228,9 +351,10 @@ func TestServerLoopback(t *testing.T) {
 		}
 	}
 	// A reply is counted after its write returns, so the client can hold all
-	// six before the last count lands.
+	// six before the last count lands. The counts only grow: one past 3
+	// fails at once, without waiting for the other.
 	deadline := time.Now().Add(waitBound(t))
-	for st := s.Stats(); (st.Acks != 3 || st.Extras != 3) && time.Now().Before(deadline); st = s.Stats() {
+	for st := s.Stats(); min(st.Acks, st.Extras) < 3 && max(st.Acks, st.Extras) <= 3 && time.Now().Before(deadline); st = s.Stats() {
 		time.Sleep(time.Millisecond)
 	}
 	st := s.Stats()
@@ -246,6 +370,7 @@ func TestServerLoopback(t *testing.T) {
 	if err := s.Start(); err == nil {
 		t.Fatal("restart after close")
 	}
+	return true
 }
 
 // ProbeSpec lists the live observers of both families with the server's
@@ -462,7 +587,7 @@ func TestServerReaderLoopPanic(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(&lockedWriter{w: &logs, mu: &logMu}, nil))
 	s := startServer(t, ServerConfig{Registry: reg, Listen: listen, Logger: logger})
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(waitBound(t))
 	for s.Stats().DeadListeners == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
@@ -476,8 +601,7 @@ func TestServerReaderLoopPanic(t *testing.T) {
 	}
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
-	c.send(obs[1].Addr, probeOpts{obs: 2})
-	if reps := c.await(1); len(reps) != 1 {
+	if reps := c.exchange(obs[1].Addr, probeOpts{obs: 2}, 1); len(reps) != 1 {
 		t.Fatal("the surviving listener does not answer")
 	}
 	if err := s.Close(); err != nil {
@@ -509,7 +633,8 @@ func (c *panicReadConn) ReadFromUDPAddrPort([]byte) (int, netip.AddrPort, error)
 
 // An injected conn without the AddrPort methods is adapted.
 func TestServerGenericConn(t *testing.T) {
-	reg := NewRegistry(RegistryConfig{})
+	// Every transmission of the exchange may draw an extra.
+	reg := NewRegistry(RegistryConfig{ExtraQuotaPerRole: math.MaxUint8})
 	listen := func(network string, laddr netip.AddrPort) (net.PacketConn, error) {
 		c, err := defaultListen(network, laddr)
 		if err != nil {
@@ -520,9 +645,17 @@ func TestServerGenericConn(t *testing.T) {
 	s := startServer(t, ServerConfig{Registry: reg, Listen: listen, ReadersPerListener: 1, ExtraSockets: 1})
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
-	c.send(observerAddr(t, s, 0), probeOpts{obs: 0, extra: true})
-	if reps := c.await(2); len(reps) != 2 {
+	reps := c.exchange(observerAddr(t, s, 0), probeOpts{obs: 0, extra: true}, 2)
+	if len(reps) != 2 {
 		t.Fatalf("%d replies", len(reps))
+	}
+	if reps[0].h.Type == reps[1].h.Type {
+		t.Fatalf("two replies of type %d", reps[0].h.Type)
+	}
+	for _, r := range reps {
+		if r.h.Type != udpwire.TProbeAck && r.h.Type != udpwire.TProbeExtra {
+			t.Fatalf("reply %+v from %v", r.h, r.from)
+		}
 	}
 }
 
@@ -539,7 +672,7 @@ func TestServerReadErrors(t *testing.T) {
 		return &failingConn{PacketConn: c, reads: &reads}, nil
 	}
 	s := startServer(t, ServerConfig{Listen: listen, ReadersPerListener: 1})
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(waitBound(t))
 	for s.Stats().ReadErrors < 2*readErrorBurst && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
@@ -578,7 +711,7 @@ func TestServerSweeper(t *testing.T) {
 	if _, err := reg.Register(Registration{SessionID: "s", Route: rt(1), Token: tok(1), TTL: 20 * time.Millisecond}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(waitBound(t))
 	for reg.Len() != 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -631,8 +764,14 @@ func TestServerCloseConcurrent(t *testing.T) {
 
 // The alt group: change-IP replies come from the alt pool. 127.0.0.2 is not
 // configured on every host, so the alt group's Bind is rewritten to
-// 127.0.0.1; the advertised address stays 127.0.0.2.
+// 127.0.0.1; the advertised address stays 127.0.0.2. The stats count the
+// probe, its ack and its alt reply exactly, so a lost datagram costs a retry
+// attempt.
 func TestServerAltGroup(t *testing.T) {
+	retry(t, func(wait time.Duration) bool { return altGroupAttempt(t, wait) })
+}
+
+func altGroupAttempt(t *testing.T, wait time.Duration) bool {
 	reg := NewRegistry(RegistryConfig{})
 	alt := netip.MustParseAddr("127.0.0.2")
 	var altPorts []uint16
@@ -658,34 +797,46 @@ func TestServerAltGroup(t *testing.T) {
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
 	c.send(observerAddr(t, s, 0), probeOpts{obs: 0, alt: true})
-	reps := c.await(2)
+	reps := c.recv(2, wait)
 	if len(reps) != 2 {
-		t.Fatalf("%d replies", len(reps))
+		st := s.Stats()
+		if st.Acks > 1 || st.Alts > 1 || st.PacketsIn > 1 {
+			t.Fatalf("%d of 2 replies, stats %+v", len(reps), st)
+		}
+		t.Logf("%d of 2 replies within %v; stats %+v", len(reps), wait, st)
+		_ = s.Close()
+		return false
+	}
+	if reps[0].h.Type == reps[1].h.Type {
+		t.Fatalf("two replies of type %d", reps[0].h.Type)
 	}
 	for _, r := range reps {
-		if r.h.Type == udpwire.TProbeAck && !r.h.FB {
-			t.Fatal("the ack does not declare the alt reply")
-		}
-		if r.h.Type == udpwire.TProbeAlt {
-			mu.Lock()
-			ok := false
-			for _, p := range altPorts {
-				ok = ok || p == r.from.Port()
+		switch r.h.Type {
+		case udpwire.TProbeAck:
+			if !r.h.FB {
+				t.Fatal("the ack does not declare the alt reply")
 			}
+		case udpwire.TProbeAlt:
+			mu.Lock()
+			ok := slices.Contains(altPorts, r.from.Port())
 			mu.Unlock()
 			if !ok {
 				t.Fatalf("alt from %v, not from the alt pool", r.from)
 			}
+		default:
+			t.Fatalf("reply %+v from %v", r.h, r.from)
 		}
 	}
-	// counted after the write returns (see TestServerLoopback)
-	deadline := time.Now().Add(2 * time.Second)
-	for s.Stats().Alts != 1 && time.Now().Before(deadline) {
+	// counted after the write returns (see TestServerLoopback); the ack is
+	// counted before the alt is sent
+	deadline := time.Now().Add(waitBound(t))
+	for s.Stats().Alts < 1 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if st := s.Stats(); st.Alts != 1 {
+	if st := s.Stats(); st.Alts != 1 || st.Acks != 1 || st.PacketsIn != 1 {
 		t.Fatalf("stats %+v", st)
 	}
+	return true
 }
 
 // With two loopback IPs (Linux; skipped where 127.0.0.2 does not
@@ -699,11 +850,13 @@ func TestExplicitBindReplySource(t *testing.T) {
 	_ = probe.Close()
 	reg := NewRegistry(RegistryConfig{})
 	s := startServer(t, ServerConfig{Registry: reg, Groups: []ObserverGroup{{Bind: lo4}, {Bind: second}}})
-	register(t, reg, "s1", tok(1), rt(1))
-	c := newUDPClient(t, tok(1), rt(1))
-	for _, o := range s.Observers(protocol.FamilyUDP4) {
-		c.send(o.Addr, probeOpts{obs: o.ID})
-		reps := c.await(1)
+	for i, o := range s.Observers(protocol.FamilyUDP4) {
+		// A session for each exchange: the retransmissions of one never
+		// eat into the probe budget of another.
+		id := byte(i + 1)
+		register(t, reg, fmt.Sprint("s", id), tok(id), rt(id))
+		c := newUDPClient(t, tok(id), rt(id))
+		reps := c.exchange(o.Addr, probeOpts{obs: o.ID}, 1)
 		if len(reps) != 1 || reps[0].from != o.Addr {
 			t.Fatalf("observer %v answered from %v", o.Addr, reps)
 		}
@@ -716,8 +869,7 @@ func TestServerWildcard(t *testing.T) {
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
 	o := s.Observers(protocol.FamilyUDP4)[0]
-	c.send(o.Addr, probeOpts{obs: 0})
-	if reps := c.await(1); len(reps) != 1 {
+	if reps := c.exchange(o.Addr, probeOpts{obs: 0}, 1); len(reps) != 1 {
 		t.Fatal("the wildcard listener does not answer")
 	}
 	t.Logf("wildcard_multi_ip on this host: %v", s.Stats().WildcardMultiIP)
@@ -814,6 +966,73 @@ func TestInjectedConnPanicIsBindFailure(t *testing.T) {
 		}
 		if opened.Load() == 0 || closed.Load() != opened.Load() {
 			t.Fatalf("%s: opened %d closed %d", name, opened.Load(), closed.Load())
+		}
+	}
+}
+
+// unknownLocalConn hides its local address, as an injected conn may.
+type unknownLocalConn struct{ net.PacketConn }
+
+func (unknownLocalConn) LocalAddr() net.Addr { return fakeAddr("somewhere") }
+
+// A listener on a kernel-chosen port whose conn does not tell the port
+// cannot be advertised: Start fails and closes what it opened. With an
+// explicit BasePort the configured port is advertised.
+func TestUnknownListenerPort(t *testing.T) {
+	var opened, closed atomic.Int32
+	listen := func(network string, laddr netip.AddrPort) (net.PacketConn, error) {
+		c, err := defaultListen(network, laddr)
+		if err != nil {
+			return nil, err
+		}
+		opened.Add(1)
+		return unknownLocalConn{&closeCounter{PacketConn: c, n: &closed}}, nil
+	}
+	s, err := NewServer(ServerConfig{Registry: NewRegistry(RegistryConfig{}), Groups: loGroup(), Listen: listen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err == nil || !strings.Contains(err.Error(), "unknown local port") {
+		t.Fatalf("Start = %v", err)
+	}
+	if opened.Load() == 0 || closed.Load() != opened.Load() {
+		t.Fatalf("opened %d closed %d", opened.Load(), closed.Load())
+	}
+
+	hold, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.AddrPortFrom(lo4, 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := hold.LocalAddr().(*net.UDPAddr).Port
+	_ = hold.Close()
+	if base+2 > 65535 {
+		t.Skip("no room for three ports above", base)
+	}
+	s2, err := NewServer(ServerConfig{Registry: NewRegistry(RegistryConfig{}), Groups: loGroup(), Listen: listen, BasePort: base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.Start(); err != nil {
+		t.Skip("ports above", base, "taken meanwhile:", err)
+	}
+	defer func() { _ = s2.Close() }()
+	for i, o := range s2.Observers(protocol.FamilyUDP4) {
+		if int(o.Addr.Port()) != base+i {
+			t.Fatalf("observer %d advertised at %v, want port %d", i, o.Addr, base+i)
+		}
+	}
+}
+
+// The turn of the extra-reply pool stays in range when its counter passes
+// 2^31 and wraps (int is 32 bits on some platforms).
+func TestPoolPickWraps(t *testing.T) {
+	p := &pool{conns: []packetConn{discardConn{}, discardConn{}, discardConn{}}, ports: []uint16{1, 2, 3}}
+	for _, start := range []uint32{1<<31 - 2, math.MaxUint32 - 2} {
+		p.next.Store(start)
+		for range 6 {
+			if _, port := p.pick(); port < 1 || port > 3 {
+				t.Fatalf("port %d after %d", port, start)
+			}
 		}
 	}
 }

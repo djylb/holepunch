@@ -57,9 +57,13 @@ func (nat *NAT) outbound(p *packet) outcome {
 	p.src = m.ext
 	p.ttl--
 	nat.cnt.out++
-	if !hairpin && nat.cfg.Classifier != nil && !nat.classifyLocked(p.src, p.dst, p.data, now) {
-		// Cut beyond the device, after it mapped the packet (Classifier).
-		return dropLocked(dropClassified)
+	var inspect *classFlow
+	if !hairpin && nat.cfg.Classifier != nil {
+		var pass bool
+		if pass, inspect = nat.classifyLocked(p.src, p.dst, now); !pass {
+			// Cut beyond the device, after it mapped the packet (Classifier).
+			return dropLocked(dropClassified)
+		}
 	}
 	if hairpin {
 		// The looped packet is an inbound packet to the receiver's mapping
@@ -83,6 +87,9 @@ func (nat *NAT) outbound(p *packet) outcome {
 	}
 	upstream := nat.upstream
 	nat.mu.Unlock()
+	if inspect != nil {
+		nat.inspect(inspect, p.data)
+	}
 	n.log.add(n, evOut, nat.name, p, dropNone)
 	if upstream != nil && upstream(p.dst) {
 		nat.drops.add(dropLoss) // lost beyond the device, after it mapped the packet

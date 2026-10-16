@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"math"
 	"net/netip"
 	"slices"
 	"testing"
@@ -25,7 +26,7 @@ func FuzzPortPredict(f *testing.F) {
 			seed[i] = byte(seedN >> (8 * i))
 		}
 		var ports []uint16
-		declared := 0
+		var declared int
 		if random {
 			ports = ExpandRandom(lo, hi, int(count), ExpandInput{Seed: seed})
 			declared = int(count)
@@ -64,7 +65,8 @@ func FuzzPortPredict(f *testing.F) {
 // coordinator counts: no input panics, and every decision runs under the
 // clients' admission exactly as planned (checkAdmitted: MaxPackets is what the
 // client schedules and at least what it sends), stays within BudgetLeft and
-// encodes as a punch_go.
+// encodes in the message that carries it, which the client's Normalize
+// leaves unchanged.
 func FuzzRound(f *testing.F) {
 	f.Add(uint8(1), uint8(3), uint8(2), uint8(1), uint16(3000), uint8(0), int16(1), float32(20), uint32(3000), uint64(0x0102030405))
 	f.Add(uint8(4), uint8(4), uint8(6), uint8(3), uint16(120), uint8(30), int16(-2), float32(-5), uint32(9000), uint64(0xfeedface))
@@ -85,8 +87,11 @@ func FuzzRound(f *testing.F) {
 	f.Add(uint8(0x09), uint8(1), uint8(2), uint8(1), uint16(3000), uint8(0), int16(1), float32(0), uint32(3000), uint64(0))
 	f.Add(uint8(1), uint8(1), uint8(2), uint8(2), uint16(3000), uint8(0), int16(1), float32(0), uint32(3000), uint64(0x20)<<48)
 	f.Add(uint8(0x11), uint8(0x11), uint8(1), uint8(1), uint16(3000), uint8(0), int16(1), float32(0), uint32(3000), uint64(0))
+	// A downward sequential peer whose rate of other hosts is the largest
+	// finite one a traits update can carry.
+	f.Add(uint8(1), uint8(2), uint8(2), uint8(1), uint16(3000), uint8(0), int16(-1), float32(-math.MaxFloat32), uint32(9000), uint64(0))
 	f.Fuzz(func(t *testing.T, ca, cb, epA, epB uint8, left uint16, bind uint8, step int16, vel float32, fireMs uint32, bits uint64) {
-		if vel != vel || vel > 1e6 || vel < -1e6 { // NaN or absurd: protocol validation refuses those traits
+		if v := float64(vel); math.IsNaN(v) || math.IsInf(v, 0) { // protocol validation refuses those traits
 			return
 		}
 		mk := func(c uint8, n int) protocol.Traits {
@@ -217,9 +222,12 @@ func FuzzRound(f *testing.F) {
 				}
 				rp := protocol.RoundPlan{Round: uint8(round), Variant: dec.VariantName, Budget: dec.Budget, WindowMs: uint16(dec.Window / time.Millisecond),
 					Seed: 1, Rescue: dec.Rescue, Sides: dec.Sides[r]}
-				msg, _ := carrier(rp)
+				msg, clamped := carrier(rp)
 				if _, err := protocol.Marshal(msg); err != nil {
 					t.Fatalf("round %d role %d: %v", round, r, err)
+				}
+				if clamped {
+					t.Fatalf("round %d role %d: the client's Normalize clamps %+v", round, r, rp.Sides)
 				}
 			}
 			class := []RoundClass{RCNoContact, RCConfirmLost, RCOneWay, RCBlocked}[bits>>(3+2*uint(round))&3]

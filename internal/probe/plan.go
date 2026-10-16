@@ -67,14 +67,34 @@ type stashed struct {
 	at   time.Duration
 }
 
+// stunServer is one STUN server of the family.
+type stunServer struct {
+	idx  uint8 // index in ProbeSpec.STUN (PointKey.Observer)
+	addr netip.AddrPort
+}
+
 // stunTarget is one STUN server of the sub-probe.
 type stunTarget struct {
-	idx   uint8 // index in ProbeSpec.STUN (PointKey.Observer)
-	addr  netip.AddrPort
-	txid  [12]byte
-	sends int
-	last  time.Duration
-	done  bool
+	stunServer
+	txid   [12]byte
+	sends  int
+	last   time.Duration
+	done   bool // it answered
+	mapped bool // its answer named an address of the family
+}
+
+// stunServers returns the STUN servers of spec that the family uses: at
+// most maxSTUNServers usable addresses of the family, in spec order.
+func stunServers(spec Spec) []stunServer {
+	var out []stunServer
+	for i, a := range spec.Probe.STUN {
+		a = unmap(a)
+		if len(out) == maxSTUNServers || a.Port() == 0 || !spec.Family.Matches(a.Addr()) || nat.ScopeOf(a.Addr()) == nat.ScopeNone {
+			continue
+		}
+		out = append(out, stunServer{idx: uint8(i), addr: a})
+	}
+	return out
 }
 
 // newRunState plans the probing: the main targets of the classification
@@ -142,12 +162,8 @@ func newRunState(p *Prober) *runState {
 				key: nat.PointKey{Socket: sib.id, Source: nat.SourceServer, Observer: s.obs0.obs.ID}})
 		}
 	}
-	for i, a := range p.spec.Probe.STUN {
-		a = unmap(a)
-		if len(s.stun) == maxSTUNServers || a.Port() == 0 || !p.spec.Family.Matches(a.Addr()) || nat.ScopeOf(a.Addr()) == nat.ScopeNone {
-			continue
-		}
-		st := &stunTarget{idx: uint8(i), addr: a}
+	for _, sv := range p.stunServers {
+		st := &stunTarget{stunServer: sv}
 		_, _ = crand.Read(st.txid[:]) // crypto/rand.Read never fails (Go 1.24+)
 		s.stun = append(s.stun, st)
 	}

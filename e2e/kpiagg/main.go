@@ -13,14 +13,22 @@
 //
 //	go run ./e2e/kpiagg -dir <HOLEPUNCH_E2E_OUT>/kpi/nightly [-json out.json] [-baseline e2e/testdata/kpi_baseline.json]
 //
+// Each cell and configuration must appear once below -dir: point it at one
+// output (kpi/nightly, kpi/ablation, ...), not at kpi/ as a whole, where the
+// matrix and the ablation both hold the full product's IPv4 cells. A file
+// that is not a kpi.json of the suite is an error too.
+//
 // It reads only the files it is given and writes only to standard output
 // and the -json file.
 package main
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -138,16 +146,75 @@ func connClass(a, b string) string {
 }
 
 func main() {
-	dir := flag.String("dir", "", "directory of *.kpi.json files (searched recursively)")
-	jsonOut := flag.String("json", "", "write the per-cell summary as JSON (a baseline) to this file")
-	baseline := flag.String("baseline", "", "baseline JSON to compare with")
-	flag.Parse()
-	if *dir == "" {
-		_, _ = fmt.Fprintln(os.Stderr, "kpiagg: -dir is required")
-		os.Exit(2)
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run is the whole command with its environment passed in, so tests can call
+// it. It returns the exit status: 0 (also for -h), 1 when the input or the
+// output fails, 2 on a usage error.
+func run(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("kpiagg", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dir := flags.String("dir", "", "directory of *.kpi.json files (searched recursively)")
+	jsonOut := flags.String("json", "", "write the per-cell summary as JSON (a baseline) to this file")
+	baseline := flags.String("baseline", "", "baseline JSON to compare with")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
 	}
+	if *dir == "" || flags.NArg() > 0 {
+		_, _ = fmt.Fprintln(stderr, "kpiagg: usage: kpiagg -dir <directory> [-json out.json] [-baseline base.json]")
+		return 2
+	}
+	fail := func(err error) int {
+		_, _ = fmt.Fprintln(stderr, "kpiagg:", err)
+		return 1
+	}
+	cells, err := load(*dir)
+	if err != nil {
+		return fail(err)
+	}
+	var base map[string]baselineCell
+	if *baseline != "" {
+		b, err := os.ReadFile(*baseline)
+		if err == nil {
+			err = json.Unmarshal(b, &base)
+		}
+		if err != nil {
+			return fail(fmt.Errorf("baseline: %w", err))
+		}
+	}
+	out := bufio.NewWriter(stdout)
+	render(out, cells, base)
+	if err := out.Flush(); err != nil {
+		return fail(err)
+	}
+	if *jsonOut != "" {
+		sum := map[string]baselineCell{}
+		for _, k := range cells {
+			sum[key(k)] = baselineCell{SuccessRate: k.SuccessRate, ConfirmP95: k.ConfirmMs.P95, PacketsMax: k.Packets.Max}
+		}
+		b, err := json.MarshalIndent(sum, "", "  ")
+		if err != nil {
+			return fail(err)
+		}
+		if err := os.WriteFile(*jsonOut, append(b, '\n'), 0o644); err != nil {
+			return fail(err)
+		}
+	}
+	return 0
+}
+
+// load reads every *.kpi.json file below dir, sorted by configuration and
+// cell. A file that is not a kpi.json, and two files of the same cell and
+// configuration (two levels' outputs below one directory, say), are errors:
+// either would skew every mean.
+func load(dir string) ([]kpi, error) {
 	var cells []kpi
-	err := filepath.WalkDir(*dir, func(p string, d fs.DirEntry, err error) error {
+	from := map[string]string{} // key → file
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".kpi.json") {
 			return err
 		}
@@ -159,12 +226,21 @@ func main() {
 		if err := json.Unmarshal(b, &k); err != nil {
 			return fmt.Errorf("%s: %w", p, err)
 		}
+		if k.Cell == "" || k.Runs <= 0 || k.Successes < 0 || k.Successes > k.Runs || k.SuccessRate < 0 || k.SuccessRate > 1 {
+			return fmt.Errorf("%s: not a kpi.json of the e2e suite (cell %q, %d of %d runs, success rate %v)", p, k.Cell, k.Successes, k.Runs, k.SuccessRate)
+		}
+		if prev, dup := from[key(k)]; dup {
+			return fmt.Errorf("%s and %s are both %s: point -dir at one level's output", prev, p, key(k))
+		}
+		from[key(k)] = p
 		cells = append(cells, k)
 		return nil
 	})
 	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "kpiagg:", err)
-		os.Exit(1)
+		return nil, err
+	}
+	if len(cells) == 0 {
+		return nil, fmt.Errorf("no *.kpi.json file below %s", dir)
 	}
 	sort.Slice(cells, func(i, j int) bool {
 		if cells[i].Ablation != cells[j].Ablation {
@@ -172,29 +248,7 @@ func main() {
 		}
 		return cells[i].Cell < cells[j].Cell
 	})
-	var base map[string]baselineCell
-	if *baseline != "" {
-		b, err := os.ReadFile(*baseline)
-		if err == nil {
-			err = json.Unmarshal(b, &base)
-		}
-		if err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, "kpiagg: baseline:", err)
-			os.Exit(1)
-		}
-	}
-	render(os.Stdout, cells, base)
-	if *jsonOut != "" {
-		out := map[string]baselineCell{}
-		for _, k := range cells {
-			out[key(k)] = baselineCell{SuccessRate: k.SuccessRate, ConfirmP95: k.ConfirmMs.P95, PacketsMax: k.Packets.Max}
-		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		if err := os.WriteFile(*jsonOut, append(b, '\n'), 0o644); err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, "kpiagg:", err)
-			os.Exit(1)
-		}
-	}
+	return cells, nil
 }
 
 // key names a cell across files: the cell, with the ablation when it is
@@ -212,7 +266,9 @@ type agg struct {
 	sum     float64
 }
 
-func render(w *os.File, cells []kpi, base map[string]baselineCell) {
+// render writes the Markdown summary; write errors are left to the caller's
+// writer (a bufio.Writer keeps the first).
+func render(w io.Writer, cells []kpi, base map[string]baselineCell) {
 	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 	p("# e2e KPI summary\n\n## Cells\n\n| cell | class | runs | success | confirm p50/p95 ms | packets/side p50/max | rounds max | skew p90 ms | failures | gate | pass |")
 	if base != nil {

@@ -59,10 +59,11 @@ type shapePair struct {
 }
 
 // TestShapeAcrossSessions checks packet lengths and random ports over two
-// consecutive sessions of one NAT pair: the packet-length
-// interval of each side differs between the sessions, and the random ports
-// one side sprays at the other overlap no more than chance allows
-// (expectation + 3σ).
+// consecutive sessions of one NAT pair: the packet-length intervals differ
+// between the sessions — on one side at least, since the extremes of a
+// side's few dozen packets repeat by chance about once in a thousand pairs
+// of sessions — and the random ports one side sprays at the other overlap
+// no more than chance allows (a Poisson tail of sprayAlpha).
 func TestShapeAcrossSessions(t *testing.T) {
 	pairs := []shapePair{
 		{name: "PRC-PRC", a: profPRC, b: profPRC},
@@ -89,9 +90,41 @@ func TestShapeAcrossSessions(t *testing.T) {
 	goleak.VerifyNone(t)
 }
 
+// sprayAlpha is the chance that two sessions' independent random ports
+// share as many ports as the check tolerates: low enough that the check
+// never fails by chance, while ports reused across sessions overlap by
+// hundreds.
+const sprayAlpha = 1e-6
+
+// poissonLimit returns the smallest k with P(X ≥ k) ≤ alpha for X ~
+// Poisson(mean). The overlap of two random port sets is hypergeometric,
+// whose tail the Poisson one bounds.
+func poissonLimit(mean, alpha float64) int {
+	if mean <= 0 {
+		return 1
+	}
+	pmf := func(j int) float64 {
+		lg, _ := math.Lgamma(float64(j + 1))
+		return math.Exp(float64(j)*math.Log(mean) - mean - lg)
+	}
+	for k := max(int(mean), 1); ; k++ {
+		// P(X ≥ k): the terms past the mode only shrink.
+		tail := 0.0
+		for j := k; ; j++ {
+			q := pmf(j)
+			tail += q
+			if q <= tail*1e-12 {
+				break
+			}
+		}
+		if tail <= alpha {
+			return k
+		}
+	}
+}
+
 // shapeAcross runs the two sessions and returns the violations.
-func shapeAcross(t *testing.T, p shapePair, seed int64) []string {
-	var v []string
+func shapeAcross(t *testing.T, p shapePair, seed int64) (v []string) {
 	w := newWorld(t, worldConfig{seed: seed})
 	defer func() {
 		if err := w.close(); err != nil {
@@ -130,10 +163,9 @@ func shapeAcross(t *testing.T, p shapePair, seed int64) []string {
 			v = append(v, err.Error())
 		}
 	}
-	for i := range 2 {
-		if got[0].lo[i] == got[1].lo[i] && got[0].hi[i] == got[1].hi[i] {
-			v = append(v, fmt.Sprintf("%s: the same length interval [%d, %d] in two sessions", roles[i], got[0].lo[i], got[0].hi[i]))
-		}
+	if got[0].lo == got[1].lo && got[0].hi == got[1].hi {
+		v = append(v, fmt.Sprintf("the same length intervals in two sessions: %s [%d, %d], %s [%d, %d]",
+			roles[0], got[0].lo[0], got[0].hi[0], roles[1], got[0].lo[1], got[0].hi[1]))
 	}
 	if p.sprayPorts {
 		a, b := got[0].ports, got[1].ports
@@ -148,10 +180,33 @@ func shapeAcross(t *testing.T, p shapePair, seed int64) []string {
 			}
 		}
 		exp := float64(len(a)) * float64(len(b)) / portSpace
-		if limit := exp + 3*math.Sqrt(exp); float64(common) > math.Max(limit, 1) {
-			v = append(v, fmt.Sprintf("random ports of two sessions share %d of %d/%d, expectation %.1f + 3σ = %.1f", common, len(a), len(b), exp, limit))
+		if limit := poissonLimit(exp, sprayAlpha); common >= limit {
+			v = append(v, fmt.Sprintf("random ports of two sessions share %d of %d/%d, expectation %.1f; %d or more happen by chance with probability ≤ %g",
+				common, len(a), len(b), exp, limit, sprayAlpha))
 		}
 		t.Logf("random ports: %d and %d, %d in common (expectation %.2f)", len(a), len(b), common, exp)
 	}
 	return v
+}
+
+// TestPoissonLimit checks the spray threshold against the Poisson tail
+// computed term by term: the limit is the first k whose tail is within alpha.
+func TestPoissonLimit(t *testing.T) {
+	tail := func(mean float64, k int) float64 {
+		p, cdf := math.Exp(-mean), 0.0
+		for j := range k {
+			cdf += p
+			p *= mean / float64(j+1)
+		}
+		return 1 - cdf
+	}
+	for _, mean := range []float64{0.15, 1, 2.47, 10, 40} {
+		k := poissonLimit(mean, sprayAlpha)
+		if tail(mean, k) > sprayAlpha || k > 1 && tail(mean, k-1) <= sprayAlpha {
+			t.Errorf("mean %v: limit %d, P(X ≥ %d) = %g, P(X ≥ %d) = %g", mean, k, k, tail(mean, k), k-1, tail(mean, k-1))
+		}
+	}
+	if k := poissonLimit(2000, sprayAlpha); k < 2000 || k > 2300 {
+		t.Errorf("mean 2000: limit %d", k)
+	}
 }

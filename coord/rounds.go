@@ -83,9 +83,11 @@ func (s *Session) takeDecisionLocked(d decision) bool {
 func (s *Session) roundInputLocked(k int, now time.Duration) RoundInput {
 	st := &s.st
 	a := align([2]*rttEstimator{&st.rtt[0], &st.rtt[1]}, s.ablate.NoRTTAlign)
+	// The planner runs outside the lock and may write its input: what it
+	// shares with the session state is copied.
 	in := RoundInput{
 		Round:             k,
-		Class:             st.cls,
+		Class:             cloneClassification(st.cls),
 		Order:             slices.Clone(st.order),
 		Prev:              slices.Clone(st.prev),
 		Evidence:          cloneEvidence(st.ev),
@@ -97,7 +99,7 @@ func (s *Session) roundInputLocked(k int, now time.Duration) RoundInput {
 		Gone:              st.gone,
 		RescueUsed:        st.rescueUsed || s.ablate.NoRounds,
 		Views:             [2]protocol.PeerView{clonePeerView(st.pviews[0]), clonePeerView(st.pviews[1])},
-		Policy:            *s.starts[0].Policy,
+		Policy:            clonePolicy(*s.starts[0].Policy),
 		AllowExtreme:      s.c.cfg.Budget.AllowExtreme,
 		MaxRounds:         int(s.to.MaxRounds),
 		HandshakeMs:       s.to.HandshakeTimeoutMs,
@@ -763,7 +765,7 @@ func (s *Session) nextRound() {
 		st := &s.st
 		k := st.cur.n + 1
 		if st.gen == gen && st.state == StatePunching && st.planning && k <= maxRound &&
-			s.beginRefreshLocked(k, gen, d, p, cin, in, s.since(nowT)) {
+			s.beginRefreshLocked(k, gen, d, cin, in, s.since(nowT)) {
 			return // the round waits for its anchor refresh
 		}
 		fx = s.applyRoundLocked(gen, k, d, nowT)

@@ -12,7 +12,8 @@ const (
 )
 
 // newHTTPClient returns the client for all UPnP HTTP traffic of one Mapper.
-// Keep-alive is off so that no connection, and none of net/http's connection
+// Keep-alive is off and a failed request cancels its dial (see
+// limitTransport), so that no connection, and none of net/http's connection
 // goroutines, outlives a request; the proxy environment is ignored because
 // the gateway is on the local network; redirects are not followed; bodies are
 // limited to maxUPnPBody.
@@ -28,12 +29,20 @@ func newHTTPClient() *http.Client {
 	}
 }
 
-// limitTransport limits every response body to maxUPnPBody.
-type limitTransport struct{ rt http.RoundTripper }
+// limitTransport ends the dial of every failed request and limits every
+// response body to maxUPnPBody.
+type limitTransport struct{ tr *http.Transport }
 
 func (t limitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.rt.RoundTrip(req)
+	resp, err := t.tr.RoundTrip(req)
 	if err != nil {
+		// net/http lets a dial outlive the request that started it, for
+		// another request to use the connection; with keep-alive off none
+		// can, and a dial to a gateway that drops the connection attempt
+		// would go on, after the request and after Close, until the
+		// operating system's connect timeout. CloseIdleConnections also
+		// cancels the dials that no request waits for any more.
+		t.tr.CloseIdleConnections()
 		return nil, err
 	}
 	resp.Body = &limitedBody{ReadCloser: resp.Body, left: maxUPnPBody}

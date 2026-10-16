@@ -244,6 +244,32 @@ func TestFakeCallbackPanicInEveryAdvance(t *testing.T) {
 	}
 }
 
+// TestFakePanicReportNamesTheFiredDeadline: the report of a panicking
+// callback names the deadline it fired for, even when another goroutine
+// re-arms the timer while the panic is being reported.
+func TestFakePanicReportNamesTheFiredDeadline(t *testing.T) {
+	rec := &recorder{}
+	clk := clock.NewFake(rec, epoch)
+	entered := make(chan struct{})
+	tm := clk.AfterFunc(time.Second, func() {
+		close(entered)
+		panic("boom")
+	})
+	reset := make(chan struct{})
+	go func() {
+		defer close(reset)
+		<-entered
+		tm.Reset(time.Hour)
+	}()
+	clk.Advance(time.Second)
+	<-reset
+	want := "due at " + epoch.Add(time.Second).String() + " panicked: boom"
+	if msgs := rec.messages(); len(msgs) != 1 || !strings.Contains(msgs[0], want) {
+		t.Fatalf("reported %q, want one report containing %q", msgs, want)
+	}
+	tm.Stop()
+}
+
 func TestFakeNilReporterSwallowsPanic(t *testing.T) {
 	clk := clock.NewFake(nil, epoch)
 	clk.AfterFunc(0, func() { panic("ignored") })

@@ -7,12 +7,13 @@ import (
 	"net"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
 func readN(t *testing.T, c net.Conn, n int) []byte {
 	t.Helper()
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
 	defer func() { _ = c.SetReadDeadline(time.Time{}) }()
 	b := make([]byte, n)
 	if _, err := io.ReadFull(c, b); err != nil {
@@ -129,24 +130,28 @@ func TestPipeReaderClosedDiscards(t *testing.T) {
 	}
 }
 
+// TestPipeCut: the bubble's Wait makes sure that the read is blocked before
+// the link is cut.
 func TestPipeCut(t *testing.T) {
-	n := newNet(t)
-	a, b := n.Pipe(PipeConfig{DelayAB: time.Hour})
-	_, _ = a.Write([]byte("lost"))
-	done := make(chan error, 1)
-	go func() { _, err := b.Read(make([]byte, 4)); done <- err }()
-	time.Sleep(10 * time.Millisecond)
-	a.Cut()
-	if err := <-done; err != io.EOF {
-		t.Fatalf("blocked read after Cut: %v", err)
-	}
-	if _, err := a.Write([]byte("x")); !errors.Is(err, syscall.ECONNRESET) {
-		t.Fatalf("write after Cut: %v", err)
-	}
-	if _, err := b.Read(make([]byte, 1)); err != io.EOF {
-		t.Fatal(err)
-	}
-	a.Cut() // idempotent
+	synctest.Test(t, func(t *testing.T) {
+		n := newNet(t)
+		a, b := n.Pipe(PipeConfig{DelayAB: time.Hour})
+		_, _ = a.Write([]byte("lost"))
+		done := make(chan error, 1)
+		go func() { _, err := b.Read(make([]byte, 4)); done <- err }()
+		synctest.Wait()
+		a.Cut()
+		if err := <-done; err != io.EOF {
+			t.Fatalf("blocked read after Cut: %v", err)
+		}
+		if _, err := a.Write([]byte("x")); !errors.Is(err, syscall.ECONNRESET) {
+			t.Fatalf("write after Cut: %v", err)
+		}
+		if _, err := b.Read(make([]byte, 1)); err != io.EOF {
+			t.Fatal(err)
+		}
+		a.Cut() // idempotent
+	})
 }
 
 func TestPipeBlackhole(t *testing.T) {
@@ -190,19 +195,131 @@ func TestPipeSetDelayAndCrash(t *testing.T) {
 	}
 }
 
+// TestPipeDeadlinesInterruptBlockedCalls: the bubble's Wait makes sure that
+// the write and the read are blocked before the deadline passes.
 func TestPipeDeadlinesInterruptBlockedCalls(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := newNet(t)
+		a, b := n.Pipe(PipeConfig{BufferBytes: 1})
+		_, _ = a.Write([]byte("x"))
+		done := make(chan error, 2)
+		go func() { _, err := a.Write([]byte("y")); done <- err }()
+		go func() { _, err := a.Read(make([]byte, 1)); done <- err }()
+		synctest.Wait()
+		_ = a.SetDeadline(time.Now())
+		for range 2 {
+			if err := <-done; !isTimeout(err) {
+				t.Fatalf("blocked call after the deadline: %v", err)
+			}
+		}
+		readN(t, b, 1)
+	})
+}
+
+// TestPipeConcurrentWritesStayWhole: concurrent Writes through a buffer much
+// smaller than each of them are delivered one after the other, never
+// interleaved, as on a TCP connection.
+func TestPipeConcurrentWritesStayWhole(t *testing.T) {
 	n := newNet(t)
-	a, b := n.Pipe(PipeConfig{BufferBytes: 1})
-	_, _ = a.Write([]byte("x"))
-	done := make(chan error, 2)
-	go func() { _, err := a.Write([]byte("y")); done <- err }()
-	go func() { _, err := a.Read(make([]byte, 1)); done <- err }()
-	time.Sleep(10 * time.Millisecond)
-	_ = a.SetDeadline(time.Now())
-	for range 2 {
-		if err := <-done; !isTimeout(err) {
-			t.Fatalf("blocked call after the deadline: %v", err)
+	a, b := n.Pipe(PipeConfig{DelayAB: time.Millisecond, BufferBytes: 8})
+	const size = 256
+	letters := []byte("abcd")
+	done := make(chan error, len(letters))
+	for _, l := range letters {
+		go func() { _, err := a.Write(bytes.Repeat([]byte{l}, size)); done <- err }()
+	}
+	got := readN(t, b, size*len(letters))
+	for range letters {
+		if err := <-done; err != nil {
+			t.Fatal(err)
 		}
 	}
-	readN(t, b, 1)
+	for i := 0; i < len(got); i += size {
+		if run := got[i : i+size]; !bytes.Equal(run, bytes.Repeat(run[:1], size)) {
+			t.Fatalf("writes interleaved at offset %d: %q", i, run)
+		}
+	}
+}
+
+// TestPipeEveryBlockedReaderWakes: data or an EOF that one wakeup brings is
+// passed on to the other blocked readers. The bubble's Wait makes sure that
+// every reader is blocked before the data and the EOF arrive.
+func TestPipeEveryBlockedReaderWakes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := newNet(t)
+		a, b := n.Pipe(PipeConfig{})
+		const readers = 3
+		_ = b.SetReadDeadline(time.Now().Add(10 * time.Second))
+		got := make(chan error, readers)
+		read := func() { _, err := b.Read(make([]byte, 1)); got <- err }
+		for range readers {
+			go read()
+		}
+		synctest.Wait()
+		if _, err := a.Write([]byte("xyz")); err != nil {
+			t.Fatal(err)
+		}
+		for range readers {
+			if err := <-got; err != nil {
+				t.Fatalf("a reader missed the data: %v", err)
+			}
+		}
+		for range readers {
+			go read()
+		}
+		synctest.Wait()
+		_ = a.Close()
+		for range readers {
+			if err := <-got; err != io.EOF {
+				t.Fatalf("a reader missed the EOF: %v", err)
+			}
+		}
+	})
+}
+
+// TestPipeBlockedWriteEndsOnClose: a Write waiting behind another one
+// returns when its end closes, like the one that holds the turn.
+func TestPipeBlockedWriteEndsOnClose(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := newNet(t)
+		a, _ := n.Pipe(PipeConfig{BufferBytes: 1})
+		_, _ = a.Write([]byte("x")) // the buffer is full: every later Write blocks
+		done := make(chan error, 2)
+		for range 2 {
+			go func() { _, err := a.Write([]byte("y")); done <- err }()
+		}
+		synctest.Wait()
+		_ = a.Close()
+		for range 2 {
+			if err := <-done; !isClosedErr(err) {
+				t.Fatalf("blocked Write after Close: %v", err)
+			}
+		}
+	})
+}
+
+// TestPipeDueWriteWaitsForEarlierData: a write that is due at once, here
+// because the delay dropped to zero, still arrives after the data written
+// before it that is due but not yet delivered.
+func TestPipeDueWriteWaitsForEarlierData(t *testing.T) {
+	n, clk := fakeNet(t)
+	a, b := n.Pipe(PipeConfig{DelayAB: 10 * time.Millisecond})
+	// Armed before the first chunk is scheduled, this timer fires first at
+	// the chunk's arrival time, while the chunk is due but undelivered.
+	var werr error
+	clk.AfterFunc(10*time.Millisecond, func() {
+		a.SetDelay(0, 0)
+		_, werr = a.Write([]byte("2"))
+	})
+	if _, err := a.Write([]byte("1")); err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(10 * time.Millisecond)
+	if werr != nil {
+		t.Fatal(werr)
+	}
+	got := make([]byte, 2)
+	if _, err := io.ReadFull(b, got); err != nil || string(got) != "12" {
+		t.Fatalf("read %q, %v; want the bytes in write order", got, err)
+	}
 }

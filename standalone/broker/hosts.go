@@ -150,10 +150,17 @@ func (h *Host) revoke() {
 	_ = life.Safe("broker.Signal.Revoke", func() { h.sig.Revoke() })
 }
 
+// notify tells the host about a session; any failure is ErrHostNotFound,
+// which also wraps a recovered panic. The Signal's error is formatted inside
+// the recover boundary, since its methods are the Signal's code too.
 func (h *Host) notify(in proto.Incoming) error {
 	var err error
-	if perr := life.Safe("broker.Signal.Notify", func() { err = h.sig.Notify(in) }); perr != nil {
-		return perr
+	if perr := life.Safe("broker.Signal.Notify", func() {
+		if err = h.sig.Notify(in); err != nil {
+			err = fmt.Errorf("%w: %v", ErrHostNotFound, err)
+		}
+	}); perr != nil {
+		return fmt.Errorf("%w: %w", ErrHostNotFound, perr)
 	}
 	return err
 }

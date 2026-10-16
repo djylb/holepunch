@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -177,14 +175,15 @@ func (w *world) stunServer(t testing.TB) netip.AddrPort {
 	if err != nil {
 		t.Fatalf("stun server: %v", err)
 	}
-	w.helpers.Add(1)
+	w.helpers.Add(2)
+	go func() {
+		defer w.helpers.Done()
+		<-w.quit
+		_ = pc.Close()
+	}()
 	go func() {
 		defer w.helpers.Done()
 		defer func() { _ = pc.Close() }()
-		go func() {
-			<-w.quit
-			_ = pc.Close()
-		}()
 		buf := make([]byte, 2048)
 		for {
 			n, from, err := pc.ReadFrom(buf)
@@ -291,8 +290,8 @@ func TestClassifierOpener(t *testing.T) {
 				sb.WriteString(l + "\n")
 			}
 		}
-		if err := os.MkdirAll(dir, 0o755); err == nil {
-			_ = os.WriteFile(filepath.Join(dir, "classifier_report.md"), []byte(sb.String()), 0o644)
+		if err := writeOut(dir, "classifier_report.md", []byte(sb.String())); err != nil {
+			t.Errorf("classifier_report.md: %v", err)
 		}
 	}
 	goleak.VerifyNone(t)

@@ -86,7 +86,7 @@ func clientTLS(caFile, pin, serverName string) (*tls.Config, error) {
 			return nil, err
 		}
 		tc.InsecureSkipVerify = true // the pin replaces the chain verification
-		tc.VerifyPeerCertificate = tlsid.VerifyPin(p)
+		tc.VerifyConnection = tlsid.VerifyPin(p)
 	case caFile != "":
 		pem, err := os.ReadFile(caFile)
 		if err != nil {

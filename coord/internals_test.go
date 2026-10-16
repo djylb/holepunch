@@ -71,14 +71,12 @@ func TestClassifyLoss(t *testing.T) {
 	}{
 		{pe, protocol.ReasonInternal, "panic:x: boom", lossInternal},
 		{controlwire.ErrFlood, protocol.ReasonProtocolViolation, "control_flood", lossProtocol},
-		{errStalled, protocol.ReasonPeerOffline, detailStalled, lossLink},
 		{os.ErrDeadlineExceeded, protocol.ReasonPeerOffline, detailWriteTimeout, lossLink},
 		{io.EOF, protocol.ReasonPeerOffline, "", lossLink},
 	}
 	for _, c := range cases {
-		code, detail, kind := classifyLoss(c.err)
-		if code != c.code || detail != c.detail || kind != c.kind {
-			t.Errorf("%v: %s %q %d", c.err, code, detail, kind)
+		if got := classifyLoss(c.err); got != (linkLoss{code: c.code, detail: c.detail, kind: c.kind}) {
+			t.Errorf("%v: %+v", c.err, got)
 		}
 	}
 	if term := internalTerm(errors.New(strings.Repeat("x", 400))); len(term.detail) != maxDetail || term.panic != nil {

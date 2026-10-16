@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -127,10 +128,13 @@ type Server struct {
 	group    *life.Group
 	tokenSum *[sha256.Size]byte
 
+	// The connections and listeners are tracked by pointers of the
+	// server's own, since a caller's net.Conn or net.Listener need not be
+	// comparable.
 	mu        sync.Mutex
 	closed    bool
-	listeners map[net.Listener]struct{}
-	conns     map[net.Conn]struct{}
+	listeners map[*net.Listener]struct{}
+	conns     map[*stream]struct{}
 	hosts     int
 
 	accepted, refused, handshakeFailed atomic.Uint64
@@ -158,9 +162,9 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{
 		cfg:       cfg,
 		log:       cfg.Logger,
-		group:     life.New(nil),
-		listeners: map[net.Listener]struct{}{},
-		conns:     map[net.Conn]struct{}{},
+		group:     life.New(context.Background()),
+		listeners: map[*net.Listener]struct{}{},
+		conns:     map[*stream]struct{}{},
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
@@ -177,11 +181,11 @@ func New(cfg Config) (*Server, error) {
 // Accept errors other than a closed listener are retried with a backoff
 // growing to 1 s, so that a full file table does not end the server.
 func (s *Server) Serve(l net.Listener) error {
-	if !s.trackListener(l) {
+	if !s.trackListener(&l) {
 		_ = l.Close()
 		return ErrClosed
 	}
-	defer s.untrackListener(l)
+	defer s.untrackListener(&l)
 	var delay time.Duration
 	for {
 		conn, err := l.Accept()
@@ -189,7 +193,13 @@ func (s *Server) Serve(l net.Listener) error {
 			if s.isClosed() {
 				return nil
 			}
-			if errors.Is(err, net.ErrClosed) {
+			// The listener's error is the caller's: inspecting it runs its
+			// methods, inside a recover boundary.
+			var closed bool
+			if perr := life.Safe("server.accept-error", func() { closed = errors.Is(err, net.ErrClosed) }); perr != nil {
+				return perr
+			}
+			if closed {
 				return err
 			}
 			delay = min(max(2*delay, 5*time.Millisecond), time.Second)
@@ -212,12 +222,13 @@ func (s *Server) ServeConn(conn net.Conn) error {
 		return errors.New("server: nil connection")
 	}
 	s.accepted.Add(1)
-	if err := s.track(conn); err != nil {
-		_ = conn.Close()
+	st := &stream{raw: conn, conn: conn}
+	if err := s.track(st); err != nil {
+		s.closeConn(conn)
 		return err
 	}
-	if !s.group.Go("standalone.conn", func(ctx context.Context) { s.handle(ctx, conn) }) {
-		s.drop(conn)
+	if !s.group.Go("standalone.conn", func(ctx context.Context) { s.handle(ctx, st) }) {
+		s.drop(st)
 		return ErrClosed
 	}
 	return nil
@@ -233,13 +244,13 @@ func (s *Server) Close() error {
 		s.closed = true
 		ls := s.listeners
 		cs := s.conns
-		s.listeners, s.conns = map[net.Listener]struct{}{}, map[net.Conn]struct{}{}
+		s.listeners, s.conns = nil, nil
 		s.mu.Unlock()
 		for l := range ls {
-			_ = l.Close()
+			s.closeConn(*l)
 		}
-		for c := range cs {
-			_ = c.Close()
+		for st := range cs {
+			s.closeConn(st.raw)
 		}
 		s.closeErr = s.group.Close(closeJoin)
 		if s.group.Stats().Leaked > 0 {
@@ -280,7 +291,7 @@ func (s *Server) pause(d time.Duration) bool {
 	}
 }
 
-func (s *Server) trackListener(l net.Listener) bool {
+func (s *Server) trackListener(l *net.Listener) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -290,14 +301,14 @@ func (s *Server) trackListener(l net.Listener) bool {
 	return true
 }
 
-func (s *Server) untrackListener(l net.Listener) {
+func (s *Server) untrackListener(l *net.Listener) {
 	s.mu.Lock()
 	delete(s.listeners, l)
 	s.mu.Unlock()
-	_ = l.Close()
+	_ = (*l).Close()
 }
 
-func (s *Server) track(c net.Conn) error {
+func (s *Server) track(st *stream) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
@@ -307,19 +318,29 @@ func (s *Server) track(c net.Conn) error {
 		s.refused.Add(1)
 		return ErrBusy
 	}
-	s.conns[c] = struct{}{}
+	s.conns[st] = struct{}{}
 	return nil
 }
 
-// untrack gives c up: it was handed to a session.
-func (s *Server) untrack(c net.Conn) {
+// untrack gives st up: it was handed to a session.
+func (s *Server) untrack(st *stream) {
 	s.mu.Lock()
-	delete(s.conns, c)
+	delete(s.conns, st)
 	s.mu.Unlock()
 }
 
-// drop untracks and closes c.
-func (s *Server) drop(c net.Conn) {
-	s.untrack(c)
-	_ = c.Close()
+// drop untracks and closes st.
+func (s *Server) drop(st *stream) {
+	s.untrack(st)
+	s.closeConn(st.raw)
+}
+
+// closeConn closes a connection or listener the server owns. Its Close is
+// the caller's code: a panic in it is recovered and counted, so that it
+// neither ends the server's other connections nor stops Close half-way.
+func (s *Server) closeConn(c io.Closer) {
+	if perr := life.Safe("standalone.close", func() { _ = c.Close() }); perr != nil {
+		s.panics.Add(1)
+		s.log.Warn("close panicked", "err", perr)
+	}
 }

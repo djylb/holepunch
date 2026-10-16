@@ -28,13 +28,16 @@ func TestPointCompilesAway(t *testing.T) {
 		tags     []string
 		wantCall bool
 	}{
-		{name: "default", wantCall: false},
-		{name: "tagged", tags: []string{"-tags", "holepunch_faultinject"}, wantCall: true},
+		{name: "default", tags: []string{"-tags="}, wantCall: false},
+		{name: "tagged", tags: []string{"-tags=holepunch_faultinject"}, wantCall: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := append([]string{"build", "-gcflags=-S"}, tc.tags...)
+			// Flags on the command line override GOFLAGS from the environment,
+			// which could otherwise add the tag or the race detector's
+			// instrumentation calls to the default build.
+			args := append([]string{"build", "-race=false", "-gcflags=-S"}, tc.tags...)
 			args = append(args, "./testdata/zerocost")
-			out, err := exec.Command(gobin, args...).CombinedOutput()
+			out, err := exec.CommandContext(t.Context(), gobin, args...).CombinedOutput()
 			if err != nil {
 				t.Fatalf("go %s: %v\n%s", strings.Join(args, " "), err, out)
 			}

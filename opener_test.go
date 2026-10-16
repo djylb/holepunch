@@ -166,8 +166,10 @@ func TestOpenerAblationAndBound(t *testing.T) {
 	r.rt.opener.flows.Store(maxOpenFlows)
 	r.punch(0, 0)
 	r.punch(0, 0)
-	if !r.next(0) || !r.next(0) {
-		t.Fatal("past the bound every datagram of a new flow must be an opener")
+	for i := range 2 {
+		if !r.next(0) {
+			t.Fatalf("past the bound, datagram %d of a new flow is no opener", i)
+		}
 	}
 	if len(r.sock.opened) != 0 || r.rt.opener.flows.Load() != maxOpenFlows {
 		t.Fatal("a flow was remembered past the bound")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/internal/life"
@@ -64,6 +65,8 @@ func TestClassify(t *testing.T) {
 		{"wire flood", bg, controlwire.ErrFlood, protocol.ReasonProtocolViolation, "control_flood"},
 		{"deadline unsupported", bg, controlwire.ErrDeadlineUnsupported, protocol.ReasonInvalidArgument, "deadline_unsupported"},
 		{"bare canceled", bg, context.Canceled, protocol.ReasonCanceled, ""},
+		{"the runtime's own panic failure keeps its detail", bg,
+			ctlCause(life.Safe("ctl-read:intercept", func() { panic("x") })), protocol.ReasonInternal, "panic:ctl-read"},
 		{"unknown", bg, errors.New("weird"), protocol.ReasonInternal, "unclassified"},
 	}
 	for _, c := range cases {
@@ -139,4 +142,27 @@ func TestCtlCause(t *testing.T) {
 			t.Errorf("%s: %s/%q want internal/%q", where, f.reason, f.detail, detail)
 		}
 	}
+}
+
+// panicAs is a caller's error whose As method panics.
+type panicAs struct{}
+
+func (panicAs) Error() string { return "caller cause" }
+func (panicAs) As(_ any) bool { panic("caller As") }
+
+// The caller's cancellation cause is the caller's code: a panic in its
+// methods while the cause is classified fails the session as internal, and
+// the cleanup still runs to the end — control returned, sockets closed.
+func TestCallerCausePanicsInClassify(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	so := newSolo(t, w, nil, nil)
+	so.start(testTimeouts())
+	so.report()
+	so.stop(panicAs{})
+	e := so.wantError(so.result(5*time.Second), protocol.ReasonInternal)
+	if e.Detail != "panic:finish.classify" || e.Diagnostics == nil {
+		t.Fatalf("error %+v", e)
+	}
+	so.checkControlReturned()
 }

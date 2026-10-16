@@ -225,12 +225,20 @@ func runLANServerCase(t *testing.T, c lanServerCase) {
 	}
 	var (
 		wg   sync.WaitGroup
+		ends [2]net.Conn
 		out  [2]*holepunch.Session
 		errs [2]error
 	)
+	defer func() {
+		for _, c := range ends {
+			if c != nil {
+				_ = c.Close()
+			}
+		}
+	}()
 	for i, role := range []protocol.Role{protocol.RoleInitiator, protocol.RoleResponder} {
 		ce, se := n.Pipe(nattest.PipeConfig{A: hosts[i], B: core})
-		defer func() { _ = ce.Close() }()
+		ends[i] = ce
 		if err := sess.Attach(role, se, coord.AttachOptions{Security: protocol.ControlSecurityInsecureForTesting}); err != nil {
 			t.Fatal(err)
 		}

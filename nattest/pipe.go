@@ -85,8 +85,9 @@ type PipeConn struct {
 	tx, rx       *pipeDir
 	host         *Host
 	laddr, raddr net.Addr
-	closed       bool // guarded by p.mu
-	closedCh     chan struct{}
+	closed       bool          // guarded by p.mu
+	closedCh     chan struct{} // closed with closed
+	writing      chan struct{} // holds a token while a Write runs
 	rd, wd       deadline
 }
 
@@ -109,8 +110,15 @@ func (n *Network) Pipe(cfg PipeConfig) (a, b *PipeConn) {
 		cutCh: make(chan struct{}),
 	}
 	addrA, addrB := pipeAddr(cfg.A, 2*idx), pipeAddr(cfg.B, 2*idx+1)
-	a = &PipeConn{p: p, tx: p.ab, rx: p.ba, host: cfg.A, laddr: addrA, raddr: addrB, closedCh: make(chan struct{}), rd: newDeadline(), wd: newDeadline()}
-	b = &PipeConn{p: p, tx: p.ba, rx: p.ab, host: cfg.B, laddr: addrB, raddr: addrA, closedCh: make(chan struct{}), rd: newDeadline(), wd: newDeadline()}
+	newEnd := func(tx, rx *pipeDir, h *Host, laddr, raddr net.Addr) *PipeConn {
+		return &PipeConn{
+			p: p, tx: tx, rx: rx, host: h, laddr: laddr, raddr: raddr,
+			closedCh: make(chan struct{}), writing: make(chan struct{}, 1),
+			rd: newDeadline(), wd: newDeadline(),
+		}
+	}
+	a = newEnd(p.ab, p.ba, cfg.A, addrA, addrB)
+	b = newEnd(p.ba, p.ab, cfg.B, addrB, addrA)
 	p.ends = [2]*PipeConn{a, b}
 	closed := n.closed.Load()
 	if !closed {
@@ -179,28 +187,20 @@ func (p *pipe) arrival(d *pipeDir) time.Duration {
 	return at
 }
 
-// emit delivers c at once when it is already due and returns nil; otherwise
-// it returns c for the caller to queue after unlocking. p.mu is held.
-func (p *pipe) emit(c *pipeChunk, at time.Duration) *pipeChunk {
-	if at <= p.n.now() {
+// emit delivers c at once when it is already due and no earlier data of its
+// direction is still in flight, and otherwise queues it on the scheduler;
+// p.mu is held. Queueing under the lock keeps the chunks of a direction in
+// the order of their arrival times, and a due chunk queued behind earlier
+// ones that are due but not yet delivered runs right after them. When the
+// network is closed the chunk is discarded and its buffer space returned.
+func (p *pipe) emit(c *pipeChunk, at time.Duration) {
+	switch {
+	case at <= p.n.now() && c.dir.pending == len(c.data): // pending counts c's own data
 		p.deliverLocked(c)
-		return nil
-	}
-	return c
-}
-
-// queue hands c to the scheduler; when the network is closed the chunk is
-// discarded and its buffer space returned.
-func (p *pipe) queue(c *pipeChunk, at time.Duration) {
-	if c == nil || p.n.sched.push(event{at: at, pc: c}) {
-		return
-	}
-	p.mu.Lock()
-	if !c.fin {
+	case !p.n.sched.push(event{at: at, pc: c}) && !c.fin:
 		c.dir.pending -= len(c.data)
 		signal(c.dir.writable)
 	}
-	p.mu.Unlock()
 }
 
 func (p *pipe) deliver(c *pipeChunk) {
@@ -256,12 +256,15 @@ func (c *PipeConn) Read(b []byte) (int, error) {
 			c.rx.ready = c.rx.ready[n:]
 			if len(c.rx.ready) == 0 {
 				c.rx.ready = nil
+			} else {
+				signal(c.rx.readable) // pass the rest on to another reader
 			}
 			signal(c.rx.writable)
 			p.mu.Unlock()
 			return n, nil
 		}
 		if c.rx.fin {
+			signal(c.rx.readable) // every blocked reader sees the EOF
 			p.mu.Unlock()
 			return 0, io.EOF
 		}
@@ -277,29 +280,25 @@ func (c *PipeConn) Read(b []byte) (int, error) {
 }
 
 // Write queues b for delivery after the one-way delay, blocking while the
-// direction's buffer is full. It fails with ECONNRESET after Cut and with
-// EPIPE once the peer has closed; on a blackholed pipe it succeeds and the
-// data is lost.
+// direction's buffer is full. Concurrent Writes run one at a time, as on a
+// TCP connection, so the bytes of one Write are never interleaved with
+// another's; a Write waiting for its turn still returns on Close, Cut and
+// its deadline. Write fails with ECONNRESET after Cut and with EPIPE once
+// the peer has closed; on a blackholed pipe it succeeds and the data is
+// lost.
 func (c *PipeConn) Write(b []byte) (int, error) {
+	if err := c.lockWrite(); err != nil {
+		return 0, err
+	}
+	defer func() { <-c.writing }()
 	p := c.p
 	written := 0
 	for {
 		p.mu.Lock()
-		switch {
-		case c.closed:
-			p.mu.Unlock()
-			return written, c.opErr("write", net.ErrClosed)
-		case p.cut:
-			p.mu.Unlock()
-			return written, c.opErr("write", syscall.ECONNRESET)
-		case c.tx.readerClosed:
-			p.mu.Unlock()
-			return written, c.opErr("write", syscall.EPIPE)
-		}
 		wd := c.wd.wait()
-		if isClosed(wd) {
+		if err := c.writeErrLocked(wd); err != nil {
 			p.mu.Unlock()
-			return written, c.opErr("write", os.ErrDeadlineExceeded)
+			return written, err
 		}
 		if p.hole {
 			p.mu.Unlock()
@@ -311,12 +310,9 @@ func (c *PipeConn) Write(b []byte) (int, error) {
 		}
 		if space := p.bufBytes - c.tx.pending - len(c.tx.ready); space > 0 {
 			k := min(space, len(b))
-			ch := &pipeChunk{pipe: p, dir: c.tx, data: append([]byte(nil), b[:k]...)}
 			c.tx.pending += k
-			at := p.arrival(c.tx)
-			later := p.emit(ch, at)
+			p.emit(&pipeChunk{pipe: p, dir: c.tx, data: append([]byte(nil), b[:k]...)}, p.arrival(c.tx))
 			p.mu.Unlock()
-			p.queue(later, at)
 			b = b[k:]
 			written += k
 			continue
@@ -330,6 +326,49 @@ func (c *PipeConn) Write(b []byte) (int, error) {
 		case <-c.closedCh:
 		}
 	}
+}
+
+// lockWrite waits for the end's turn to write, or for the error that ends
+// the wait.
+func (c *PipeConn) lockWrite() error {
+	p := c.p
+	for {
+		select {
+		case c.writing <- struct{}{}:
+			return nil
+		default:
+		}
+		p.mu.Lock()
+		wd := c.wd.wait()
+		err := c.writeErrLocked(wd)
+		p.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		select {
+		case c.writing <- struct{}{}:
+			return nil
+		case <-wd:
+		case <-p.cutCh:
+		case <-c.closedCh:
+		}
+	}
+}
+
+// writeErrLocked returns the error a Write fails with now, if any; p.mu is
+// held and wd is the current write deadline.
+func (c *PipeConn) writeErrLocked(wd <-chan struct{}) error {
+	switch {
+	case c.closed:
+		return c.opErr("write", net.ErrClosed)
+	case c.p.cut:
+		return c.opErr("write", syscall.ECONNRESET)
+	case c.tx.readerClosed:
+		return c.opErr("write", syscall.EPIPE)
+	case isClosed(wd):
+		return c.opErr("write", os.ErrDeadlineExceeded)
+	}
+	return nil
 }
 
 // Close closes this end: its blocked reads and writes fail, the peer reads
@@ -347,14 +386,10 @@ func (c *PipeConn) Close() error {
 	c.rx.readerClosed = true
 	c.rx.ready = nil
 	signal(c.rx.writable)
-	var later *pipeChunk
-	var at time.Duration
 	if !p.cut && !p.hole {
-		at = p.arrival(c.tx)
-		later = p.emit(&pipeChunk{pipe: p, dir: c.tx, fin: true}, at)
+		p.emit(&pipeChunk{pipe: p, dir: c.tx, fin: true}, p.arrival(c.tx))
 	}
 	p.mu.Unlock()
-	p.queue(later, at)
 	c.release()
 	return nil
 }

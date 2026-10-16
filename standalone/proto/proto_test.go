@@ -81,8 +81,8 @@ func frameOf(version, ty byte, payload string) []byte {
 }
 
 func TestDecodeErrors(t *testing.T) {
-	big := frameOf(Version, byte(TypeOpen), "")
-	binary.BigEndian.PutUint16(big[2:], MaxPayload+1)
+	big := frameOf(Version, byte(TypeOpen), `{"host_id":"h"}`)
+	binary.BigEndian.PutUint16(big[2:], MaxPayload)
 	cases := []struct {
 		name  string
 		frame []byte
@@ -91,7 +91,7 @@ func TestDecodeErrors(t *testing.T) {
 		{"version", frameOf(2, byte(TypeHeartbeat), "{}"), ErrVersion},
 		{"unknown type", frameOf(Version, 0, "{}"), ErrType},
 		{"unknown type high", frameOf(Version, byte(TypeFail+1), "{}"), ErrType},
-		{"too large", big, ErrTooLarge},
+		{"announced larger than sent", big, io.ErrUnexpectedEOF},
 		{"truncated header", []byte{Version, byte(TypeOpen)}, io.ErrUnexpectedEOF},
 		{"truncated payload", frameOf(Version, byte(TypeHeartbeat), "{}")[:5], io.ErrUnexpectedEOF},
 		{"bad json", frameOf(Version, byte(TypeOpen), "{"), ErrInvalid},
@@ -111,6 +111,60 @@ func TestDecodeErrors(t *testing.T) {
 	}
 	if _, err := Decode(bytes.NewReader(nil)); !errors.Is(err, io.EOF) {
 		t.Fatalf("empty stream: %v", err)
+	}
+}
+
+// TestDecodeLargestFrame: a payload of MaxPayload bytes, read in growing
+// chunks, decodes, and the bytes after it stay on the stream.
+func TestDecodeLargestFrame(t *testing.T) {
+	payload := `{"host_id":"h"}`
+	payload += strings.Repeat(" ", MaxPayload-len(payload))
+	r := bytes.NewReader(append(frameOf(Version, byte(TypeOpen), payload), "next"...))
+	m, err := Decode(r)
+	if err != nil || m.(*Open).HostID != "h" {
+		t.Fatalf("%v %v", m, err)
+	}
+	if r.Len() != len("next") {
+		t.Fatalf("%d bytes left", r.Len())
+	}
+}
+
+// TestLargestMessages: every message at its field limits, filled with the
+// characters JSON escapes the most, encodes within MaxPayload and decodes
+// back. Metadata that a dialer sent in a small frame is relayed in Incoming
+// and SessionInfo, so no character may make those overflow.
+func TestLargestMessages(t *testing.T) {
+	name := strings.Repeat("n", MaxNameLen)
+	secret := strings.Repeat("s", MaxSecretLen)
+	for _, fill := range []string{`"`, `\`, "<", "\u2028", "é"} {
+		repeat := func(n int) string { return strings.Repeat(fill, n/len(fill)) }
+		meta := map[string]string{}
+		for c := 'a'; c < 'a'+MaxMetadata; c++ {
+			meta[strings.Repeat(string(c), MaxNameLen)] = repeat(MaxMetaValueLen)
+		}
+		const ipv6 = "[fe80::1%]:65535"
+		targets := make([]string, MaxTargets)
+		for i := range targets {
+			targets[i] = "[fe80::1%" + repeat(MaxTargetLen-len(ipv6)) + "]:65535"
+		}
+		for _, m := range []Message{
+			&Register{HostID: name, AuthToken: secret, Credential: secret, Metadata: meta},
+			&Open{HostID: name, DialerID: name, AuthToken: secret, Metadata: meta},
+			&SessionInfo{SessionID: name, HostID: name, DialerID: name, HostMetadata: meta, DialerMetadata: meta,
+				Policy: AccessPolicy{Targets: targets}},
+			&Incoming{SessionID: name, Ticket: secret, DialerID: name, DialerMetadata: meta},
+			&Transport{SessionID: name, Detail: repeat(MaxTextLen)},
+			&Fail{Code: Code(strings.Repeat("c", 32)), Message: repeat(MaxTextLen)},
+		} {
+			frame, err := Encode(m)
+			if err != nil {
+				t.Fatalf("%q %v: %v", fill, m.Type(), err)
+			}
+			got, err := Decode(bytes.NewReader(frame))
+			if err != nil || !reflect.DeepEqual(got, m) {
+				t.Fatalf("%q %v: round trip %v", fill, m.Type(), err)
+			}
+		}
 	}
 }
 

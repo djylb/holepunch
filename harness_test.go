@@ -81,30 +81,37 @@ func clientOpts(h *nattest.Host) Options {
 type srvLink struct {
 	t    *testing.T
 	conn *controlwire.Conn
-	role protocol.Role
-	sid  string
 
-	frames chan controlwire.Frame
-	errs   chan error
+	frames chan controlwire.Frame // closed when the link ends
+
+	done     chan struct{} // closed by close: a reader nobody drains stops
+	doneOnce sync.Once
 }
 
-func newSrvLink(t *testing.T, nc net.Conn, role protocol.Role, sid string) *srvLink {
+func newSrvLink(t *testing.T, nc net.Conn) *srvLink {
 	t.Helper()
-	l := &srvLink{t: t, role: role, sid: sid, frames: make(chan controlwire.Frame, 256), errs: make(chan error, 1)}
+	l := &srvLink{t: t, frames: make(chan controlwire.Frame, 256), done: make(chan struct{})}
 	c, err := controlwire.NewConn(nc, controlwire.ConnOptions{Side: controlwire.SideServer, WriteTimeout: 3 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	l.conn = c
 	go func() {
+		defer close(l.frames)
 		for {
 			f, err := c.ReadFrame(context.Background())
 			if err != nil {
-				l.errs <- err
-				close(l.frames)
 				return
 			}
-			l.frames <- f
+			select {
+			case l.frames <- f:
+			default: // full: wait for a reader, unless the link was closed
+				select {
+				case l.frames <- f:
+				case <-l.done:
+					return
+				}
+			}
 		}
 	}()
 	return l
@@ -147,7 +154,10 @@ func (l *srvLink) next(d time.Duration, types ...protocol.MessageType) (protocol
 	}
 }
 
-func (l *srvLink) close() { _ = l.conn.Close() }
+func (l *srvLink) close() {
+	l.doneOnce.Do(func() { close(l.done) })
+	_ = l.conn.Close()
+}
 
 // session is the identity of one test session.
 type session struct {
@@ -168,7 +178,7 @@ func (w *world) newSession() *session {
 	return s
 }
 
-// startMsg is the punch_start of role r.
+// startFor is the punch_start of role r.
 func (w *world) startFor(s *session, r protocol.Role, to protocol.Timeouts, pol *protocol.Policy) protocol.PunchStart {
 	return protocol.PunchStart{
 		SessionID: s.sid, Role: r, Token: s.token, Wire: s.wire, Control: protocol.DefaultControlSpec(),
@@ -254,7 +264,7 @@ func (ps *pairScript) run(ctx context.Context, ends [2]net.Conn) error {
 		}
 	}()
 	for i := range links {
-		links[i] = newSrvLink(w.t, ends[i], roles[i], s.sid)
+		links[i] = newSrvLink(w.t, ends[i])
 		start := w.startFor(s, roles[i], ps.timeouts, ps.policy)
 		if ps.mutateStart != nil {
 			ps.mutateStart(i, &start)

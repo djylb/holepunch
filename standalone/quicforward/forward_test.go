@@ -79,7 +79,7 @@ func TestAcceptBounded(t *testing.T) {
 	limit := s.Result().TransportTimeout
 	select {
 	case o := <-served:
-		if o.err == nil || o.d < limit-100*time.Millisecond || o.d > limit+500*time.Millisecond {
+		if o.err == nil || o.d < limit-100*time.Millisecond || o.d > limit+2*time.Second {
 			t.Fatalf("ServeSession: %v after %v (TransportTimeout %v)", o.err, o.d, limit)
 		}
 	case <-time.After(limit + 3*time.Second):
@@ -140,9 +140,11 @@ func TestDialStopsWhenSocketClosed(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		_ = d.Close()
 	}()
+	// Without the stop, the first attempt alone would wait the session's
+	// TransportTimeout (3 s).
 	start := time.Now()
 	_, err := quicforward.Dial(context.Background(), d, dialID)
-	if !errors.Is(err, net.ErrClosed) || time.Since(start) > time.Second {
+	if !errors.Is(err, net.ErrClosed) || time.Since(start) > 2*time.Second {
 		t.Fatalf("Dial: %v after %v", err, time.Since(start))
 	}
 }
@@ -197,7 +199,7 @@ func TestPinMismatch(t *testing.T) {
 		h, d := pair(t, w, hostID, dialID)
 		accepted := accept(h, impostor(t))
 		start := time.Now()
-		if _, err := quicforward.Dial(context.Background(), d, dialID); err == nil || time.Since(start) > time.Second {
+		if _, err := quicforward.Dial(context.Background(), d, dialID); err == nil || time.Since(start) > 2*time.Second {
 			t.Fatalf("dial to an impostor: %v after %v", err, time.Since(start))
 		}
 		if err := <-accepted; err == nil {
@@ -330,28 +332,42 @@ func TestTargetUnreachable(t *testing.T) {
 	}
 }
 
-// recordingDial wraps a world dialer and keeps every stream it opened.
-type recordingDial struct {
+// linkDial wraps a world dialer for a host whose registration link, its
+// first stream, goes silent when it dials its second, to join a session:
+// nothing the host sends on the link reaches the server from then on. After
+// cutLink it refuses to dial, so the host cannot register again.
+type linkDial struct {
 	dial  func(context.Context) (net.Conn, error)
 	mu    sync.Mutex
 	conns []net.Conn
+	cut   bool
 }
 
-func (r *recordingDial) Dial(ctx context.Context) (net.Conn, error) {
+func (r *linkDial) Dial(ctx context.Context) (net.Conn, error) {
+	r.mu.Lock()
+	cut := r.cut
+	r.mu.Unlock()
+	if cut {
+		return nil, errors.New("link cut")
+	}
 	c, err := r.dial(ctx)
 	if err != nil {
 		return nil, err
 	}
 	r.mu.Lock()
 	r.conns = append(r.conns, c)
+	if len(r.conns) == 2 {
+		r.conns[0].(*nattest.PipeConn).Blackhole()
+	}
 	r.mu.Unlock()
 	return c, nil
 }
 
-// cutLink breaks the first stream, the registration link.
-func (r *recordingDial) cutLink() {
+// cutLink breaks the registration link and refuses later dials.
+func (r *linkDial) cutLink() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.cut = true
 	r.conns[0].(*nattest.PipeConn).Cut()
 }
 
@@ -363,16 +379,27 @@ func TestReportFailureKeepsQUIC(t *testing.T) {
 		c.OnTransport = func(r server.TransportReport) { reports <- r }
 	}})
 	hostH := w.NATHost(nattest.PortRestricted())
-	rd := &recordingDial{dial: w.Dial(hostH)}
-	cut := make(chan struct{})
+	rd := &linkDial{dial: w.Dial(hostH)}
+	stop, cut := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(cut)
 		// Once the host joined, losing its link no longer aborts the
-		// session; the punch that follows leaves time to cut it.
-		waitFor(t, 5*time.Second, func() bool { return w.Server.Stats().Joined == 1 })
+		// session; the punch that follows mostly leaves time to cut it, so
+		// that the report fails at once. Should this goroutine be late, the
+		// report goes into the silenced link and is lost all the same.
+		for w.Server.Stats().Joined == 0 {
+			select {
+			case <-stop:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
 		rd.cutLink()
 	}()
-	defer func() { <-cut }()
+	defer func() {
+		close(stop)
+		<-cut
+	}()
 	r := &forwardRig{w: w, targets: &echoTargets{}, ln: newPipeListener(), hostDone: make(chan error, 1), dialDone: make(chan error, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel

@@ -104,6 +104,7 @@ type Config struct {
 	// Observer receives the session events, asynchronously and in order per
 	// session, from one dispatcher goroutine with a bounded queue: events
 	// that do not fit are dropped and counted. nil starts no dispatcher.
+	// Coordinator.Close joins the dispatcher, so Observer must not call Close.
 	//
 	//holepunch:callback
 	Observer func(Event)
@@ -111,7 +112,8 @@ type Config struct {
 	ObserveProgress bool
 	// OnResult receives every session's Result exactly once, after all of the
 	// session's resources were released, outside every lock and inside a
-	// recover boundary.
+	// recover boundary. Coordinator.Close waits for the calls in progress, so
+	// OnResult must not call Close: Close would wait for it until its bound.
 	//
 	//holepunch:callback
 	OnResult func(Result)

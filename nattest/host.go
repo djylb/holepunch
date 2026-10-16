@@ -344,40 +344,40 @@ func (h *Host) unbind(c *conn) {
 	}
 }
 
-func (h *Host) lookupConn(dst netip.AddrPort) *conn {
+// deliver queues p on the socket bound to its destination. The lookup and
+// the queueing happen under one read lock: a socket's close unbinds it under
+// the write lock before it drains its queue, so no packet is left behind in
+// the queue of a closed socket.
+func (h *Host) deliver(p *packet) {
+	n := h.n
+	size := uint64(len(p.data))
+	why := dropNoSocket
 	i := 0
-	if dst.Addr().Is6() {
+	if p.dst.Addr().Is6() {
 		i = 1
 	}
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-	b := h.ports[i][dst.Port()]
-	if b == nil {
-		return nil
-	}
-	if c := b.byIP[dst.Addr()]; c != nil {
-		return c
-	}
-	return b.wild
-}
-
-// deliver queues p on the socket bound to its destination.
-func (h *Host) deliver(p *packet) {
-	n := h.n
-	why := dropNoSocket
-	if c := h.lookupConn(p.dst); c != nil {
-		size := uint64(len(p.data))
-		n.log.add(n, evDeliver, h.name, p, dropNone)
-		if why = c.enqueue(p); why == dropNone {
-			h.stats.recv.Add(1)
-			h.stats.bytesRecv.Add(size)
-			n.delivered.Add(1)
-			return
+	if b := h.ports[i][p.dst.Port()]; b != nil {
+		c := b.byIP[p.dst.Addr()]
+		if c == nil {
+			c = b.wild
+		}
+		if c != nil {
+			// Logged first: once queued, p belongs to the reader.
+			n.log.add(n, evDeliver, h.name, p, dropNone)
+			why = c.enqueue(p)
 		}
 	}
-	if why == dropNoSocket {
+	h.mu.RUnlock()
+	switch why {
+	case dropNone:
+		h.stats.recv.Add(1)
+		h.stats.bytesRecv.Add(size)
+		n.delivered.Add(1)
+		return
+	case dropNoSocket:
 		h.stats.noSocket.Add(1)
-	} else {
+	default:
 		h.stats.inboxFull.Add(1)
 	}
 	n.drop(p, h.name, why)

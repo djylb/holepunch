@@ -14,6 +14,9 @@ import (
 // effects are actions decided under the session mutex and carried out after
 // it is released, in this order.
 type effects struct {
+	// sendErr is each link's first failed send; it is examined outside the
+	// mutex, and a full write queue loses the link (stalled).
+	sendErr     [2]error
 	close       []*link       // lost links to close
 	closeHandle bool          // the natprobe handle is no longer needed
 	sink        bool          // attach the sandwich sink to the handle
@@ -29,6 +32,11 @@ func (fx *effects) end(t *terminal) {
 }
 
 func (fx *effects) merge(o effects) {
+	for r, err := range o.sendErr {
+		if fx.sendErr[r] == nil {
+			fx.sendErr[r] = err
+		}
+	}
 	fx.close = append(fx.close, o.close...)
 	fx.closeHandle = fx.closeHandle || o.closeHandle
 	fx.sink = fx.sink || o.sink
@@ -41,6 +49,11 @@ func (fx *effects) merge(o effects) {
 // apply carries out fx. It must not be called with the mutex held or from a
 // controlwire goroutine.
 func (s *Session) apply(fx effects) {
+	for r, err := range fx.sendErr {
+		if err != nil && s.queueFull(err) {
+			fx.merge(s.stalled(r))
+		}
+	}
 	for _, l := range fx.close {
 		l.close()
 	}
@@ -124,14 +137,25 @@ func (s *Session) lost(r int) {
 			drained = true
 		}
 	}
+	loss := s.classifyLink(l.conn.Err())
 	var fx effects
 	now := s.since(s.c.set.clock.Now())
 	func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		fx = s.linkLostLocked(r, l.conn.Err(), now)
+		fx = s.linkLostLocked(r, loss, now)
 	}()
 	s.apply(fx)
+}
+
+// stalled loses link r, whose write queue is full, as of the clock's now:
+// a punching session re-arms its timer from it, and the last update may be
+// a round old (the go of a round its predecessor's deadline ended).
+func (s *Session) stalled(r int) effects {
+	now := s.since(s.c.set.clock.Now())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.linkLostLocked(r, lossStalled, now)
 }
 
 // doWork runs the planning the session asked for.
@@ -157,7 +181,7 @@ func (s *Session) doWork() {
 // deadline unless a confirmation arrives; in confirming an unconfirmed
 // side's loss ends the session as a half-confirmed success. A protocol fault
 // ends the session in every state but confirming.
-func (s *Session) linkLostLocked(r int, cause error, now time.Duration) effects {
+func (s *Session) linkLostLocked(r int, loss linkLoss, now time.Duration) effects {
 	st := &s.st
 	l := st.links[r]
 	var fx effects
@@ -167,7 +191,6 @@ func (s *Session) linkLostLocked(r int, cause error, now time.Duration) effects 
 	l.dead = true
 	fx.close = append(fx.close, l)
 	st.updated = now
-	code, detail, kind := classifyLoss(cause)
 	role := roleOf(r)
 	switch st.state {
 	case StateConfirming:
@@ -176,7 +199,7 @@ func (s *Session) linkLostLocked(r int, cause error, now time.Duration) effects 
 		}
 		return fx
 	case StatePunching:
-		if kind == lossLink {
+		if loss.kind == lossLink {
 			st.gone[r] = true
 			st.gen++ // a next round being planned must not start
 			switch {
@@ -192,8 +215,8 @@ func (s *Session) linkLostLocked(r int, cause error, now time.Duration) effects 
 			return fx
 		}
 	}
-	t := &terminal{code: code, detail: detail, failed: role}
-	if kind == lossInternal {
+	t := &terminal{code: loss.code, detail: loss.detail, failed: role}
+	if loss.kind == lossInternal {
 		t.failed = ""
 	}
 	fx.end(t)
@@ -265,13 +288,15 @@ func (s *Session) faultFor(t controlwire.Type) error {
 	return nil
 }
 
-// lostNow treats link r as lost because of err.
+// lostNow treats link r as lost because of err, an error of the session's
+// own (a frame it could not decode, an injected fault).
 func (s *Session) lostNow(r int, err error) {
+	loss := classifyLoss(err)
 	var fx effects
 	func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		fx = s.linkLostLocked(r, err, s.st.updated)
+		fx = s.linkLostLocked(r, loss, s.st.updated)
 	}()
 	s.apply(fx)
 }

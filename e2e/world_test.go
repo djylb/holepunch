@@ -159,6 +159,20 @@ func newWorld(t testing.TB, cfg worldConfig) *world {
 		opts = append(opts, nattest.WithEventLog(0))
 	}
 	w.n = nattest.NewNetwork(opts...)
+	// A failed construction (t.Fatalf) closes what it built, so that its
+	// goroutines do not outlive the test.
+	built := false
+	defer func() {
+		if !built {
+			close(w.quit)
+			w.helpers.Wait()
+			if w.co != nil {
+				_ = closeStep(w.co.Close)
+			}
+			_ = closeStep(w.probe.Close)
+			_ = closeStep(w.n.Close)
+		}
+	}()
 	srv := nattest.PublicOpen()
 	srv.Name = "server"
 	if cfg.serverV6 {
@@ -175,10 +189,10 @@ func newWorld(t testing.TB, cfg worldConfig) *world {
 	if err != nil {
 		t.Fatalf("natprobe: %v", err)
 	}
+	w.probe = probe
 	if err := probe.Start(); err != nil {
 		t.Fatalf("natprobe start: %v", err)
 	}
-	w.probe = probe
 	spec := protocol.ProbeSpec{V: protocol.ProbeSpecVersion, ExtraReply: true, SecondSocket: !cfg.noSecondSocket,
 		Observers: probe.Observers(protocol.FamilyUDP4)}
 	if cfg.serverV6 {
@@ -203,6 +217,7 @@ func newWorld(t testing.TB, cfg worldConfig) *world {
 	if err != nil {
 		t.Fatalf("coord: %v", err)
 	}
+	built = true
 	return w
 }
 
@@ -281,6 +296,16 @@ func (w *world) close() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// abandon closes a world whose session could not be created and returns the
+// problems: err, and the close's failure if any.
+func (w *world) abandon(err error) []string {
+	v := []string{err.Error()}
+	if cerr := w.close(); cerr != nil {
+		v = append(v, fmt.Sprintf("world close: %v", cerr))
+	}
+	return v
 }
 
 // measuringPlanner is the default planner with a record of what natprobe
@@ -448,8 +473,8 @@ func (s *side) publicIPs() []netip.Addr {
 // fakeMapper is the port mapper of a home router behind an upstream NAT: it
 // reports the router's own mapping of the socket, whose external endpoint lies
 // in the upstream network. nattest does not speak UPnP/PCP/NAT-PMP. It counts
-// Map and release calls, so that a test can check that every mapping was
-// released.
+// the mappings it handed out and their releases, so that a test can check
+// that every mapping was released; a Map that fails hands out none.
 type fakeMapper struct {
 	home     *nattest.NAT
 	maps     atomic.Int32
@@ -462,13 +487,17 @@ const mapperPoll = 5 * time.Millisecond
 
 // Map waits for the home router's mapping of conn's port and reports it.
 func (m *fakeMapper) Map(ctx context.Context, conn net.PacketConn, _ protocol.PortMappingPolicy) (protocol.PortMappingInfo, func() error, error) {
-	m.maps.Add(1)
-	port := conn.LocalAddr().(*net.UDPAddr).AddrPort().Port()
+	la, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return protocol.PortMappingInfo{}, nil, fmt.Errorf("e2e: local address %v is not UDP", conn.LocalAddr())
+	}
+	port := la.AddrPort().Port()
 	tm := time.NewTimer(0)
 	defer tm.Stop()
 	for {
 		for _, mp := range m.home.Mappings() {
 			if mp.Internal.Port() == port {
+				m.maps.Add(1)
 				var once sync.Once
 				return protocol.PortMappingInfo{Method: protocol.PortMapUPnP, External: mp.External, Internal: mp.Internal, Lease: time.Hour},
 					func() error { once.Do(func() { m.releases.Add(1) }); return nil }, nil

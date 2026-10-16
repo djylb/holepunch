@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -93,7 +94,11 @@ func TestRequestSocketClosedWhenContextEnds(t *testing.T) {
 			})
 			returned := time.Now()
 			c.Close()
-			within(t, "exchange() cancelled at 100ms", returned.Sub(start), 250*time.Millisecond)
+			// What shows that the end of ctx interrupted the read is that the
+			// socket was closed before exchange returned (checked below); the
+			// bound, loose for loaded machines, only catches an exchange that
+			// goes on retransmitting after ctx ended.
+			within(t, "exchange() cancelled at 100ms", returned.Sub(start), retransmitMax)
 			if out != unanswered || !errors.Is(err, errNoResponse) || !errors.Is(err, context.Canceled) {
 				t.Fatalf("exchange() = %v, %v; want unanswered, no response, cancelled", out, err)
 			}
@@ -121,10 +126,15 @@ func TestRequestSocketClosedWhenContextEnds(t *testing.T) {
 	}
 }
 
+// TestExchangeRetransmits: an unanswered request is sent again whenever its
+// read deadline passes, 250 ms after the first send and then twice as long
+// each time. The schedule is read from the deadlines the exchange sets, so a
+// loaded machine that delays a round does not change what is checked.
 func TestExchangeRetransmits(t *testing.T) {
 	gw := newFakeGW(t)
 	gw.set(func(f *fakeGW) { f.pcpMode = serveSilent })
-	m := newTestMapper(t, Config{}, testEnv{gw: gw})
+	dn := &deadlineNetwork{}
+	m := newTestMapper(t, Config{Network: dn}, testEnv{gw: gw})
 	ctx, cancel := context.WithTimeout(context.Background(), 900*time.Millisecond)
 	defer cancel()
 	c, err := m.openRequest(ctx, loopback)
@@ -138,10 +148,24 @@ func TestExchangeRetransmits(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("exchange() error = %v", err)
 	}
-	// Sent at 0, 250 ms and 750 ms; the next one would be at 1750 ms.
-	if got := gw.counts().received; got != 3 {
-		t.Fatalf("gateway received %d requests in 900 ms, want 3", got)
+	dn.mu.Lock()
+	dc := dn.conns[0]
+	dn.mu.Unlock()
+	dc.mu.Lock()
+	sends := slices.Clone(dc.deadlines) // one read deadline per send
+	dc.mu.Unlock()
+	// Sent at 0, 250 ms and 750 ms on an idle machine.
+	if len(sends) < 2 {
+		t.Fatalf("%d sends in 900 ms, want a retransmission", len(sends))
 	}
+	want := retransmitInitial
+	for i, d := range sends {
+		if wait := d.deadline.Sub(d.at); wait > want || wait < want/2 {
+			t.Fatalf("send %d waited %s for an answer, want %s", i+1, wait, want)
+		}
+		want = min(want*2, retransmitMax)
+	}
+	waitFor(t, "every send at the gateway", func() bool { return gw.counts().received == len(sends) })
 }
 
 func TestExchangeAcceptsOnlyTheServer(t *testing.T) {
@@ -205,6 +229,69 @@ func TestExchangeAcceptsOnlyTheServer(t *testing.T) {
 	if out != answered || !errors.Is(err, refused) {
 		t.Fatalf("exchange() = %v, %v; want answered, refused", out, err)
 	}
+}
+
+// TestOversizedDatagramIsSkipped: a datagram larger than any answer is
+// skipped like any other datagram that does not answer, by the PCP and
+// NAT-PMP exchange and by the SSDP search. Windows fails a read whose
+// datagram does not fit the buffer, which must not end the request.
+func TestOversizedDatagramIsSkipped(t *testing.T) {
+	const oversized = 8000
+	// serve answers the first request on server with an oversized datagram
+	// and then with answer.
+	serve := func(server *net.UDPConn, answer []byte) <-chan error {
+		errc := make(chan error, 1)
+		go func() {
+			buf := make([]byte, 2048)
+			_, client, err := server.ReadFromUDPAddrPort(buf)
+			if err == nil {
+				_, err = server.WriteToUDPAddrPort(make([]byte, oversized), client)
+			}
+			if err == nil {
+				_, err = server.WriteToUDPAddrPort(answer, client)
+			}
+			errc <- err
+		}()
+		return errc
+	}
+	m := newTestMapper(t, Config{}, testEnv{})
+	ctx, cancel := context.WithTimeout(context.Background(), waitBound(t))
+	defer cancel()
+
+	t.Run("exchange", func(t *testing.T) {
+		server := listenLoopback(t)
+		c, err := m.openRequest(ctx, loopback)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		errc := serve(server, []byte("answer"))
+		var sizes []int
+		out, err := c.exchange(ctx, netip.AddrPortFrom(loopback, portOf(server)), []byte("request"), func(b []byte) (bool, error) {
+			sizes = append(sizes, len(b))
+			return string(b) == "answer", nil
+		})
+		if err != nil || out != answered {
+			t.Fatalf("exchange() = %v, %v; want the answer after the oversized datagram", out, err)
+		}
+		if err := <-errc; err != nil {
+			t.Fatal(err)
+		}
+		if len(sizes) != 2 || sizes[0] != oversized {
+			t.Fatalf("accept saw datagrams of %v bytes, want the whole oversized one and the answer", sizes)
+		}
+	})
+	t.Run("SSDP", func(t *testing.T) {
+		server := listenLoopback(t)
+		errc := serve(server, []byte("HTTP/1.1 200 OK\r\nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\nLOCATION: http://127.0.0.1:1/rootDesc.xml\r\n\r\n"))
+		loc, err := ssdpSearch(ctx, m.openRequest, loopback, loopback, portOf(server), false)
+		if err != nil || loc.String() != "http://127.0.0.1:1/rootDesc.xml" {
+			t.Fatalf("ssdpSearch() = %v, %v; want the answer after the oversized datagram", loc, err)
+		}
+		if err := <-errc; err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestExchangeBeforeSending(t *testing.T) {

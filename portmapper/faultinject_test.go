@@ -166,7 +166,7 @@ func TestFaultPortmapRenew(t *testing.T) {
 		if err := release(); !errors.Is(err, errRenewStuck) {
 			t.Fatalf("release() = %v, want errRenewStuck", err)
 		}
-		within(t, "release()", time.Since(start), releaseTimeout+100*time.Millisecond)
+		within(t, "release()", time.Since(start), releaseTimeout+boundSlack)
 		disarm() // the renewal goroutine finishes; Close joins it
 		if err := m.Close(); err != nil {
 			t.Fatalf("Close() = %v", err)

@@ -25,8 +25,7 @@ func TestPacketPanicInjected(t *testing.T) {
 	if reps := c.recv(1, 200*time.Millisecond); len(reps) != 0 {
 		t.Fatal("the panicking packet was answered")
 	}
-	c.send(to, probeOpts{obs: 0})
-	if reps := c.await(1); len(reps) != 1 {
+	if reps := c.exchange(to, probeOpts{obs: 0}, 1); len(reps) != 1 {
 		t.Fatal("the reader stopped after a packet panic")
 	}
 	if st := s.Stats(); st.Panics != 1 || st.DeadListeners != 0 {

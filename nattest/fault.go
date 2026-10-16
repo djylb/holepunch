@@ -100,13 +100,16 @@ func (h *Host) Crash() {
 }
 
 // MarkHandover marks the open socket bound to local as handed over to the
-// application (an unspecified or invalid address matches any address on
-// that port). From then on every call made on it, except through the
-// returned conn, is counted in HostStats.WritesAfterHandover: the library
-// must not touch the socket after it returned it. The
-// application uses the returned conn, which has the same methods as the
-// socket. The lookup is by address, so the mark works even when the library
-// handed the socket out wrapped in its own conn.
+// application: the socket that receives packets sent to local. An
+// unspecified or invalid address matches any socket on that port, the
+// wildcard socket first, then the one bound to the lowest address, in the
+// unspecified address's family first. From then on every call made on it,
+// except through the returned conn, is counted in
+// HostStats.WritesAfterHandover: the library must not touch the socket
+// after it returned it. The application uses the returned conn, which has
+// the same methods as the socket. The lookup is by address, so the mark
+// works even when the library handed the socket out wrapped in its own
+// conn.
 func (h *Host) MarkHandover(local netip.AddrPort) (net.PacketConn, error) {
 	fail := func(err error) error {
 		return &net.OpError{Op: "handover", Net: "udp", Addr: net.UDPAddrFromAddrPort(local), Err: err}
@@ -114,16 +117,8 @@ func (h *Host) MarkHandover(local netip.AddrPort) (net.PacketConn, error) {
 	if h.isClosed() {
 		return nil, fail(net.ErrClosed)
 	}
-	ip := local.Addr().Unmap()
-	anyIP := !ip.IsValid() || ip.IsUnspecified()
 	h.mu.RLock()
-	var found *conn
-	for c := range h.conns {
-		if c.port == local.Port() && (anyIP || !c.ip.IsValid() || c.ip == ip) {
-			found = c
-			break
-		}
-	}
+	found := h.boundLocked(local.Addr().Unmap(), local.Port())
 	h.mu.RUnlock()
 	if found == nil {
 		return nil, fail(syscall.ENOENT)
@@ -131,4 +126,42 @@ func (h *Host) MarkHandover(local netip.AddrPort) (net.PacketConn, error) {
 	found.handover.Store(true)
 	h.stats.markHandover(found.rec)
 	return callerConn{found}, nil
+}
+
+// boundLocked returns the socket MarkHandover means by ip and port; h.mu is
+// held.
+func (h *Host) boundLocked(ip netip.Addr, port uint16) *conn {
+	fams := [2]int{0, 1}
+	if ip.Is6() {
+		fams = [2]int{1, 0}
+	}
+	for _, i := range fams {
+		b := h.ports[i][port]
+		switch {
+		case b == nil:
+		case ip.IsValid() && !ip.IsUnspecified():
+			if (i == 1) != ip.Is6() {
+				continue
+			}
+			if c := b.byIP[ip]; c != nil {
+				return c
+			}
+			if b.wild != nil {
+				return b.wild
+			}
+		case b.wild != nil:
+			return b.wild
+		default:
+			var lowest *conn
+			for a, c := range b.byIP {
+				if lowest == nil || a.Less(lowest.ip) {
+					lowest = c
+				}
+			}
+			if lowest != nil {
+				return lowest
+			}
+		}
+	}
+	return nil
 }

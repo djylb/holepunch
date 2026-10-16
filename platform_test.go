@@ -192,3 +192,36 @@ func (l *familyLog) all() []string {
 	defer l.mu.Unlock()
 	return slices.Clone(l.nets)
 }
+
+// uncomparableNetwork returns its sockets as values of a type == cannot
+// compare, which a Network may do.
+type uncomparableNetwork struct{ Network }
+
+func (n uncomparableNetwork) ListenPacket(ctx context.Context, network string, laddr netip.AddrPort, purpose string) (net.PacketConn, error) {
+	c, err := n.Network.ListenPacket(ctx, network, laddr, purpose)
+	if err != nil {
+		return nil, err
+	}
+	return uncomparableConn{PacketConn: c}, nil
+}
+
+// Whatever its sockets' type, a session hands over open sockets: the
+// session group tells them apart by identity, not by comparing the conns.
+func TestUncomparableConnsHandedOpen(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	ps := &pairScript{w: w, timeouts: testTimeouts()}
+	pr := runPair(t, w, [2]*nattest.NATConfig{prc(), prc()}, ps, func(_ int, o *Options) {
+		o.Network = uncomparableNetwork{o.Network}
+	})
+	defer pr.closeAll()
+	for i, r := range pr.res {
+		if r.err != nil {
+			t.Fatalf("client %d: %v", i, r.err)
+		}
+		to := net.UDPAddrFromAddrPort(r.sess.Result().Path.RemoteAddr)
+		if _, err := r.sess.PacketConn().WriteTo([]byte("x"), to); errors.Is(err, net.ErrClosed) {
+			t.Fatalf("client %d: handed over a closed socket", i)
+		}
+	}
+}

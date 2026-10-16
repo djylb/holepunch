@@ -216,3 +216,26 @@ func TestSocketStatsSTUN(t *testing.T) {
 		t.Fatalf("STUN first bytes counted: %v", s.FirstByteHistogram['a'])
 	}
 }
+
+// TestClassifierAllowRunsUnlocked: Allow is the caller's code and runs
+// without the device's lock, so it may call back into the device.
+func TestClassifierAllowRunsUnlocked(t *testing.T) {
+	n := newNet(t)
+	_, o := observer(t, n, 1)
+	cfg := FullCone()
+	var nat *NAT
+	seen := 0
+	cfg.Classifier = &Classifier{Allow: func([]byte) bool {
+		seen += len(nat.Mappings()) // deadlocks if called under the lock
+		return true
+	}}
+	nat = n.NAT(cfg)
+	c := listen(t, nat.Host(), 4000)
+	for range 3 {
+		send(t, c, addrOf(o), "x")
+		recvNow(t, o)
+	}
+	if seen != 1 {
+		t.Fatalf("Allow ran %d times, want once: the first datagram allows the flow", seen)
+	}
+}

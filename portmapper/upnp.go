@@ -102,16 +102,18 @@ type wanClient interface {
 	GetServiceClient() *goupnp.ServiceClient
 }
 
-// keepServices appends the clients whose control URL is on the host of the
-// description at loc, set up to use hc. A client pointing at another host is
-// dropped, so a device cannot direct the SOAP requests elsewhere.
+// keepServices appends the clients whose control URL is plain http, like the
+// description's, on the host of the description at loc, set up to use hc. A
+// client pointing at another host is dropped, so a device cannot direct the
+// SOAP requests elsewhere; so is one asking for another scheme: a gateway
+// has no certificate the client could verify.
 func keepServices[C wanClient](out []upnpService, cs []C, err error, loc *url.URL, hc *http.Client) []upnpService {
 	if err != nil {
 		return out
 	}
 	for _, c := range cs {
 		sc := c.GetServiceClient()
-		if sc.SOAPClient == nil || sc.SOAPClient.EndpointURL.Hostname() != loc.Hostname() {
+		if sc.SOAPClient == nil || sc.SOAPClient.EndpointURL.Scheme != "http" || sc.SOAPClient.EndpointURL.Hostname() != loc.Hostname() {
 			continue
 		}
 		sc.SOAPClient.HTTPClient = *hc

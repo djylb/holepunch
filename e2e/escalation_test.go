@@ -3,9 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -77,7 +75,11 @@ func TestBackgroundEscalation(t *testing.T) {
 	if suite().level == levelNightly {
 		runs = nightlyRuns
 	}
-	if v, err := strconv.Atoi(os.Getenv(envEscalationRuns)); err == nil && v > 0 {
+	v, err := envCount(envEscalationRuns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v > 0 {
 		runs = v
 	}
 	if runs == 0 {

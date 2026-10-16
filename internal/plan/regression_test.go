@@ -1,6 +1,8 @@
 package plan
 
 import (
+	"math"
+	"math/big"
 	"net/netip"
 	"slices"
 	"testing"
@@ -1376,5 +1378,45 @@ func TestPredictPeerSampleBase(t *testing.T) {
 	// nothing to predict from
 	if p := predictPeer(RoundInput{}, 1, protocol.Traits{}, ip); p.anchor != 0 || len(p.steps) != 1 || p.steps[0] != 1 {
 		t.Fatalf("prediction %+v", p)
+	}
+}
+
+// A rate of other hosts may be any finite float32 a traits update carries.
+// The extrapolated anchor moves by the exact remainder of the rate's move
+// modulo the range — whole turns of the range leave it where it was, and it
+// is the same port on every platform — and the window never outgrows the
+// range.
+func TestPredictPeerHugeVelocity(t *testing.T) {
+	f := protocol.FamilyUDP4
+	a, b := pdfTraits(f), seqTraits(f)
+	b.PortAnchorMs = 1000
+	var p DefaultPlanner
+	cl := p.Classify(classifyInput(a, b))
+	// rest is |v| modulo the range, exactly: every float32 this large is an
+	// integer, and the move over the one second below is v itself.
+	rest := func(v float32) int {
+		n, _ := new(big.Float).SetFloat64(math.Abs(float64(v))).Int(nil)
+		return int(new(big.Int).Mod(n, big.NewInt(portRange)).Int64())
+	}
+	turns := float32(portRange) * float32(1<<60) // whole turns of the range a second
+	for _, vel := range []float32{turns, -turns, math.MaxFloat32, -math.MaxFloat32, 1e30, -3e25} {
+		want := wrapPort(int(b.PortAnchor) + rest(vel))
+		if vel < 0 {
+			want = wrapPort(int(b.PortAnchor) - rest(vel))
+		}
+		if (vel == turns || vel == -turns) && want != b.PortAnchor {
+			t.Fatalf("setup: %g is no whole number of turns", vel)
+		}
+		b.PortVelocity = vel
+		in := roundInput(cl, a, b, 1, nil)
+		in.FireAt = 2 * time.Second // one second after the anchor
+		if pr := predictPeer(in, 1, b, b.Observed.Addr()); pr.anchor != want || pr.minSpan != portRange {
+			t.Errorf("velocity %g: anchor %d, window %d; want anchor %d and the whole range", vel, pr.anchor, pr.minSpan, want)
+		}
+		dec := p.Round(in)
+		if st := stageOf(dec.Sides[0][0], protocol.StagePredict); st == nil || st.Anchor != want {
+			t.Errorf("velocity %g: predict stage %+v, want anchor %d", vel, st, want)
+		}
+		assertEmittable(t, dec)
 	}
 }

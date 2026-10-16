@@ -127,6 +127,11 @@ func (s *Session) sendTargetsLocked(p int, a protocol.Assist, now time.Duration)
 	if !a.Family.Valid() {
 		return argumentError("family", "unknown family %q", a.Family)
 	}
+	if err := out.Validate(); err != nil {
+		// Only Meta, the caller's pass-through, can be malformed here: it
+		// would fail the write as if the link were busy.
+		return argumentError("meta", "%v", err)
+	}
 	for _, t := range a.Targets {
 		if len(out.Targets) < maxTargets && s.admitDirectLocked(q, a.Family, t, st.round, now) != admitRejected {
 			out.Targets = append(out.Targets, t)
@@ -134,7 +139,7 @@ func (s *Session) sendTargetsLocked(p int, a protocol.Assist, now time.Duration)
 	}
 	if w := a.Window; w != nil && w.Lo > 0 && w.Hi >= w.Lo && s.admitIPLocked(q, a.Family, w.IP, st.round, now) {
 		win := *w
-		win.Hi = min(win.Hi, win.Lo+maxWindowWidth)
+		win.Hi = uint16(min(int(win.Hi), int(win.Lo)+maxWindowWidth)) // Lo + 63 may pass 65535
 		out.Window = &win
 	}
 	if len(out.Targets) == 0 && out.Window == nil {
@@ -203,7 +208,8 @@ func (s *Session) chargePushLocked(p, fi, n int, now time.Duration) {
 // a.Family, a.Targets, a.Window and a.Meta are used. Errors: ErrInvalidRole,
 // ErrSessionDone, ErrBusy (round limit, no budget left for the targets, or
 // the link's queue), and a *protocol.ValidationError with Reason
-// invalid_argument (not punching, nothing admitted).
+// invalid_argument (not punching, an unknown family or a malformed Meta,
+// nothing admitted).
 func (s *Session) Inject(target protocol.Role, a protocol.Assist) error {
 	p, ok := roleIndex(target)
 	if !ok {

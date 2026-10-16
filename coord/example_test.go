@@ -55,17 +55,20 @@ func Example() {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	defer func() { _ = co.Close() }()
 
 	cert, err := tls.LoadX509KeyPair("server.pem", "server.key")
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	l, err := tls.Listen("tcp", ":4343", &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}})
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	defer func() { _ = l.Close() }()
 

@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/djylb/holepunch/internal/faultinject"
@@ -128,10 +129,14 @@ func truncProgressDetail(s string) string {
 // full. A panicking callback is recovered and counted; the session goes on.
 // When the session ends, delivery continues for at most 100 ms and the rest
 // is dropped, so the callback is never called after AttachSession returns.
+// A callback that blocks past the join bound of the cleanup leaves the
+// goroutine running when AttachSession returns; the sink is closed by then,
+// and that goroutine calls the callback no more.
 type progressSink struct {
-	rt   *runtime
-	fn   func(protocol.Progress)
-	wake chan struct{}
+	rt     *runtime
+	fn     func(protocol.Progress)
+	wake   chan struct{}
+	closed atomic.Bool // set by finish once the session group is closed
 
 	mu sync.Mutex
 	q  []protocol.Progress
@@ -207,6 +212,10 @@ func (s *progressSink) drain() {
 }
 
 func (s *progressSink) deliver(p protocol.Progress) {
+	if s.closed.Load() {
+		s.rt.cnt.progressDropped.Add(1)
+		return
+	}
 	if pe := life.Safe("onprogress", func() {
 		if err := faultinject.Point(fiProgressDeliver); err != nil {
 			panic(err)

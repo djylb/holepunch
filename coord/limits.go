@@ -33,12 +33,21 @@ func (b *bucket) refill(now time.Time) {
 // take removes n tokens if available; otherwise it reports how long until
 // they would be.
 func (b *bucket) take(now time.Time, n float64) (bool, time.Duration) {
+	ok, wait := b.check(now, n)
+	if ok && !b.unlimited() {
+		b.tokens -= n
+	}
+	return ok, wait
+}
+
+// check reports whether n tokens are available, or how long until they
+// would be, without taking them.
+func (b *bucket) check(now time.Time, n float64) (bool, time.Duration) {
 	if b.unlimited() {
 		return true, 0
 	}
 	b.refill(now)
 	if b.tokens >= n {
-		b.tokens -= n
 		return true, 0
 	}
 	if b.rate == 0 {
@@ -175,8 +184,8 @@ func busyError(dim string, wait time.Duration) error {
 // reserve admits a new session: per key the initiator concurrency and rate
 // and the responder concurrency (both keys are reserved before the
 // provider is told), then the global count, pending count and rate. It is
-// all or nothing; on refusal it returns the refused dimension and an ErrBusy
-// error.
+// all or nothing — a refusal takes no rate token either; on refusal it
+// returns the refused dimension and an ErrBusy error.
 func (l *limiter) reserve(now time.Time, keys [2]string) (q quota, dim string, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -193,6 +202,7 @@ func (l *limiter) reserve(now time.Time, keys [2]string) (q quota, dim string, e
 	refuse := func(dim string, wait time.Duration) (quota, string, error) {
 		return quota{}, dim, busyError(dim, wait)
 	}
+	var keyRate *bucket // the initiator key's rate, taken with the global one
 	if k := keys[keyInitiator]; k != "" {
 		e := l.entryLocked(keyOf(keyInitiator, k), now)
 		switch {
@@ -201,11 +211,12 @@ func (l *limiter) reserve(now time.Time, keys [2]string) (q quota, dim string, e
 		case l.lim.MaxPerInitiatorKey >= 0 && e.active >= l.lim.MaxPerInitiatorKey:
 			return refuse("initiator_key", time.Second)
 		}
-		if ok, wait := e.newRate.take(now, 1); !ok {
+		if ok, wait := e.newRate.check(now, 1); !ok {
 			return refuse("initiator_key_rate", wait)
 		}
 		l.holdLocked(e)
 		held = append(held, e)
+		keyRate = &e.newRate
 	}
 	if k := keys[keyResponder]; k != "" {
 		e := l.entryLocked(keyOf(keyResponder, k), now)
@@ -226,6 +237,9 @@ func (l *limiter) reserve(now time.Time, keys [2]string) (q quota, dim string, e
 	}
 	if ok, wait := l.newRate.take(now, 1); !ok {
 		return refuse("rate", wait)
+	}
+	if keyRate != nil {
+		keyRate.take(now, 1) // checked above, under the same lock and instant
 	}
 	l.active++
 	l.pending++

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -70,16 +71,17 @@ type Result struct {
 // goroutine, feed it from the read pumps with Deliver, DeliverSTUN and
 // NoteUnreachable, and optionally call Hairpin after Run returned.
 type Prober struct {
-	spec       Spec
-	clk        clock.Clock
-	role       udpwire.Role
-	primary    SocketHandle
-	primaryID  uint8
-	siblings   []sibling
-	openSecond func() (SocketHandle, error)
-	table      *nat.ObsTable
-	observers  []nat.Observer
-	setupErr   string // internal detail when New got an unusable argument
+	spec        Spec
+	clk         clock.Clock
+	role        udpwire.Role
+	primary     SocketHandle
+	primaryID   uint8
+	siblings    []sibling
+	openSecond  func() (SocketHandle, error)
+	table       *nat.ObsTable
+	observers   []nat.Observer
+	stunServers []stunServer // the family's STUN servers; read-only after New
+	setupErr    string       // internal detail when New got an unusable argument
 
 	inbox chan inbound
 	wake  chan struct{}
@@ -156,6 +158,7 @@ func New(spec Spec, primary SocketHandle, siblings []SocketHandle, openSecond fu
 		}
 	}
 	p.observers = nat.Observers(spec.Family, spec.Probe.Observers)
+	p.stunServers = stunServers(spec)
 	p.table = nat.NewTable(spec.Family, socks, p.observers)
 	return p
 }
@@ -210,17 +213,22 @@ func (p *Prober) Deliver(sock uint8, from netip.AddrPort, h *udpwire.Header, t *
 }
 
 // DeliverSTUN hands the prober a STUN message (see IsSTUN) received on
-// socket sock. Only Binding Success responses on the primary socket are
-// queued.
+// socket sock. Only Binding Success responses from one of the family's STUN
+// servers on the primary socket are queued: STUN is unauthenticated, and
+// any other sender must not take the inbox from the observers' replies.
 func (p *Prober) DeliverSTUN(sock uint8, from netip.AddrPort, pkt []byte, at time.Time) bool {
 	if p == nil || !p.active.Load() || sock != p.primaryID {
+		return false
+	}
+	from = unmap(from)
+	if !slices.ContainsFunc(p.stunServers, func(sv stunServer) bool { return sv.addr == from }) {
 		return false
 	}
 	txid, mapped, ok := parseSTUN(pkt)
 	if !ok {
 		return false
 	}
-	return p.enqueue(inbound{stun: true, sock: sock, from: unmap(from), txid: txid, mapped: mapped, at: at})
+	return p.enqueue(inbound{stun: true, sock: sock, from: from, txid: txid, mapped: mapped, at: at})
 }
 
 func (p *Prober) enqueue(in inbound) bool {

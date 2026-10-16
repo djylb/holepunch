@@ -69,12 +69,20 @@ func Example() {
 	defer cancel()
 	var (
 		wg       sync.WaitGroup
+		ends     [2]net.Conn
 		sessions [2]*holepunch.Session
 		errs     [2]error
 	)
+	defer func() {
+		for _, c := range ends {
+			if c != nil {
+				_ = c.Close()
+			}
+		}
+	}()
 	for i, role := range []protocol.Role{protocol.RoleInitiator, protocol.RoleResponder} {
 		clientEnd, serverEnd := n.Pipe(nattest.PipeConfig{A: hosts[i], B: server})
-		defer func() { _ = clientEnd.Close() }()
+		ends[i] = clientEnd
 		err := sess.Attach(role, serverEnd, coord.AttachOptions{Security: protocol.ControlSecurityInsecureForTesting})
 		if err != nil {
 			log.Fatal(err)

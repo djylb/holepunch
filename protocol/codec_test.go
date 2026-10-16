@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -251,6 +253,154 @@ func TestDecodePayloadRules(t *testing.T) {
 			t.Errorf("%s: Decode = %v, want %v", tc.name, err, tc.err)
 		}
 	}
+}
+
+// clientLists are the bounded lists of the messages a client sends: the
+// path to each ("[]" after a list that leads to it) and its limit.
+func clientLists() []struct {
+	typ  MessageType
+	path string
+	max  int
+} {
+	return []struct {
+		typ  MessageType
+		path string
+		max  int
+	}{
+		{MsgProbeReport, "control.features", maxFeatures},
+		{MsgProbeReport, "caps.families", maxCapsFamilies},
+		{MsgProbeReport, "caps.port_map", maxPortMapMethods},
+		{MsgProbeReport, "families", maxReportFamilies},
+		{MsgProbeReport, "families[].sockets", maxReportSockets},
+		{MsgProbeReport, "families[].sockets[].rows", maxReportRows},
+		{MsgProbeReport, "families[].filters", maxReportFilters},
+		{MsgProbeReport, "families[].stun", maxReportSTUNRows},
+		{MsgProbeReport, "families[].local_addrs", maxLocalAddrs},
+		{MsgProbeReport, "families[].overlay", maxOverlayAddrs},
+		{MsgPunchReady, "families", maxSides},
+		{MsgRoundResult, "families", maxOutcomes},
+		{MsgRoundResult, "families[].seen_from", maxSeenFrom},
+		{MsgPunchResult, "extra_paths", MaxPaths - 1},
+		{MsgPunchResult, "traits", maxTraitsUpdates},
+		{MsgPunchResult, "warn", maxWarn},
+	}
+}
+
+// nestedList is a payload whose list at path (as in clientLists) holds n
+// null elements: "a[].b" gives {"a":[{"b":[null,null]}]}.
+func nestedList(path string, n int) string {
+	var open, closing []string
+	for _, k := range strings.Split(path, ".") {
+		if name, ok := strings.CutSuffix(k, "[]"); ok {
+			open, closing = append(open, `{"`+name+`":[`), append([]string{"]}"}, closing...)
+		} else {
+			open, closing = append(open, `{"`+k+`":`), append([]string{"}"}, closing...)
+		}
+	}
+	open[len(open)-1] += "["
+	closing[0] = "]}"
+	return strings.Join(open, "") + strings.TrimSuffix(strings.Repeat("null,", n), ",") + strings.Join(closing, "")
+}
+
+// TestDecodeBoundsClientLists: a client's list longer than Validate allows
+// is refused before it is decoded, so a frame of tiny elements ("null", "{}")
+// cannot make the server allocate many times its size, whatever the case or
+// escaping of the keys; a list at its limit, an unknown list and the lists
+// of server messages (truncated, not refused) are left to decoding.
+func TestDecodeBoundsClientLists(t *testing.T) {
+	for _, l := range clientLists() {
+		detail := strings.ReplaceAll(l.path, "[]", "[0]")
+		at := nestedList(l.path, l.max)
+		if err := scanPayload(l.typ, []byte(at)); err != nil {
+			t.Errorf("%s %s at its limit: %v", l.typ, detail, err)
+		}
+		over := nestedList(l.path, (l.typ.MaxPayload()-len(nestedList(l.path, 0)))/len("null,"))
+		var verr *ValidationError
+		if _, err := Decode(controlwire.Frame{Type: controlwire.Type(l.typ), Payload: []byte(over)}); !errors.As(err, &verr) ||
+			verr.Reason != ReasonProtocolViolation || verr.Detail != detail {
+			t.Errorf("%s %s over its limit: %v, want detail %q", l.typ, detail, err, detail)
+		}
+		frame := controlwire.Frame{Type: controlwire.Type(l.typ), Payload: []byte(over)}
+		if alloc := allocBytes(func() { _, _ = Decode(frame) }); alloc > 4<<10 {
+			t.Errorf("%s %s: decoding a %d-byte frame allocated %d bytes", l.typ, detail, len(over), alloc)
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		typ     MessageType
+		payload string
+		detail  string // "" = the scan lets it through
+	}{
+		{"case_folded", MsgPunchResult, `{"WARN":[1,2,3,4,5,6,7,8,9]}`, "warn"},
+		{"escaped", MsgPunchResult, `{"w\u0061rn":[1,2,3,4,5,6,7,8,9]}`, "warn"},
+		// Each occurrence of a repeated key is decoded before the last one
+		// replaces it, so each must be within the limit.
+		{"repeated_key_over_first", MsgPunchResult, `{"warn":[1,2,3,4,5,6,7,8,9],"warn":[]}`, "warn"},
+		{"repeated_key_within", MsgPunchResult, `{"warn":[1,2,3,4,5,6,7,8],"Warn":[1,2,3,4,5,6,7,8]}`, ""},
+		{"long_s_and_kelvin", MsgProbeReport, `{"families":[{"ſockets":[{"rows":[]}]},{"ſOCKETS":[{"rows":[]}],"local_addrs":[]}],"Keep":[1]}`, ""},
+		{"long_s_over", MsgProbeReport, `{"families":[{"ſockets":[0,0,0,0,0,0,0]}]}`, "families[0].sockets"},
+		{"kelvin_over", MsgProbeReport, `{"families":[{"SOC\u212AETS":[0,0,0,0,0,0,0]}]}`, "families[0].sockets"},
+		{"nested_index", MsgProbeReport, `{"families":[{},{"sockets":[{},{},{"rows":[` + strings.Repeat("0,", 16) + `0]}]}]}`, "families[1].sockets[2].rows"},
+		{"not_a_field", MsgPunchResult, `{"warn_":[1,2,3,4,5,6,7,8,9],"wärn":[1,2,3,4,5,6,7,8,9],"w\"rn":[1,2,3,4,5,6,7,8,9]}`, ""},
+		{"unknown_list", MsgRoundResult, `{"future":[` + strings.Repeat("0,", 99) + `0],"families":[]}`, ""},
+		{"commas_in_strings", MsgPunchResult, `{"warn":["a,b,c,d,e,f,g,h,i,j", "[,,,,,,,,]"]}`, ""},
+		{"nested_unknown_object", MsgPunchResult, `{"x":{"warn":[1,2,3,4,5,6,7,8,9]}}`, ""},
+		{"server_lists_truncated", MsgProbeSummary, `{"plan":{"round1":{"sides":[{"stages":[` + strings.Repeat("{},", 99) + `{}]}]}}}`, ""},
+	} {
+		err := scanPayload(tc.typ, []byte(tc.payload))
+		var verr *ValidationError
+		switch {
+		case tc.detail == "" && err != nil:
+			t.Errorf("%s: %v, want no error", tc.name, err)
+		case tc.detail != "" && (!errors.As(err, &verr) || verr.Detail != tc.detail):
+			t.Errorf("%s: %v, want detail %q", tc.name, err, tc.detail)
+		}
+	}
+	report := maximalReport()
+	f, err := Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(f); err != nil {
+		t.Fatalf("a report with every list full: %v", err)
+	}
+	if n := testing.AllocsPerRun(10, func() { _ = scanPayload(MsgProbeReport, f.Payload) }); n != 0 {
+		t.Fatalf("scanPayload allocated %v times", n)
+	}
+}
+
+// allocBytes is the average number of bytes f allocates.
+func allocBytes(f func()) uint64 {
+	const runs = 20
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for range runs {
+		f()
+	}
+	runtime.ReadMemStats(&after)
+	return (after.TotalAlloc - before.TotalAlloc) / runs
+}
+
+// maximalReport is a valid probe_report with every list at its limit.
+func maximalReport() ProbeReport {
+	m := sample[ProbeReport]()
+	m.Control.Features = features(maxFeatures)
+	m.Caps.Families = []FamilyCaps{{Family: FamilyUDP4}, {Family: FamilyUDP6}}
+	m.Caps.PortMap = []PortMapMethod{PortMapPCP, PortMapNATPMP, PortMapUPnP}
+	fam := func(f Family, a netip.Addr) FamilyReport {
+		local := netip.AddrPortFrom(a, 5000)
+		row := RowReport{Observer: 1, Observed: local, FirstSeq: 1, SentMs: 2}
+		return FamilyReport{Family: f,
+			Sockets:    repeat(SocketReport{Kind: SocketPrimary, Local: local, Rows: repeat(row, maxReportRows)}, maxReportSockets),
+			Filters:    make([]FilterReport, maxReportFilters),
+			STUN:       repeat(row, maxReportSTUNRows),
+			LocalAddrs: repeat(a, maxLocalAddrs),
+			Overlay:    repeat(a, maxOverlayAddrs),
+		}
+	}
+	m.Families = []FamilyReport{fam(FamilyUDP4, ip("192.0.2.1")), fam(FamilyUDP6, ip("2001:db8::1"))}
+	return m
 }
 
 func TestMarshalLimitsAndEscaping(t *testing.T) {

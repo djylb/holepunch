@@ -70,6 +70,7 @@ type simResult struct {
 	log                    []string
 	iPath, rPath           int
 	iDoneAt, rDoneAt       time.Duration
+	rConfirmAt             time.Duration
 	iConfirms, rConfirms   int
 	iHandovers, rHandovers int
 	upperBeforeR           int // upper-layer datagrams R's library read before it handed over
@@ -148,6 +149,7 @@ func runSim(cfg simCfg, rng *rand.Rand) simResult {
 				send(now, true, pathOf(a, false), a.Kind, false, a.Epoch)
 			case Confirm:
 				res.rConfirms++
+				res.rConfirmAt = now.Sub(base)
 			case HandOver:
 				res.rHandovers++
 				res.rDone, res.rPath, res.rEpoch, res.rBy, res.rDoneAt = true, pathOf(a, false), a.Epoch, a.ConfirmedBy, now.Sub(base)

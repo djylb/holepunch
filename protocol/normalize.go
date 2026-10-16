@@ -10,7 +10,8 @@ import (
 // is not a clamp); clamps of a plan are reported in
 // punch_ready.families[].clamped and round_result. The receiver is never
 // written, nor anything it shares: a slice, map or pointed-to value that
-// changes is copied first.
+// changes is copied first, and a truncated list keeps no spare capacity, so
+// that appending to the copy cannot write the receiver's elements either.
 const (
 	maxDelayMs       = 2000
 	maxSendDelayMs   = 3000
@@ -113,7 +114,7 @@ func (m Progress) Normalize() (Progress, bool) {
 func (m Assist) Normalize() (Assist, bool) {
 	c := false
 	if len(m.Targets) > maxAssistTargets {
-		m.Targets, c = m.Targets[:maxAssistTargets], true
+		m.Targets, c = m.Targets[:maxAssistTargets:maxAssistTargets], true
 	}
 	if w := m.Window; w != nil && w.Hi > w.Lo && w.Hi-w.Lo > maxPortWindowWidth {
 		win := *w
@@ -198,16 +199,22 @@ func (s FamilySide) normalize(l ClassLimits) (FamilySide, bool) {
 
 // clampFresh keeps the side's sockets with its fresh sockets within limit:
 // the fresh stage gives up sockets first; with no room left for even one
-// fresh socket the side's own sockets make it.
+// fresh socket the side's own sockets make it. A limit of 1 leaves one
+// socket of each, the least a side with a fresh stage runs with.
 func (s FamilySide) clampFresh(limit int) (FamilySide, bool) {
 	for i, st := range s.Stages {
 		if st.Kind != StageFresh || int(s.Sockets)+int(st.Count) <= limit {
 			continue
 		}
-		if int(s.Sockets) >= limit {
-			s.Sockets = uint16(max(limit-1, 1))
+		sockets := s.Sockets
+		if int(sockets) >= limit {
+			sockets = uint16(max(limit-1, 1))
 		}
-		st.Count = uint16(max(limit-int(s.Sockets), 1))
+		count := uint16(max(limit-int(sockets), 1))
+		if sockets == s.Sockets && count == st.Count {
+			return s, false
+		}
+		s.Sockets, st.Count = sockets, count
 		s.Stages = slices.Clone(s.Stages)
 		s.Stages[i] = st
 		return s, true
@@ -218,10 +225,10 @@ func (s FamilySide) clampFresh(limit int) (FamilySide, bool) {
 func (s Stage) normalize() (Stage, bool) {
 	c := false
 	if len(s.Targets) > maxStageTargets {
-		s.Targets, c = s.Targets[:maxStageTargets], true
+		s.Targets, c = s.Targets[:maxStageTargets:maxStageTargets], true
 	}
 	if len(s.Steps) > maxSteps {
-		s.Steps, c = s.Steps[:maxSteps], true
+		s.Steps, c = s.Steps[:maxSteps:maxSteps], true
 	}
 	c = clampTo(&s.Span, maxSpanCount) || c
 	c = clampTo(&s.Count, maxSpanCount) || c

@@ -96,8 +96,7 @@ func mpExchange(pairs []mpPair, maxPaths [2]int, loss float64, seed uint64) *mpR
 		}
 		return -1
 	}
-	var apply func(fromInit bool, now time.Time, acts []Action)
-	apply = func(fromInit bool, now time.Time, acts []Action) {
+	apply := func(fromInit bool, now time.Time, acts []Action) {
 		for _, a := range acts {
 			switch a.Kind {
 			case SendNominate, SendAccept, SendReady, SendAck:

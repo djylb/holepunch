@@ -72,7 +72,7 @@ func FuzzIntercept(f *testing.F) {
 // The client runtime links neither the server side nor a port-mapping
 // implementation.
 func TestDependencies(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", ".").Output()
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", ".").Output()
 	if err != nil {
 		t.Skip("go list unavailable:", err)
 	}

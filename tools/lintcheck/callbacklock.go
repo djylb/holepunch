@@ -5,11 +5,56 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strings"
 )
 
 // lockSet maps a held lock, keyed by the rendered receiver expression, to
-// the position of the Lock call that took it.
+// the position of the Lock call that took it. A key with the heldAtReturn
+// prefix marks a lock still held when the function returns, because its
+// Unlock is deferred or because the caller of a function literal holds it
+// across the call: the calls deferred from then on run with it held.
 type lockSet map[string]token.Pos
+
+const heldAtReturn = "defer "
+
+// locks returns the held locks, sorted, without the heldAtReturn marks.
+func (s lockSet) locks() []string {
+	var out []string
+	for k := range s {
+		if !strings.HasPrefix(k, heldAtReturn) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// atReturn returns the locks held while a call deferred now runs: those
+// marked as held at return.
+func (s lockSet) atReturn() lockSet {
+	out := lockSet{}
+	for k, pos := range s {
+		if lock, ok := strings.CutPrefix(k, heldAtReturn); ok {
+			out[lock] = pos
+		}
+	}
+	return out
+}
+
+// entered returns the state a function literal starts with when it runs
+// synchronously under s: the held locks, each marked as held at the
+// literal's return. The marks of the enclosing function concern that
+// function's return and are dropped.
+func (s lockSet) entered() lockSet {
+	out := lockSet{}
+	for k, pos := range s {
+		if !strings.HasPrefix(k, heldAtReturn) {
+			out[k] = pos
+			out[heldAtReturn+k] = pos
+		}
+	}
+	return out
+}
 
 func (s lockSet) clone() lockSet {
 	out := make(lockSet, len(s))
@@ -108,10 +153,9 @@ func (lf *lockFlow) stmt(s ast.Stmt, held lockSet) (lockSet, bool) {
 	case *ast.BranchStmt:
 		return lf.branch(s, held)
 	case *ast.GoStmt:
-		lf.laterCall(s.Call, held)
+		lf.goCall(s.Call, held)
 	case *ast.DeferStmt:
-		// A deferred Unlock keeps the lock held to the end of the function.
-		lf.laterCall(s.Call, held)
+		lf.deferCall(s.Call, held)
 	case *ast.IfStmt:
 		h := held.clone()
 		if s.Init != nil {
@@ -187,7 +231,7 @@ func (lf *lockFlow) branch(s *ast.BranchStmt, held lockSet) (lockSet, bool) {
 // loopExit is the state after a loop: it may run zero times, end its body
 // normally or be left by break; continue leads back to the condition.
 func loopExit(t *jumpTarget, entry, body lockSet, bodyTerm bool) lockSet {
-	states := append(t.exits, entry)
+	states := append([]lockSet{entry}, t.exits...)
 	if !bodyTerm {
 		states = append(states, body)
 	}
@@ -251,15 +295,89 @@ func (lf *lockFlow) clauses(label string, body *ast.BlockStmt, h lockSet, isSele
 	return merge(h, outs, terms, t.exits)
 }
 
-// laterCall handles go and defer: the function value and arguments are
-// evaluated now, the call runs later under locks this analysis cannot know.
-func (lf *lockFlow) laterCall(call *ast.CallExpr, held lockSet) {
+// goCall handles a go statement: the function value and arguments are
+// evaluated now, the call runs on another goroutine, under none of the
+// caller's locks.
+func (lf *lockFlow) goCall(call *ast.CallExpr, held lockSet) {
 	if fl, ok := ast.Unparen(call.Fun).(*ast.FuncLit); ok {
 		lf.ps.lockBody(fl.Body, lockSet{})
 	} else if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 		lf.expr(sel.X, held)
 	}
 	lf.exprs(call.Args, held)
+}
+
+// deferCall handles a defer statement. The function value and arguments are
+// evaluated now; the call, and the function literals passed to it, run when
+// the function returns, before the Unlocks deferred earlier, so under those
+// locks. A deferred Unlock keeps its lock held to the end of the function
+// and marks it for the calls deferred after it; so does a deferred function
+// literal that unlocks a held lock. A deferred Lock (x.Unlock(); defer
+// x.Lock()) clears the mark: the calls deferred after it run before it, when
+// the lock must be free.
+func (lf *lockFlow) deferCall(call *ast.CallExpr, held lockSet) {
+	fl, isLit := ast.Unparen(call.Fun).(*ast.FuncLit)
+	switch fn := ast.Unparen(call.Fun).(type) {
+	case *ast.SelectorExpr:
+		lf.expr(fn.X, held)
+		if key, unlock := unlockOf(call); unlock {
+			if pos, ok := held[key]; ok {
+				held[heldAtReturn+key] = pos
+			}
+			return
+		}
+		if len(call.Args) == 0 && (fn.Sel.Name == "Lock" || fn.Sel.Name == "RLock") {
+			delete(held, heldAtReturn+types.ExprString(fn.X))
+			return
+		}
+	case *ast.FuncLit, *ast.Ident:
+	default:
+		lf.expr(fn, held)
+	}
+	run := held.atReturn()
+	if !isLit {
+		lf.args(call, held, run)
+		lf.reportHeld(call, run)
+		return
+	}
+	// The literal starts under run, which stays held at its return, and under
+	// the held locks it releases itself.
+	body := run.entered()
+	for _, key := range unlocksIn(fl.Body) {
+		if pos, ok := held[key]; ok {
+			body[key] = pos
+			held[heldAtReturn+key] = pos
+		}
+	}
+	lf.exprs(call.Args, held)
+	lf.ps.lockBody(fl.Body, body)
+}
+
+// unlockOf returns the lock an Unlock or RUnlock call releases.
+func unlockOf(call *ast.CallExpr) (string, bool) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || len(call.Args) != 0 || sel.Sel.Name != "Unlock" && sel.Sel.Name != "RUnlock" {
+		return "", false
+	}
+	return types.ExprString(sel.X), true
+}
+
+// unlocksIn returns the locks a function body releases, not counting nested
+// function literals.
+func unlocksIn(body *ast.BlockStmt) []string {
+	var out []string
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.CallExpr:
+			if key, ok := unlockOf(n); ok {
+				out = append(out, key)
+			}
+		}
+		return true
+	})
+	return out
 }
 
 func (lf *lockFlow) exprs(list []ast.Expr, held lockSet) {
@@ -289,34 +407,17 @@ func (lf *lockFlow) expr(n ast.Node, held lockSet) {
 }
 
 func (lf *lockFlow) call(call *ast.CallExpr, held lockSet) {
-	async := false
 	switch fn := ast.Unparen(call.Fun).(type) {
 	case *ast.FuncLit: // called on the spot
 		lf.exprs(call.Args, held)
-		lf.ps.lockBody(fn.Body, held.clone())
+		lf.ps.lockBody(fn.Body, held.entered())
 		return
 	case *ast.SelectorExpr:
 		lf.expr(fn.X, held)
-		async = fn.Sel.Name == "Go" || fn.Sel.Name == "AfterFunc"
-	case *ast.Ident:
-		async = fn.Name == "AfterFunc"
 	default:
 		lf.expr(call.Fun, held)
 	}
-	// Function literals passed to an ordinary call are assumed to run
-	// synchronously under the caller's locks (life.Safe, sort.Slice);
-	// Go and AfterFunc run theirs later.
-	for _, arg := range call.Args {
-		if fl, ok := ast.Unparen(arg).(*ast.FuncLit); ok {
-			if async {
-				lf.ps.lockBody(fl.Body, lockSet{})
-			} else {
-				lf.ps.lockBody(fl.Body, held.clone())
-			}
-			continue
-		}
-		lf.expr(arg, held)
-	}
+	lf.args(call, held, held)
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && len(call.Args) == 0 {
 		key := types.ExprString(sel.X)
 		switch sel.Sel.Name {
@@ -330,15 +431,41 @@ func (lf *lockFlow) call(call *ast.CallExpr, held lockSet) {
 			return
 		}
 	}
-	if len(held) == 0 {
+	lf.reportHeld(call, held)
+}
+
+// args analyses the arguments of call, evaluated under held. Function
+// literals passed to an ordinary call are assumed to run synchronously, when
+// the call runs, under run (life.Safe, sort.Slice); Go and AfterFunc run
+// theirs later, under unknown locks.
+func (lf *lockFlow) args(call *ast.CallExpr, held, run lockSet) {
+	async := false
+	switch fn := ast.Unparen(call.Fun).(type) {
+	case *ast.SelectorExpr:
+		async = fn.Sel.Name == "Go" || fn.Sel.Name == "AfterFunc"
+	case *ast.Ident:
+		async = fn.Name == "AfterFunc"
+	}
+	for _, arg := range call.Args {
+		if fl, ok := ast.Unparen(arg).(*ast.FuncLit); ok {
+			if async {
+				lf.ps.lockBody(fl.Body, lockSet{})
+			} else {
+				lf.ps.lockBody(fl.Body, run.entered())
+			}
+			continue
+		}
+		lf.expr(arg, held)
+	}
+}
+
+// reportHeld reports call when it invokes a callback while a lock is held.
+func (lf *lockFlow) reportHeld(call *ast.CallExpr, held lockSet) {
+	keys := held.locks()
+	if len(keys) == 0 {
 		return
 	}
 	if name := lf.ps.callbackName(call); name != "" {
-		keys := make([]string, 0, len(held))
-		for k := range held {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
 		lf.ps.c.report(call.Pos(), ruleCallbackLock, "callback %s called while holding %s (locked at %s); copy what it needs under the lock, unlock, then call", name, keys[0], lf.ps.c.where(held[keys[0]]))
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // stackMarkers are substrings that only appear in a goroutine stack dump.
@@ -33,10 +34,9 @@ func TestSafeReturnsNilWithoutPanic(t *testing.T) {
 }
 
 func TestSafeRecoversRuntimeErrors(t *testing.T) {
-	err := Safe("nil-map", func() {
-		var m map[string]int
-		m["x"] = 1
-	})
+	var m map[string]int
+	// The assignment to a nil map is the runtime error under test.
+	err := Safe("nil-map", func() { assign(m) })
 	var perr *PanicError
 	if !errors.As(err, &perr) || perr.Where() != "nil-map" {
 		t.Fatalf("Safe = %v", err)
@@ -98,10 +98,18 @@ func TestPanicValueSummary(t *testing.T) {
 	if got := capturePanic(t, string([]byte{'a', 0xff, 'b'})).Error(); !strings.HasSuffix(got, "a\uFFFDb") {
 		t.Fatalf("invalid UTF-8 not repaired: %q", got)
 	}
+	// Each repaired byte grows to a 3-byte replacement character; the bound
+	// holds for the repaired text.
+	invalid := capturePanic(t, strings.Repeat("a\xff", maxPanicText)).Error()
+	if n := len(invalid); n > len("panic in cb:user: ")+maxPanicText+len("...") || !utf8.ValidString(invalid) {
+		t.Fatalf("summary of invalid UTF-8 is %d bytes (valid %v), over the bound", n, utf8.ValidString(invalid))
+	}
 	if got := capturePanic(t, panickyStringer{}).Error(); !strings.Contains(got, "String exploded") {
 		t.Fatalf("unprintable value = %q", got)
 	}
 }
+
+func assign(m map[string]int) { m["x"] = 1 }
 
 type panickyStringer struct{}
 

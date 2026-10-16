@@ -345,14 +345,17 @@ func (s *Session) acquire() bool {
 }
 
 // release drops a reference; the last one closes Done and delivers the
-// Result (EvClosed through the event queue, OnResult directly).
+// Result (EvClosed through the event queue, OnResult directly). The
+// coordinator counts the session until the Result is delivered, so that
+// Close neither stops the event dispatcher before EvClosed is queued nor
+// returns while OnResult runs.
 func (s *Session) release() {
 	if s.refs.Add(-1) != 0 {
 		return
 	}
 	res := s.result.Load()
 	close(s.done)
-	s.c.sessionGone()
+	defer s.c.sessionGone()
 	s.c.emit(Event{Kind: EvClosed, At: res.Timings.Closed, SessionID: s.id, Code: res.Code, Detail: res.Detail,
 		Labels: s.labels, Result: res})
 	if fn := s.c.cfg.OnResult; fn != nil {

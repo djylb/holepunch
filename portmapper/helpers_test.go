@@ -245,6 +245,10 @@ func waitPending(t *testing.T, fc *clock.Fake, n int) {
 	}
 }
 
+// boundSlack is what a test allows beyond a documented time bound for the
+// scheduling delays of a loaded machine.
+const boundSlack = 500 * time.Millisecond
+
 // within fails the test if d exceeds limit.
 func within(t *testing.T, what string, d, limit time.Duration) {
 	t.Helper()

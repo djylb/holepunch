@@ -7,9 +7,11 @@ package controlwire
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,13 +48,15 @@ func TestWritePanicWakesWaiters(t *testing.T) {
 				defer c.qmu.Unlock()
 				return c.flight != nil
 			})
-			queued := make(chan error, 1)
+			waiting := make(chan error, 1)
 			go func() {
-				queued <- c.WriteFrame(context.Background(), Frame{Type: TypeRoundResult, Payload: []byte("{}")})
+				waiting <- c.WriteFrame(context.Background(), Frame{Type: TypeRoundResult, Payload: []byte("{}")})
 			}()
+			eventually(t, "the second frame to queue", func() bool { return queued(c, prioP1) == 1 })
 			fl := make(chan error, 1)
-			go func() { fl <- c.Flush(context.Background()) }()
-			time.Sleep(20 * time.Millisecond)
+			flCtx := newDoneSignal(context.Background())
+			go func() { fl <- c.Flush(flCtx) }()
+			<-flCtx.called
 			close(gate)
 
 			var perr *life.PanicError
@@ -67,7 +71,7 @@ func TestWritePanicWakesWaiters(t *testing.T) {
 				}
 			}
 			select {
-			case err := <-queued:
+			case err := <-waiting:
 				if !errors.Is(err, ErrDropped) || !errors.As(err, &perr) {
 					t.Errorf("queued WriteFrame = %v", err)
 				}
@@ -137,7 +141,7 @@ func TestWriterDeadlineCannotOverrideInterrupt(t *testing.T) {
 	go func() { relDone <- c.Release() }()
 	// Let Release run its grace and interrupt while the writer is stuck in
 	// SetWriteDeadline; then let the writer continue.
-	time.Sleep(3 * releaseGrace)
+	eventually(t, "Release to interrupt the write side", c.writeStopped)
 	close(resume)
 	var err error
 	select {
@@ -272,7 +276,11 @@ func TestReleaseWaitsForFrameBoundary(t *testing.T) {
 		})
 		rel := make(chan error, 1)
 		go func() { rel <- c.Release() }()
-		time.Sleep(releaseGrace / 5)
+		eventually(t, "Release to wait for the frame boundary", func() bool {
+			c.rmu.Lock()
+			defer c.rmu.Unlock()
+			return c.rbound != nil
+		})
 		// The rest is written from a goroutine: if Release stopped the reader
 		// mid-frame, nobody reads it and the deferred b.Close unblocks it.
 		go func() { _, _ = b.Write(frame[HeaderSize+4:]) }()
@@ -307,4 +315,142 @@ func TestReleaseWaitsForFrameBoundary(t *testing.T) {
 			t.Fatalf("Release took %v", d)
 		}
 	})
+}
+
+// doneSignal is a context that reports, through called, the first time its
+// Done method is used: Flush asks for it only once it has taken its target
+// and is about to wait.
+type doneSignal struct {
+	context.Context
+	once   sync.Once
+	called chan struct{}
+}
+
+func newDoneSignal(ctx context.Context) *doneSignal {
+	return &doneSignal{Context: ctx, called: make(chan struct{})}
+}
+
+func (d *doneSignal) Done() <-chan struct{} {
+	d.once.Do(func() { close(d.called) })
+	return d.Context.Done()
+}
+
+// gatedFailConn fails every Write once gate is closed.
+type gatedFailConn struct {
+	net.Conn
+	gate chan struct{}
+}
+
+var errWriteBroken = errors.New("write broken")
+
+func (g gatedFailConn) Write([]byte) (int, error) {
+	<-g.gate
+	return 0, errWriteBroken
+}
+
+// A frame lost to a failing write is reported by the Flush waiting for it:
+// the frame leaves the flight only after the write side has stopped, so
+// Flush never sees the loss without its cause and returns nil.
+func TestFlushReportsFrameLostToWriteFailure(t *testing.T) {
+	for i := range 300 {
+		a, b := net.Pipe()
+		gate := make(chan struct{})
+		c, err := NewConn(gatedFailConn{a, gate}, ConnOptions{})
+		must(t, err)
+		must(t, c.Send(Frame{Type: TypePong, Payload: []byte("{}")}))
+		ctx := newDoneSignal(context.Background())
+		flushed := make(chan error, 1)
+		go func() { flushed <- c.Flush(ctx) }()
+		<-ctx.called
+		close(gate)
+		if err := <-flushed; !errors.Is(err, errWriteBroken) {
+			t.Fatalf("iteration %d: Flush = %v, want the write error", i, err)
+		}
+		_ = c.Close()
+		_ = b.Close()
+	}
+}
+
+// lateCtx is an expired context that WriteFrame first sees alive: the
+// frame is queued, and by the time WriteFrame waits, its stall bound has
+// expired together with ctx — what a WriteFrame caller descheduled past its
+// deadline sees when it runs again.
+type lateCtx struct {
+	context.Context
+	checks atomic.Int32
+}
+
+func (l *lateCtx) Err() error {
+	if l.checks.Add(1) == 1 {
+		return nil
+	}
+	return l.Context.Err()
+}
+
+// WriteFrame with an ended context returns the context's cause and never
+// fails the write side: not when the context had ended before the call,
+// whether or not the writer is busy, and not when the frame's own stall
+// bound expired together with the context.
+func TestWriteFrameEndedContextLeavesLinkUsable(t *testing.T) {
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	a, b := net.Pipe()
+	defer func() { _ = b.Close() }()
+	idle := mustConn(t, a, ConnOptions{})
+	for i := range 32 {
+		if err := idle.WriteFrame(expired, Frame{Type: TypeRoundResult, Payload: []byte("late")}); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("idle writer, attempt %d: WriteFrame(ended ctx) = %v", i, err)
+		}
+	}
+	if err := idle.Err(); err != nil {
+		t.Fatalf("idle writer: Err = %v after WriteFrame calls with an ended ctx", err)
+	}
+
+	c, peer, release := stalledConn(t, SideClient)
+	for i := range 32 {
+		ctx := &lateCtx{Context: expired}
+		if err := c.WriteFrame(ctx, Frame{Type: TypeRoundResult, Payload: []byte("late")}); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("busy writer, attempt %d: WriteFrame(ended ctx) = %v", i, err)
+		}
+	}
+	if err := c.Err(); err != nil {
+		t.Fatalf("busy writer: Err = %v after WriteFrame calls with an ended ctx", err)
+	}
+	close(release)
+	must(t, c.Send(Frame{Type: TypePong, Payload: []byte("next")}))
+	if p := payloadsOf(readFrames(t, peer, 2)); fmt.Sprint(p) != "[first next]" {
+		t.Fatalf("frames %v", p)
+	}
+}
+
+// countConn's Write returns a count io.Writer does not allow.
+type countConn struct {
+	net.Conn
+	count func(p []byte) int
+}
+
+func (c countConn) Write(p []byte) (int, error) { return c.count(p), nil }
+
+// A Write that returns a count outside [0, len(p)] leaves the stream position
+// unknown: the write side fails and Release does not hand the stream back
+// as clean.
+func TestWriteInvalidCountMakesStreamUnreturnable(t *testing.T) {
+	for name, count := range map[string]func([]byte) int{
+		"negative": func([]byte) int { return -1 },
+		"too many": func(p []byte) int { return len(p) + 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, b := net.Pipe()
+			defer func() { _ = b.Close() }()
+			c := mustConn(t, countConn{a, count}, ConnOptions{})
+			if err := c.WriteFrame(context.Background(), Frame{Type: TypePong, Payload: []byte("{}")}); err == nil {
+				t.Fatal("WriteFrame succeeded with an invalid count")
+			}
+			<-c.Done()
+			if err := within(t, "Release", time.Second, c.Release); !errors.Is(err, ErrUnreturnable) {
+				t.Fatalf("Release = %v", err)
+			}
+		})
+	}
 }

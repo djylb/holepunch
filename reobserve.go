@@ -106,7 +106,7 @@ func (rt *runtime) reobserved(s *udpSock, from netip.AddrPort, h *udpwire.Header
 	}
 	st.mu.Lock()
 	rs := st.stats[s.fam]
-	if rs == nil || rs.reobserve.seq == 0 || h.EchoSeq != rs.reobserve.seq || uint8(h.Aux) != rs.reobserve.observer ||
+	if rs == nil || rs.reobserve.seq == 0 || h.EchoSeq != rs.reobserve.seq || h.Aux != uint16(rs.reobserve.observer) ||
 		netaddr.Canon(from) != rs.reobserve.to {
 		st.mu.Unlock()
 		return false

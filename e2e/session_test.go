@@ -312,6 +312,7 @@ func (r *run) checkHandoverOpt(send bool) error {
 		dst := r.out[from].sess.Result().Path.RemoteAddr
 		deadline := time.Now().Add(scaled(winnerCheckWait))
 		var err error
+		received := false
 	send:
 		for {
 			if _, werr := views[from].WriteToUDPAddrPort([]byte("e2e-handover-check"), dst); werr != nil {
@@ -319,19 +320,26 @@ func (r *run) checkHandoverOpt(send bool) error {
 				break
 			}
 			select {
-			case err = <-got:
+			case rerr := <-got:
+				received = true
+				if rerr != nil {
+					err = fmt.Errorf("%s: read on the winning socket: %w", roles[to], rerr)
+				}
 				break send
 			case <-time.After(50 * time.Millisecond):
 			}
 			if time.Now().After(deadline) {
 				err = fmt.Errorf("%s: no packet on the winning socket within %v", roles[to], scaled(winnerCheckWait))
-				// unblock the reader: the session close below closes the socket
 				break
 			}
 		}
 		if err != nil {
+			// The session close closes the socket, which unblocks a reader
+			// still waiting.
 			_ = r.closeSessions()
-			<-got
+			if !received {
+				<-got
+			}
 			return err
 		}
 	}

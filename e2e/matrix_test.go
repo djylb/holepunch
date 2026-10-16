@@ -39,8 +39,9 @@ func runOnce(t testing.TB, c *cell, seed int64, abl ablation.Set, dumps bool) (*
 	cr := &cellRun{c: c, seed: seed, w: w, sides: sides}
 	r, err := newRun(w, sides, spec)
 	if err != nil {
-		_ = w.close()
-		return cr, []string{err.Error()}
+		v := w.abandon(err)
+		cr.m.Violations = v
+		return cr, v
 	}
 	cr.r = r
 	r.execute()
@@ -48,14 +49,15 @@ func runOnce(t testing.TB, c *cell, seed int64, abl ablation.Set, dumps bool) (*
 	v := cr.violations()
 	v = append(v, cr.checkResources()...)
 	if dumps && (len(v) > 0 || c.class != classFail && !cr.m.OK) {
-		if p, err := cr.dump(t, v, abl.String()); err != nil {
+		p, err := cr.dump(t, v, abl.String())
+		switch {
+		case err != nil:
 			v = append(v, fmt.Sprintf("failure dump: %v", err))
-		} else {
-			v = append(v, "dump: "+p)
-		}
-		if len(v) == 1 {
+		case len(v) == 0:
 			// a dump of an unsuccessful run is evidence, not a violation
-			cr.dumped, v = v[0], nil
+			cr.dumped = p
+		default:
+			v = append(v, "dump: "+p)
 		}
 	}
 	if err := w.close(); err != nil {
@@ -177,6 +179,9 @@ func runCell(t *testing.T, c *cell, runs int, kpiDir string) cellKPI {
 		crs = append(crs, cr)
 		for _, s := range v {
 			problems = append(problems, fmt.Sprintf("seed %d: %s", seed, s))
+		}
+		if cr.dumped != "" {
+			t.Logf("seed %d: unsuccessful (%s), dump: %s", seed, cr.m.Code, cr.dumped)
 		}
 	}
 	k := kpiOf(c, full.String(), crs, time.Since(start))

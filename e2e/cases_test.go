@@ -521,14 +521,17 @@ func cells() []*cell {
 
 	// Rebind: the full-cone side changes its external IP before the first go.
 	add(&cell{name: "rebind/PRC-FC", group: "rebind", class: classDegraded, base: classMust, build: single(profPRC, profFC),
-		session: func(s *sessionSpec, _ *world, sides [2]*side) {
+		session: func(s *sessionSpec, w *world, sides [2]*side) {
 			s.prepare = func(r *run) {
 				ready := r.taps[1].when(toServer, controlwire.TypePunchReady, nil)
+				w.helpers.Add(1)
 				go func() {
+					defer w.helpers.Done()
 					select {
 					case <-ready:
 						sides[1].nats[0].Rebind(nil)
 					case <-r.ctx[1].Done():
+					case <-w.quit:
 					}
 				}()
 			}

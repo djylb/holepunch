@@ -19,10 +19,6 @@ const linkInbox = 16
 // maxRound is the wire limit on round numbers, rescue round included.
 const maxRound = 8
 
-// errStalled: a reliable frame did not fit the link's write queue (the client
-// does not read); the link is lost with detail stalled.
-var errStalled = errors.New("coord: control link stalled")
-
 // link is one attached control stream: a controlwire.Conn (one reading and one
 // writing goroutine) whose accepted frames go to the session goroutine
 // through in.
@@ -92,14 +88,10 @@ func (l *link) send(m protocol.Message) error {
 	return l.conn.Send(f)
 }
 
-// sendMarked queues m and records its write instant in mark: the builder runs
-// on the writing goroutine right before the frame is written (t_flushed of
-// the RTT sample), with the time of the session clock.
-func (l *link) sendMarked(m protocol.Message, mark *atomic.Int64, epoch time.Time) error {
-	f, err := protocol.Marshal(m)
-	if err != nil {
-		return err
-	}
+// sendMarked queues the encoded frame f and records its write instant in
+// mark: the builder runs on the writing goroutine right before the frame is
+// written (t_flushed of the RTT sample), with the time of the session clock.
+func (l *link) sendMarked(f controlwire.Frame, mark *atomic.Int64, epoch time.Time) error {
 	payload := f.Payload
 	return l.conn.SendFunc(f.Type, func(now time.Time) ([]byte, error) {
 		mark.Store(int64(now.Sub(epoch)) + 1)
@@ -123,21 +115,54 @@ const (
 	lossInternal                 // a panic in the connection's code
 )
 
-// classifyLoss maps the reason a link stopped (Conn.Err, or errStalled) to a
-// code and detail.
-func classifyLoss(err error) (protocol.Reason, string, lossKind) {
+// linkLoss is why a link stopped: the end's code and detail, and the kind.
+type linkLoss struct {
+	code   protocol.Reason
+	detail string
+	kind   lossKind
+}
+
+// lossStalled: a reliable frame did not fit the link's write queue (the
+// client does not read).
+var lossStalled = linkLoss{code: protocol.ReasonPeerOffline, detail: detailStalled, kind: lossLink}
+
+// classifyLoss maps the reason a link stopped (Conn.Err, or an error of the
+// session's own) to a linkLoss.
+func classifyLoss(err error) linkLoss {
 	var pe *life.PanicError
 	if errors.As(err, &pe) {
-		return protocol.ReasonInternal, panicDetail(pe), lossInternal
+		return linkLoss{code: protocol.ReasonInternal, detail: panicDetail(pe), kind: lossInternal}
 	}
 	if r, d, ok := protocol.WireReason(err); ok {
-		return r, d, lossProtocol
+		return linkLoss{code: r, detail: d, kind: lossProtocol}
 	}
-	switch {
-	case errors.Is(err, errStalled):
-		return protocol.ReasonPeerOffline, detailStalled, lossLink
-	case errors.Is(err, os.ErrDeadlineExceeded):
-		return protocol.ReasonPeerOffline, detailWriteTimeout, lossLink
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return linkLoss{code: protocol.ReasonPeerOffline, detail: detailWriteTimeout, kind: lossLink}
 	}
-	return protocol.ReasonPeerOffline, "", lossLink
+	return linkLoss{code: protocol.ReasonPeerOffline, kind: lossLink}
+}
+
+// classifyLink is classifyLoss for the error a link's Conn stopped with,
+// which may be an error of the caller's connection: its methods are user
+// code, so it is examined outside the session mutex and in a recover
+// boundary. An error that panics there is a plain link failure.
+func (s *Session) classifyLink(err error) linkLoss {
+	var loss linkLoss
+	if perr := life.Safe("coord.link_error", func() { loss = classifyLoss(err) }); perr != nil {
+		s.c.noteCallbackPanic(s.id, perr)
+		return linkLoss{code: protocol.ReasonPeerOffline, kind: lossLink}
+	}
+	return loss
+}
+
+// queueFull reports whether a send failed because the link's write queue was
+// full; any other send error means the write side stopped, which the link's
+// Done reports. The error may be the write error of the caller's connection,
+// so this runs outside the session mutex and in a recover boundary.
+func (s *Session) queueFull(err error) bool {
+	full := false
+	if perr := life.Safe("coord.send_error", func() { full = errors.Is(err, controlwire.ErrQueueFull) }); perr != nil {
+		s.c.noteCallbackPanic(s.id, perr)
+	}
+	return full
 }

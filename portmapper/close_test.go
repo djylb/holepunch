@@ -102,7 +102,7 @@ func TestConcurrentMapAndClose(t *testing.T) {
 		if err := m.Close(); err != nil {
 			t.Fatalf("Close() = %v", err)
 		}
-		within(t, "Close()", time.Since(start), releaseTimeout+100*time.Millisecond)
+		within(t, "Close()", time.Since(start), releaseTimeout+boundSlack)
 		wg.Wait()
 		close(releases)
 		for release := range releases {
@@ -137,7 +137,7 @@ func TestCloseBoundedWhenGatewayStopsAnswering(t *testing.T) {
 	gw.set(func(f *fakeGW) { f.dropDeletes = true })
 	start := time.Now()
 	err := m.Close()
-	within(t, "Close()", time.Since(start), releaseTimeout+100*time.Millisecond)
+	within(t, "Close()", time.Since(start), releaseTimeout+boundSlack)
 	if !errors.Is(err, errNoResponse) {
 		t.Fatalf("Close() = %v, want the unconfirmed delete", err)
 	}

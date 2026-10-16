@@ -1,6 +1,9 @@
 package natprobe
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // Rate is a token bucket: PerSec tokens per second, at most Burst at once.
 type Rate struct{ PerSec, Burst int }
@@ -13,16 +16,20 @@ type Rate struct{ PerSec, Burst int }
 // burst at one instant.
 const clockBackStep = int64(time.Second)
 
+// maxTau bounds the burst tolerance so that the sums of gcra cannot
+// overflow: a burst whose tolerance would exceed it is unlimited anyway.
+const maxTau = math.MaxInt64 / 4
+
 // gcra admits one event at monotonic time now (ns) for rate r, using the
 // generic cell rate algorithm on the theoretical arrival time *tat: one int64
 // per bucket and no refill arithmetic. A slightly stale now is judged against
 // the state as it is, which only makes the bucket stricter. Only a state at
 // least clockBackStep further ahead than any admitted event could leave it
 // means the clock went backwards; the bucket then restarts instead of
-// stalling.
+// stalling. r.PerSec must be positive; a Burst below 1 counts as 1.
 func gcra(tat *int64, now int64, r Rate) bool {
 	interval := max(int64(time.Second)/int64(r.PerSec), 1)
-	tau := int64(r.Burst-1) * interval
+	tau := min(int64(max(r.Burst, 1)-1), maxTau/interval) * interval
 	t := max(*tat, now)
 	if d := t - now; d > tau {
 		if d < tau+interval+clockBackStep {

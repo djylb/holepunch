@@ -2,6 +2,7 @@ package holepunch
 
 import (
 	"context"
+	"math"
 	"net/netip"
 	"slices"
 	"sync"
@@ -396,13 +397,14 @@ func (rt *runtime) portMapMethods() []protocol.PortMapMethod {
 	return out
 }
 
-// elapsedMs is a local monotonic duration in whole milliseconds.
+// elapsedMs is a local monotonic duration in whole milliseconds, within
+// the wire field's range.
 func elapsedMs(from, to time.Time) uint32 {
 	d := to.Sub(from)
 	if d < 0 {
 		return 0
 	}
-	return uint32(d / time.Millisecond)
+	return uint32(min(d/time.Millisecond, math.MaxUint32))
 }
 
 // sendKeepalive refreshes the probing sockets' mappings while the session

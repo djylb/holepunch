@@ -75,7 +75,7 @@ const (
 // under NoAssistRelay) and the mechanism itself (not under NoRefresh).
 // It sends the requests, keeps d and its inputs for planning the
 // round again, and reports whether the round now waits.
-func (s *Session) beginRefreshLocked(k int, gen uint64, d decision, p Planner, cin ClassifyInput, in RoundInput, now time.Duration) bool {
+func (s *Session) beginRefreshLocked(k int, gen uint64, d decision, cin ClassifyInput, in RoundInput, now time.Duration) bool {
 	st := &s.st
 	a := align([2]*rttEstimator{&st.rtt[0], &st.rtt[1]}, s.ablate.NoRTTAlign)
 	wait := min(refreshGap+max(a.rtt[0], a.rtt[1], s.udpRTTLocked(0), s.udpRTTLocked(1))+refreshSlack, maxRefreshWait)
@@ -83,7 +83,9 @@ func (s *Session) beginRefreshLocked(k int, gen uint64, d decision, p Planner, c
 		return false
 	}
 	wanted := plan.RefreshWanted(in, d.dec, now-s.regAt)
-	rf := refreshState{k: k, gen: gen, d: d, p: p, cin: cin}
+	// The round is planned again by d's planner: the default one when the
+	// planner panicked deciding it.
+	rf := refreshState{k: k, gen: gen, d: d, p: d.planner, cin: cin}
 	asked := false
 	for r, fams := range wanted {
 		l := st.links[r]
@@ -102,6 +104,9 @@ func (s *Session) beginRefreshLocked(k int, gen uint64, d decision, p Planner, c
 	if !asked {
 		return false
 	}
+	// A planner that panicked stays replaced while the round waits, and
+	// the round is planned again on the default planner's classification.
+	s.takeDecisionLocked(d)
 	rf.pending, rf.asked = true, rf.want
 	rf.until, rf.cap = now+wait, now+wait
 	st.refresh = rf
@@ -261,6 +266,9 @@ func (s *Session) reanchorRound1Locked(gen uint64, d decision, found bool, nowT 
 		return fx
 	}
 	now := s.since(nowT)
+	// A planner that panicked planning the round again is replaced like
+	// in every other round.
+	s.takeDecisionLocked(d)
 	if found && d.ok && d.dec.Stop == "" {
 		for r := range st.cur.plans {
 			if pl, ok := reanchored(st.cur.plans[r], d.dec.Sides[r]); ok {

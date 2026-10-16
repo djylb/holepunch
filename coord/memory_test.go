@@ -2,6 +2,7 @@ package coord
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"net/netip"
 	"slices"
@@ -294,4 +295,71 @@ func TestStrategySalt(t *testing.T) {
 	if e := mk(Config{Memory: NewStrategyMemory(StrategyMemoryConfig{Salt: own}), StrategySalt: salt}); !bytes.Equal(e.salt, own) {
 		t.Fatal("the built-in memory's salt was replaced")
 	}
+}
+
+// TestStrategyMemoryShards: more than 256 shards all hold entries: the
+// memory keeps MaxEntries keys.
+func TestStrategyMemoryShards(t *testing.T) {
+	const n = 512
+	m, _ := newMem(StrategyMemoryConfig{MaxEntries: n, Shards: n})
+	for i := range n {
+		var k StrategyKey
+		binary.BigEndian.PutUint64(k[:8], uint64(i))
+		m.Report(k, 1, MemSuccess)
+	}
+	if got := m.len(); got != n {
+		t.Fatalf("%d entries kept of %d", got, n)
+	}
+}
+
+// TestStrategyMemorySweepOrder: the list stays ordered by last use, so a
+// sweep from its old end finds every expired entry. Reading a score is no
+// use; a report over the rate is one.
+func TestStrategyMemorySweepOrder(t *testing.T) {
+	m, clk := newMem(StrategyMemoryConfig{TTL: time.Hour, Shards: 1, ReportsPerMin: 1})
+	a, b := StrategyKey{1}, StrategyKey{2}
+	m.Report(a, 1, MemSuccess)
+	clk.advance(30 * time.Minute)
+	m.Report(b, 1, MemSuccess)
+	m.score(a, 1)
+	clk.advance(31 * time.Minute)
+	if n := m.Sweep(clk.Now(), 1024); n != 1 || m.len() != 1 || m.score(b, 1) != 2 {
+		t.Fatalf("score read: sweep removed %d, %d left; want the expired entry gone", n, m.len())
+	}
+
+	m, clk = newMem(StrategyMemoryConfig{TTL: time.Hour, Shards: 1, ReportsPerMin: 1})
+	m.Report(a, 1, MemSuccess)
+	clk.advance(30 * time.Second)
+	m.Report(b, 1, MemSuccess)
+	clk.advance(10 * time.Second)
+	m.Report(a, 1, MemSuccess) // over the rate: no score, but a use
+	clk.advance(time.Hour - 5*time.Second)
+	if n := m.Sweep(clk.Now(), 1024); n != 1 || m.len() != 1 || m.score(a, 1) != 2 {
+		t.Fatalf("report over the rate: sweep removed %d, %d left; want the entry it used kept", n, m.len())
+	}
+}
+
+// reversingMemory recommends the ladder reversed, in place.
+type reversingMemory struct{ NoMemory }
+
+func (reversingMemory) Recommend(_ StrategyKey, ladder []VariantID) []VariantID {
+	slices.Reverse(ladder)
+	return ladder
+}
+
+// TestMemoryGetsLadderCopy: a memory that reorders the ladder it is given
+// reorders the session's order, not the classification's ladder.
+func TestMemoryGetsLadderCopy(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.Memory = reversingMemory{} })
+	p := r.pair(SessionOptions{})
+	p.summaries()
+	p.s.mu.Lock()
+	ladder, order := slices.Clone(p.s.st.cls.Ladder), slices.Clone(p.s.st.order)
+	p.s.mu.Unlock()
+	slices.Reverse(order)
+	if len(ladder) < 2 || !slices.Equal(ladder, order) {
+		t.Fatalf("ladder %v, order reversed %v", ladder, order)
+	}
+	p.s.Abort(protocol.ReasonCanceled, "")
+	r.wait(p.s)
 }

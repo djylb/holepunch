@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding"
 	"errors"
 	"fmt"
 	"math"
@@ -247,6 +248,25 @@ func TestEnumValues(t *testing.T) {
 	if _, err := Mapping(9).MarshalText(); err == nil {
 		t.Error("MarshalText of an out-of-range mapping succeeded")
 	}
+	// Valid is exactly "has a wire name", and String of a valid value does
+	// not allocate.
+	for v := range 256 {
+		for name, e := range map[string]interface {
+			encoding.TextMarshaler
+			Valid() bool
+		}{"mapping": Mapping(v), "filtering": Filtering(v), "portalloc": PortAlloc(v), "conf": Conf(v), "tri": Tri(v)} {
+			if b, err := e.MarshalText(); e.Valid() != (err == nil) || err == nil && len(b) == 0 {
+				t.Errorf("%s %d: Valid %v, MarshalText %q %v", name, v, e.Valid(), b, err)
+			}
+		}
+	}
+	var names []string
+	if n := testing.AllocsPerRun(10, func() {
+		names = append(names[:0], MapAPDM.String(), FiltNotPDF.String(), AllocPreserveFresh.String(), ConfHigh.String(),
+			TriTrue.String(), ControlSecurityDeclared.String(), ClassNATHard.String())
+	}); n != 0 || strings.Join(names, " ") != "apdm not_pdf preserve_fresh high true declared nat_hard" {
+		t.Errorf("String allocated %v times: %v", n, names)
+	}
 	for _, s := range []string{"udp4", "udp6"} {
 		if !Family(s).Valid() {
 			t.Errorf("family %s invalid", s)
@@ -274,9 +294,10 @@ func TestEnumValues(t *testing.T) {
 		"targets source": {strs(TargetsSandwich, TargetsInject, TargetsDrift, TargetsPortmap), "sandwich inject drift portmap"},
 		"cand_kind": {strs(CandDirect, CandPredicted, CandRandom, CandBirthday, CandPeerReflexive, CandLAN, CandTargets, CandOverlay),
 			"direct predicted random birthday peer_reflexive lan targets overlay"},
-		"path kind":     {strs(PathPublic, PathLAN, PathOverlay, PathPortmap), "public lan overlay portmap"},
-		"confirmed_by":  {strs(ConfirmedByAck, ConfirmedByUpperLayer, ConfirmedByQuiet, ConfirmedByReady), "ack upper_layer quiet ready"},
-		"endpoint src":  {strs(EndpointServer, EndpointSecond, EndpointSibling, EndpointSTUN, EndpointPortmap, EndpointLAN, EndpointOverlay), "server second sibling stun portmap lan overlay"},
+		"path kind":    {strs(PathPublic, PathLAN, PathOverlay, PathPortmap), "public lan overlay portmap"},
+		"confirmed_by": {strs(ConfirmedByAck, ConfirmedByUpperLayer, ConfirmedByQuiet, ConfirmedByReady), "ack upper_layer quiet ready"},
+		"endpoint src": {strs(EndpointServer, EndpointSecond, EndpointSibling, EndpointSTUN, EndpointPortmap, EndpointLAN, EndpointOverlay, EndpointLocalPort),
+			"server second sibling stun portmap lan overlay local_port"},
 		"socket kind":   {strs(SocketPrimary, SocketSecond, SocketSibling), "primary second sibling"},
 		"traits source": {strs(TraitsSourcePeer, TraitsSourceAlt, TraitsSourceSTUN, TraitsSourceHairpin), "peer alt stun hairpin"},
 		"port_map":      {strs(PortMapUPnP, PortMapPCP, PortMapNATPMP), "upnp pcp natpmp"},
@@ -285,8 +306,8 @@ func TestEnumValues(t *testing.T) {
 		"advice":        {strs(AdviceBackgroundViable, AdviceRelayOnly), "background_viable relay_only"},
 		"birthday tier": {strs(BirthdayOff, BirthdayConservative, BirthdayBalanced, BirthdayAggressive), "off conservative balanced aggressive"},
 		"feature":       {strs(SupportedFeatures()...), "sandwich"},
-		"warn": {strs(WarnClockSkew, WarnGoroutineJoinTimeout, WarnLowTTLUnsupported, WarnPeerResultMissing, WarnUnverifiedTargets, WarnInsecureControlForTesting, WarnInterfaceListUnavailable),
-			"clock_skew goroutine_join_timeout low_ttl_unsupported peer_result_missing unverified_targets insecure_control_for_testing interface_list_unavailable"},
+		"warn": {strs(WarnClockSkew, WarnGoroutineJoinTimeout, WarnLowTTLUnsupported, WarnPeerResultMissing, WarnUnverifiedTargets, WarnInsecureControlForTesting, WarnInterfaceListUnavailable, WarnLANObserved),
+			"clock_skew goroutine_join_timeout low_ttl_unsupported peer_result_missing unverified_targets insecure_control_for_testing interface_list_unavailable lan_observed"},
 		"drops": {DropKeys(), "short foreign rate auth payload role replay budget target_rejected send_err"},
 	} {
 		if strings.Join(tc.got, " ") != tc.want {

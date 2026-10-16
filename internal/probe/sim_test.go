@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,7 +26,9 @@ func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 // a natprobe-like server (three ports on 198.51.100.1, an optional alt IP
 // 198.51.100.2, an extra pool port), an optional STUN server. The prober's
 // state machine is stepped directly (stepRun, deterministic) or runs in its
-// goroutine on the fake clock (loopRun).
+// goroutine on the fake clock (loopRun, loopHairpin), which the world
+// advances only while that goroutine is idle, so that run is deterministic
+// too.
 
 var (
 	srvIP    = netip.MustParseAddr("198.51.100.1")
@@ -103,6 +106,37 @@ type sim struct {
 	log       []pktLog
 	writeErr  func(sock uint8, to netip.AddrPort) error
 	observers []protocol.ObserverSpec
+
+	// Loop mode (drive): selects counts the selects of the goroutine under
+	// test, awaited is the count it reaches once it consumed every stimulus
+	// delivered so far, and exited reports that it returned. wakes is
+	// whether it selects on the ICMP wake-up channel (Run, not Hairpin).
+	loop, wakes bool
+	selects     atomic.Int64
+	awaited     int64
+	exited      atomic.Bool
+}
+
+// selectClock is the fake clock as the prober sees it: Run and Hairpin
+// read their timer's C exactly once per select, so its timers count the
+// selects of the goroutine under test.
+type selectClock struct {
+	*clock.Fake
+	selects *atomic.Int64
+}
+
+func (c selectClock) NewTimer(d time.Duration) clock.Timer {
+	return selectTimer{Timer: c.Fake.NewTimer(d), selects: c.selects}
+}
+
+type selectTimer struct {
+	clock.Timer
+	selects *atomic.Int64
+}
+
+func (t selectTimer) C() <-chan time.Time {
+	t.selects.Add(1)
+	return t.Timer.C()
 }
 
 type mapping struct {
@@ -194,7 +228,7 @@ func newSim(t *testing.T, o simOpts) *sim {
 	for i := range o.siblings {
 		sibs = append(sibs, s.sock(nat.SocketID(protocol.FamilyUDP4, nat.IndexSibling+i), fmt.Sprintf("10.8.%d.2:40000", i)))
 	}
-	s.spec = Spec{Codec: cli, Probe: ps, Family: protocol.FamilyUDP4, Timeout: o.timeout, Clock: fake}
+	s.spec = Spec{Codec: cli, Probe: ps, Family: protocol.FamilyUDP4, Timeout: o.timeout, Clock: selectClock{Fake: fake, selects: &s.selects}}
 	s.p = New(s.spec, primary, sibs, func() (SocketHandle, error) {
 		return s.sock(nat.SocketID(protocol.FamilyUDP4, nat.IndexSecond), "192.168.1.10:40001"), nil
 	})
@@ -279,7 +313,7 @@ func (s *sim) write(from *simSock, b []byte, to netip.AddrPort) error {
 	case to.Addr() == srvIP || to.Addr() == altIP:
 		if s.unreachable {
 			if s.icmp {
-				s.schedule(2*s.owd, func() { s.p.NoteUnreachable(from.id) })
+				s.schedule(2*s.owd, func() { s.noteICMP(from.id) })
 			}
 			return nil
 		}
@@ -412,7 +446,9 @@ func (s *sim) toClient(pkt []byte, from, to netip.AddrPort) {
 		}
 	}
 	if IsSTUN(pkt) {
-		s.p.DeliverSTUN(sock.id, from, pkt, s.fake.Now())
+		if s.p.DeliverSTUN(sock.id, from, pkt, s.fake.Now()) {
+			s.stimulus()
+		}
 		return
 	}
 	var h udpwire.Header
@@ -427,7 +463,41 @@ func (s *sim) toClient(pkt []byte, from, to netip.AddrPort) {
 	if h.Role == udpwire.RoleServer && !s.cliWin.Accept(h.Seq) {
 		return
 	}
-	s.p.Deliver(sock.id, from, &h, &t, s.fake.Now())
+	if s.p.Deliver(sock.id, from, &h, &t, s.fake.Now()) {
+		s.stimulus()
+	}
+}
+
+// noteICMP plays the read pump's ICMP unreachable note on socket sock.
+func (s *sim) noteICMP(sock uint8) {
+	before := s.p.icmp.Load()
+	s.p.NoteUnreachable(sock)
+	if s.wakes && s.p.icmp.Load() != before {
+		s.stimulus()
+	}
+}
+
+// stimulus records that the goroutine under test has one more thing to
+// consume: once it has, it selects once more.
+func (s *sim) stimulus() {
+	if s.loop {
+		s.awaited++
+	}
+}
+
+// settle waits, in real time, until the goroutine under test has consumed
+// every stimulus and is back in its select, or has returned. The world
+// delivers one stimulus at a time and settles after each, so each one is
+// consumed by a select of its own: none is coalesced or discarded.
+func (s *sim) settle() {
+	if !s.loop {
+		return
+	}
+	for start := time.Now(); s.selects.Load() < s.awaited && !s.exited.Load(); time.Sleep(20 * time.Microsecond) {
+		if time.Since(start) > 30*time.Second {
+			s.t.Fatalf("the goroutine under test is stuck: %d selects, %d awaited", s.selects.Load(), s.awaited)
+		}
+	}
 }
 
 // stunReply answers a Binding Request with the request's mapped address,
@@ -466,7 +536,9 @@ func cmpEvent(a, b event) int {
 	return a.seq - b.seq
 }
 
-// advanceTo moves time to t and runs every event due at or before it.
+// advanceTo moves time to t and runs every event due at or before it. In
+// loop mode the goroutine under test consumes each stimulus — a fired
+// timer, a delivered packet, an ICMP note — before the next one.
 func (s *sim) advanceTo(t time.Duration) {
 	for {
 		s.mu.Lock()
@@ -474,16 +546,27 @@ func (s *sim) advanceTo(t time.Duration) {
 		if len(s.evs) == 0 || s.evs[0].at > t {
 			s.now = t
 			s.mu.Unlock()
-			s.fake.AdvanceTo(s.start.Add(t))
+			s.clockTo(t)
 			return
 		}
 		e := s.evs[0]
 		s.evs = s.evs[1:]
 		s.now = e.at
-		s.fake.AdvanceTo(s.start.Add(e.at))
+		s.mu.Unlock()
+		s.clockTo(e.at)
+		s.mu.Lock()
 		e.fn()
 		s.mu.Unlock()
+		s.settle()
 	}
+}
+
+// clockTo advances the fake clock to t; a timer that fires is a stimulus.
+func (s *sim) clockTo(t time.Duration) {
+	for range s.fake.AdvanceTo(s.start.Add(t)) {
+		s.stimulus()
+	}
+	s.settle()
 }
 
 // stepRun drives the state machine deterministically, without a goroutine,

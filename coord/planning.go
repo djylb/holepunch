@@ -2,6 +2,7 @@ package coord
 
 import (
 	"encoding/base64"
+	"maps"
 	"net/netip"
 	"slices"
 	"time"
@@ -84,7 +85,7 @@ func (s *Session) planSession() {
 		if s.st.gen == in.gen && s.st.state == StateSummarized {
 			// Round 1's anchor refresh runs while the summaries travel and
 			// the readies come back; the go waits for it.
-			s.beginRefreshLocked(1, in.gen, d, p, cin, rin, s.since(now))
+			s.beginRefreshLocked(1, in.gen, d, cin, rin, s.since(now))
 		}
 	}()
 	s.apply(fx)
@@ -113,16 +114,19 @@ func (s *Session) plan(in planIn) planOut {
 		return out
 	}
 	out.pair = s.pairFacts(in, &out)
+	// The session keeps the input for a fallback classification outside the
+	// lock, so it shares nothing with what it is made of: the planner views
+	// change in place, the views and pair facts become the admission sets
+	// (indexViewsLocked), and raw still feeds the traits memory at the end.
+	// classify hands the planner a copy of its own.
 	cin := ClassifyInput{
-		Initiator: out.pviews[0],
-		Responder: out.pviews[1],
+		Initiator: clonePeerView(out.pviews[0]),
+		Responder: clonePeerView(out.pviews[1]),
 		// natprobe's own measurements, without the traits memory: the only
 		// evidence the early verdict trusts.
-		// Cloned, as the views are: a custom Planner may write its input,
-		// and raw still feeds the traits memory at the end.
 		Measured: [2]protocol.PeerView{clonePeerView(out.raw[0]), clonePeerView(out.raw[1])},
-		Pair:     out.pair,
-		Policy:   *s.starts[0].Policy,
+		Pair:     clonePairFacts(out.pair),
+		Policy:   clonePolicy(*s.starts[0].Policy),
 		Timeouts: s.to,
 		Mode:     sessionMode(s.offer, in.reports),
 	}
@@ -138,6 +142,11 @@ func (s *Session) plan(in planIn) planOut {
 	}
 	if out.cls.Reject == "" && len(out.cls.Families) == 0 {
 		out.cls.Reject = protocol.ReasonNoCommonFamily
+	}
+	if !out.cls.Advice.Valid() {
+		// The summary's plan carries it: an unknown advice would fail its
+		// encoding.
+		out.cls.Advice = ""
 	}
 	if out.cls.Reject != "" {
 		out.term = plannerEnd(out.cls.Reject, "")
@@ -325,6 +334,53 @@ func cloneFamilyView(fv protocol.FamilyView) protocol.FamilyView {
 	return fv
 }
 
+func cloneClassifyInput(in ClassifyInput) ClassifyInput {
+	in.Initiator, in.Responder = clonePeerView(in.Initiator), clonePeerView(in.Responder)
+	in.Measured = [2]protocol.PeerView{clonePeerView(in.Measured[0]), clonePeerView(in.Measured[1])}
+	in.Pair = clonePairFacts(in.Pair)
+	in.Policy = clonePolicy(in.Policy)
+	in.Features = slices.Clone(in.Features)
+	return in
+}
+
+func clonePairFacts(p protocol.PairFacts) protocol.PairFacts {
+	p.SharedFamilies = slices.Clone(p.SharedFamilies)
+	p.SamePublicIP = maps.Clone(p.SamePublicIP)
+	p.LikelySameLAN = maps.Clone(p.LikelySameLAN)
+	p.SharedOverlay = maps.Clone(p.SharedOverlay)
+	p.ProbeRTTMs = maps.Clone(p.ProbeRTTMs)
+	p.ClockOffsetMs = maps.Clone(p.ClockOffsetMs)
+	p.Unverified = maps.Clone(p.Unverified)
+	return p
+}
+
+// clonePolicy deep-copies a policy: its switches are pointers into the
+// session's punch_start.
+func clonePolicy(p protocol.Policy) protocol.Policy {
+	p.LowTTL = cloneBool(p.LowTTL)
+	p.LowTTLHops = slices.Clone(p.LowTTLHops)
+	pm := &p.PortMapping
+	pm.EnableUPnP, pm.EnablePCP, pm.EnableNATPMP = cloneBool(pm.EnableUPnP), cloneBool(pm.EnablePCP), cloneBool(pm.EnableNATPMP)
+	return p
+}
+
+func cloneBool(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+	v := *b
+	return &v
+}
+
+// cloneClassification copies the parts of a classification a planner can
+// write: its slices and its map.
+func cloneClassification(c Classification) Classification {
+	c.Families = slices.Clone(c.Families)
+	c.Ladder = slices.Clone(c.Ladder)
+	c.Budgets = maps.Clone(c.Budgets)
+	return c
+}
+
 // pairFacts computes what only a server seeing both clients knows. A shared
 // family is unverified in relay-only mode (every family) or when no
 // observer covers it; the pair is on one LAN when it shares the public
@@ -462,14 +518,15 @@ func sameLAN(a, b protocol.FamilyView) bool {
 }
 
 // classify runs the planner's Classify; after a panic it falls back to the
-// default planner, which then plans the rest of the session.
+// default planner, which then plans the rest of the session. The planner
+// gets a copy: in is the session's own, kept for a later fallback.
 func (s *Session) classify(p Planner, in ClassifyInput) (Classification, Planner, bool) {
 	var cls Classification
 	err := life.Safe("coord.plan", func() {
 		if err := faultinject.Point(fiPlan); err != nil {
 			panic(err)
 		}
-		cls = p.Classify(in)
+		cls = p.Classify(cloneClassifyInput(in))
 	})
 	if err == nil {
 		return cls, p, true
@@ -491,7 +548,8 @@ func plannerEnd(code protocol.Reason, detail string) *terminal {
 	if !code.Known() {
 		return &terminal{code: protocol.ReasonInternal, detail: truncate("planner reason "+string(code), maxDetail)}
 	}
-	return &terminal{code: code, detail: detail}
+	// The detail goes out in punch_abort, whose encoding refuses a longer one.
+	return &terminal{code: code, detail: truncate(detail, maxDetail)}
 }
 
 // pickTransport settles the upper-layer transport: equal modes, or the
@@ -549,7 +607,9 @@ func (s *Session) recommend(out *planOut) {
 		if err := faultinject.Point(fiMemory); err != nil {
 			panic(err)
 		}
-		order = out.memory.Recommend(out.key, cls.Ladder)
+		// A copy: the memory may sort what it is given, and the ladder
+		// stays the classification's.
+		order = out.memory.Recommend(out.key, slices.Clone(cls.Ladder))
 	}); err != nil {
 		s.c.noteCallbackPanic(s.id, err)
 		out.memory = nil

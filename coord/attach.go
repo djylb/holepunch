@@ -185,9 +185,7 @@ func (s *Session) commitAttach(l *link, now time.Time) effects {
 		st.state = StateBinding
 	}
 	fx.merge(s.sendMarkedLocked(r, start, &l.markStart))
-	if !l.dead {
-		fx.merge(s.sendPingLocked(r))
-	}
+	fx.merge(s.sendPingLocked(r))
 	if !st.loop {
 		st.loop = true
 		s.refs.Add(1) // the session goroutine's share; it drops it when it returns

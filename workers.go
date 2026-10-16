@@ -245,12 +245,12 @@ func (rt *runtime) prepare(sum stamped[protocol.ProbeSummary]) error {
 			rt.addWarn(protocol.WarnUnverifiedTargets)
 		}
 	}
-	if off := s.Pair.ClockOffsetMs[rt.role]; time.Duration(abs64(off))*time.Millisecond > clockSkewWarn {
+	if off, lim := s.Pair.ClockOffsetMs[rt.role], clockSkewWarn.Milliseconds(); off > lim || off < -lim {
 		rt.addWarn(protocol.WarnClockSkew)
 	}
 	for _, f := range s.Pair.SharedFamilies {
 		fs := rt.fam(f)
-		if fs.primary == nil || !(fs.probed || s.Pair.Unverified[f]) {
+		if fs.primary == nil || !fs.probed && !s.Pair.Unverified[f] {
 			continue
 		}
 		fs.worker = newWorker(rt, fs, &s)
@@ -260,7 +260,7 @@ func (rt *runtime) prepare(sum stamped[protocol.ProbeSummary]) error {
 		return fail(protocol.ReasonNoCommonFamily, "", nil)
 	}
 
-	r1, normalized := cloneRound(s.Plan.Round1).Normalize()
+	r1, normalized := s.Plan.Round1.Normalize()
 	r1, tightened := r1.ClampTo(rt.sessBudget)
 	clamped = clamped || normalized || tightened
 	rt.pg = life.New(rt.g.Context())
@@ -378,11 +378,4 @@ func (rt *runtime) startHairpin(w *worker) {
 		}
 		rt.progress(progressEvent{stage: stageHairpinResult, status: status, detail: v.String(), family: w.fam})
 	})
-}
-
-func abs64(v int64) int64 {
-	if v < 0 {
-		return -v
-	}
-	return v
 }

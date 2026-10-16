@@ -463,7 +463,7 @@ func TestSTUNICMPDoesNotFailReachableServer(t *testing.T) {
 	s.stunOn = false // the STUN host answers with ICMP port unreachable
 	s.writeErr = func(sock uint8, to netip.AddrPort) error {
 		if to == stunAddr {
-			s.schedule(20*ms, func() { s.p.NoteUnreachable(sock) }) // write holds mu
+			s.schedule(20*ms, func() { s.noteICMP(sock) }) // write holds mu
 		}
 		return nil
 	}
@@ -485,8 +485,8 @@ func TestSTUNICMPDoesNotFailReachableServer(t *testing.T) {
 	s.p = New(s.spec, s.socks[0], nil, nil)
 	s.writeErr = func(sock uint8, to netip.AddrPort) error {
 		if to == lan {
-			s.schedule(20*ms, func() { s.p.NoteUnreachable(sock) })
-			s.schedule(200*ms, func() { s.p.NoteUnreachable(sock) })
+			s.schedule(20*ms, func() { s.noteICMP(sock) })
+			s.schedule(200*ms, func() { s.noteICMP(sock) })
 		}
 		return nil
 	}
@@ -644,7 +644,7 @@ func TestSTUNUnavailable(t *testing.T) {
 		s.stunOn = false
 		s.writeErr = func(sock uint8, to netip.AddrPort) error {
 			if to == stunAddr {
-				s.schedule(20*ms, func() { s.p.NoteUnreachable(sock) }) // write holds mu
+				s.schedule(20*ms, func() { s.noteICMP(sock) }) // write holds mu
 			}
 			return nil
 		}
@@ -684,7 +684,7 @@ func TestSTUNUnavailable(t *testing.T) {
 	s.writeErr = func(sock uint8, to netip.AddrPort) error {
 		if to.Addr() == srvIP && !once {
 			once = true
-			s.schedule(20*ms, func() { s.p.NoteUnreachable(sock) })
+			s.schedule(20*ms, func() { s.noteICMP(sock) })
 		}
 		return nil
 	}
@@ -932,5 +932,46 @@ func TestCodecRole(t *testing.T) {
 	}
 	if _, ok := codecRole(nil); ok {
 		t.Fatal("nil codec")
+	}
+}
+
+// A STUN answer that names no address of the family (a NAT64 path answers
+// in the other family) ends that server's wait but is no public address: a
+// LAN-observed family keeps waiting for another server as if none had
+// answered.
+func TestSTUNWrongFamilyKeepsLANWait(t *testing.T) {
+	o := defaultOpts()
+	o.nat = natCfg{noNAT: true}
+	s := newSim(t, o)
+	s.stunOn, s.stunWrongV6 = true, true
+	s.spec.Probe.STUN = []netip.AddrPort{stunAddr, netip.MustParseAddrPort("192.0.2.60:3478")} // the second stays silent
+	s.p = New(s.spec, s.socks[0], nil, nil)
+	r := s.stepRun()
+	if s.now < stunLANGrace || s.now > o.rtt+stunLANGrace+ms {
+		t.Fatalf("done at %v, want the LAN wait of %v", s.now, stunLANGrace)
+	}
+	if len(r.Table.Snapshot().STUN) != 0 || !r.Traits.LANObserved || r.Sent.Rejected != 0 {
+		t.Fatalf("stun rows %+v, traits %+v, sent %+v", r.Table.Snapshot().STUN, r.Traits, r.Sent)
+	}
+	checkReport(t, r)
+}
+
+// Only the family's STUN servers may queue a STUN message: anyone else's
+// would take the inbox from the observers' replies.
+func TestDeliverSTUNFromServersOnly(t *testing.T) {
+	o := defaultOpts()
+	o.stun = true
+	s := newSim(t, o)
+	s.p.active.Store(true)
+	txid := [12]byte{7}
+	msg := stunMsg(stunBindingSuccess, txid, stunAttr(attrXORMapped, addrValue(netip.MustParseAddrPort("203.0.113.5:40000"), true, txid)))
+	if s.p.DeliverSTUN(0, netip.MustParseAddrPort("192.0.2.51:3478"), msg, time.Time{}) {
+		t.Fatal("a STUN message from another host was queued")
+	}
+	if !s.p.DeliverSTUN(0, netip.AddrPortFrom(netip.AddrFrom16(stunAddr.Addr().As16()), stunAddr.Port()), msg, time.Time{}) {
+		t.Fatal("the STUN server's answer (IPv4-mapped source) was refused")
+	}
+	if len(s.p.inbox) != 1 {
+		t.Fatalf("inbox holds %d", len(s.p.inbox))
 	}
 }

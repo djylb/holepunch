@@ -38,7 +38,7 @@ type allocSample struct {
 }
 
 // classifyAllocationLocked classifies an APDM allocator from the primary
-// socket's samples S and the second socket's. On an APDM NAT every
+// socket's samples and the second socket's. On an APDM NAT every
 // probe point of a socket is a new mapping, answered or not, so a
 // sample's send index is its point's rank among the socket's points
 // (sendIndexedLocked). The velocity spans the round trip between the two
@@ -49,8 +49,8 @@ type allocSample struct {
 // AllocPreserveFresh at High confidence, one at Medium. A sequential allocator
 // stays Sequential: its prediction covers every mapping, not only a socket's
 // first.
-func (t *ObsTable) classifyAllocationLocked(tr *protocol.Traits, S []sample, p SocketMeta, scope Scope) {
-	seq0 := t.sendIndexedLocked(p.ID, rowsOf(S), scope)
+func (t *ObsTable) classifyAllocationLocked(tr *protocol.Traits, samples []sample, p SocketMeta, scope Scope) {
+	seq0 := t.sendIndexedLocked(p.ID, rowsOf(samples), scope)
 	var seq1 []allocSample
 	fresh := 0
 	if preservedFresh(seq0, p.Local) {
@@ -74,7 +74,7 @@ func (t *ObsTable) classifyAllocationLocked(tr *protocol.Traits, S []sample, p S
 		// this side's own steps is another host's.
 		tr.PortNoisy = tr.PortNoisy || portDelta(last.Observed.Port(), next.Observed.Port()) != own*int(tr.PortStep)
 	}
-	tr.FirstPreserved = S[0].Observed.Port() == p.Local.Port()
+	tr.FirstPreserved = samples[0].Observed.Port() == p.Local.Port()
 	if fresh > 0 && tr.PortAlloc != protocol.AllocSequential {
 		tr.PortAlloc, tr.PortAllocConf = protocol.AllocPreserveFresh, confIf(fresh == 2, protocol.ConfHigh, protocol.ConfMedium)
 		tr.PortRangeLo, tr.PortRangeHi = 0, 0
@@ -147,10 +147,10 @@ func (t *ObsTable) crossingPointsLocked(scope Scope, keep func(PointKey) bool) [
 // destination IP, so this is the sequence its allocator produced, one
 // allocation apart. A single-IP deployment has at most two such mappings,
 // too few to classify.
-func (t *ObsTable) perIPMappingsLocked(sock uint8, S []sample, scope Scope) []allocSample {
+func (t *ObsTable) perIPMappingsLocked(sock uint8, samples []sample, scope Scope) []allocSample {
 	var rows []Row
 	var groups []uint8
-	for _, s := range S {
+	for _, s := range samples {
 		if !slices.Contains(groups, s.group) {
 			groups = append(groups, s.group)
 			rows = append(rows, s.Row)

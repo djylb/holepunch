@@ -238,9 +238,10 @@ func (s *Session) clampSidesLocked(k, r int, sides []protocol.FamilySide, lim pr
 		fs.MaxPPS = s.capU16(k, "max_pps", fs.MaxPPS, min(maxPPS, int(lim.MaxPPS), int(s.budget.MaxPPS)))
 		fs.MaxNewPerSec = s.capU16(k, "max_new_per_sec", fs.MaxNewPerSec, min(maxNewPerSec, int(s.budget.MaxNewPerSec)))
 		fs.MaxDistinctPorts = s.capU16(k, "max_distinct_ports", fs.MaxDistinctPorts, int(lim.MaxDistinctPorts))
-		var sends bool
 		var targets int
-		fs.Stages, sends, targets = s.clampStagesLocked(k, r, fs.Family, fs.Stages, s.lowTTLOK(caps, fs.Family), now)
+		// capFreshLocked reports, over the stages it keeps, whether one sends.
+		fs.Stages, _, targets = s.clampStagesLocked(k, r, fs.Family, fs.Stages, s.lowTTLOK(caps, fs.Family), now)
+		var sends bool
 		fs.Stages, sends = s.capFreshLocked(k, fs.Stages, sockCap-int(fs.Sockets))
 		if !sends {
 			fs.Role = protocol.SideReplyOnly
@@ -274,14 +275,15 @@ func (s *Session) clampSidesLocked(k, r int, sides []protocol.FamilySide, lim pr
 	if st.halve[r] {
 		limit /= 2
 	}
-	total := 0
+	// In 64 bits: the planner's MaxPackets may be anything a uint32 holds.
+	var total uint64
 	for _, fs := range out {
-		total += int(fs.MaxPackets)
+		total += uint64(fs.MaxPackets)
 	}
-	if total > limit {
+	if total > uint64(limit) {
 		s.clampedLocked(k, "max_packets", int64(total), int64(limit))
 		for i := range out {
-			out[i].MaxPackets = uint32(int(out[i].MaxPackets) * limit / total)
+			out[i].MaxPackets = uint32(uint64(out[i].MaxPackets) * uint64(limit) / total)
 		}
 	}
 	return out, active
@@ -428,7 +430,7 @@ func (s *Session) clampStagesLocked(k, r int, fam protocol.Family, stages []prot
 			s.clampedLocked(k, "stage", 1, 0)
 		}
 	}
-	return out, sends, len(distinct) + maxLANTargets - lanLeft
+	return out, sends, len(distinct) + maxLANTargets - lanLeft + maxOverlay - overlayLeft
 }
 
 // capFreshLocked keeps a fresh stage within the sockets left beside the

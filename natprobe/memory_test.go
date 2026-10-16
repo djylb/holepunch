@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -353,5 +354,43 @@ func TestMemoryAllocationRelearned(t *testing.T) {
 	mem.Observe(k, seq, true)
 	if got := mem.Apply(k, cur); got.PortVelocity != 25 {
 		t.Fatalf("a new velocity was not learned: %+v", got)
+	}
+}
+
+// The memory's Clock is the caller's code: Apply reads it before taking a
+// shard lock, so a Clock that panics once leaves no lock held.
+func TestMemoryClockPanicHoldsNoLock(t *testing.T) {
+	var panicking atomic.Bool
+	clock := func() time.Time {
+		if panicking.Load() {
+			panic("clock")
+		}
+		return time.Now()
+	}
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clock})
+	k := mkey("203.0.113.5")
+	final := eimMedium()
+	final.Hairpin = protocol.TriTrue
+	mem.Observe(k, final, true)
+	panicking.Store(true)
+	for _, call := range []func(){func() { mem.Apply(k, eimMedium()) }, func() { mem.Observe(k, final, true) }} {
+		func() {
+			defer func() { _ = recover() }()
+			call()
+		}()
+	}
+	panicking.Store(false)
+	done := make(chan protocol.Traits, 1)
+	go func() {
+		mem.Observe(k, final, true)
+		done <- mem.Apply(k, eimMedium())
+	}()
+	select {
+	case got := <-done:
+		if got.Hairpin != protocol.TriTrue {
+			t.Fatalf("applied %+v", got)
+		}
+	case <-time.After(waitBound(t)):
+		t.Fatal("a shard lock stayed held after the Clock panicked")
 	}
 }

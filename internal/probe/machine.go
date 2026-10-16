@@ -395,10 +395,11 @@ func (s *runState) stunDone(now time.Duration) bool {
 // stunWait is how long STUN may hold DONE back after mappingDone: stunGrace,
 // so that a slow or unreachable STUN server never holds probing up; but up to
 // stunLANGrace while a LAN-observed family (the server saw only private
-// addresses) has no STUN answer yet, since a STUN answer is the only public
-// address it can report. The hard limit bounds both.
+// addresses) has no STUN answer naming an address of the family yet, since
+// such an answer is the only public address it can report. The hard limit
+// bounds both.
 func (s *runState) stunWait() time.Duration {
-	if slices.ContainsFunc(s.stun, func(st *stunTarget) bool { return st.done }) || !s.table.LANObserved() {
+	if slices.ContainsFunc(s.stun, func(st *stunTarget) bool { return st.mapped }) || !s.table.LANObserved() {
 		return stunGrace
 	}
 	return stunLANGrace

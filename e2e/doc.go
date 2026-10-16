@@ -37,6 +37,11 @@
 //     success.
 //   - TestShapeAcrossSessions: packet lengths and random ports over
 //     consecutive sessions of one NAT pair.
+//   - TestMultiPath: two confirmed paths handed over on both sides, each
+//     carrying datagrams afterwards.
+//   - TestClassifierOpener: the flow opener behind an outbound protocol
+//     classifier, with it and without it (ablation NoOpener), written to
+//     classifier_report.md.
 //   - TestAblation: the ablation, written to ablation_report.md: the
 //     combination gate, full at least 13 points above Plain over the 15
 //     combinations of profile classes (the 49 ordered IPv4 cells are
@@ -82,8 +87,9 @@
 // cell@e2e-timeouts, in the escalation over escalation/<v4 cell>) narrow a
 // run, HOLEPUNCH_E2E_ABLATION_RUNS and HOLEPUNCH_E2E_ESCALATION_RUNS run the
 // ablation and the escalation at any level and HOLEPUNCH_E2E_SEED moves
-// every seed. HOLEPUNCH_E2E_OUT names the directory that receives kpi.json
-// files, ablation_report.md, timeouts_report.md, escalation_report.md,
+// every seed. A variable that is set but does not parse fails the run.
+// HOLEPUNCH_E2E_OUT names the directory that receives kpi.json files,
+// ablation_report.md, timeouts_report.md, escalation_report.md,
 // classifier_report.md and failure dumps. Without it nothing is kept:
 // failure dumps go to the test's temporary directory and nothing is ever
 // written into the source tree.

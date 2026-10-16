@@ -2,6 +2,7 @@ package coord
 
 import (
 	"bufio"
+	"cmp"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -219,7 +220,11 @@ type memEntry struct {
 	prev, next *memEntry
 }
 
-func (m *memory) shard(k StrategyKey) *memShard { return &m.shards[int(k[0])%len(m.shards)] }
+// shard picks k's shard from its first eight bytes: one byte would leave
+// every shard past the 256th empty, and the memory short of MaxEntries.
+func (m *memory) shard(k StrategyKey) *memShard {
+	return &m.shards[binary.BigEndian.Uint64(k[:8])%uint64(len(m.shards))]
+}
 
 func (m *memory) expired(e *memEntry, now int64) bool {
 	return now-e.lastUsed >= int64(m.cfg.TTL/time.Second)
@@ -240,7 +245,6 @@ func (m *memory) Recommend(key StrategyKey, ladder []VariantID) []VariantID {
 	e := sh.lookup(m, key, now, true)
 	slices.SortStableFunc(out, func(a, b VariantID) int { return int(e.score(b)) - int(e.score(a)) })
 	e.add(out[0], -m.cfg.RotatePenalty, m.cfg.ScoreMin, m.cfg.ScoreMax)
-	e.lastUsed = now
 	return out
 }
 
@@ -262,7 +266,6 @@ func (m *memory) Report(key StrategyKey, v VariantID, r MemoryResult) {
 		return
 	}
 	e.reports++
-	e.lastUsed = now
 	if r == MemSuccess {
 		e.add(v, m.cfg.SuccessGain, m.cfg.ScoreMin, m.cfg.ScoreMax)
 	} else {
@@ -371,7 +374,7 @@ func (m *memory) Import(r io.Reader) error {
 		scores [memMaxVariants]int8
 		last   int64
 	}
-	recs := make([]rec, 0, min(int(n), m.cfg.MaxEntries))
+	recs := make([]rec, 0, int(min(uint64(n), uint64(m.cfg.MaxEntries))))
 	for range n {
 		var b [memRecordSize]byte
 		if _, err := io.ReadFull(br, b[:]); err != nil {
@@ -386,7 +389,7 @@ func (m *memory) Import(r io.Reader) error {
 		recs = append(recs, x)
 	}
 	// Oldest first, so that the lists stay ordered by last use.
-	slices.SortStableFunc(recs, func(a, b rec) int { return int(a.last - b.last) })
+	slices.SortStableFunc(recs, func(a, b rec) int { return cmp.Compare(a.last, b.last) })
 	now := m.cfg.Clock().Unix()
 	for _, x := range recs {
 		e := &memEntry{key: x.key, scores: x.scores, lastUsed: x.last}
@@ -404,25 +407,31 @@ func (m *memory) Import(r io.Reader) error {
 	return nil
 }
 
-// lookup returns key's entry, dropping an expired one; with create it makes a
-// fresh entry (all scores 0), evicting the least recently used one when the
-// shard is full. Without create a missing key yields an empty entry that is not
-// stored. A returned stored entry is moved to the front.
-func (sh *memShard) lookup(m *memory, key StrategyKey, now int64, create bool) *memEntry {
+// lookup returns key's entry, dropping an expired one. With use it is a use
+// of the entry: a missing key gets a fresh entry (all scores 0), evicting the
+// least recently used one when the shard is full, and the entry's last use
+// becomes now, at the front of the list. Without use the entry is only read
+// and a missing key yields an empty entry that is not stored. The list stays
+// ordered by last use, which Sweep relies on.
+func (sh *memShard) lookup(m *memory, key StrategyKey, now int64, use bool) *memEntry {
 	e := sh.m[key]
 	if e != nil && m.expired(e, now) {
 		sh.remove(e)
 		e = nil
 	}
 	switch {
-	case e != nil:
-		sh.unlink(e)
-		sh.pushFront(e)
-	case create:
+	case !use:
+		if e == nil {
+			e = &memEntry{}
+		}
+		return e
+	case e == nil:
 		e = &memEntry{key: key, lastUsed: now}
 		sh.insert(e)
 	default:
-		e = &memEntry{}
+		e.lastUsed = now
+		sh.unlink(e)
+		sh.pushFront(e)
 	}
 	return e
 }

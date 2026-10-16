@@ -19,8 +19,6 @@ import (
 // sockets, always waits for its whole search window and logs through the
 // standard logger.
 
-const ssdpMaxResponse = 2048
-
 var ssdpMulticastAddr = netip.AddrPortFrom(netip.AddrFrom4([4]byte{239, 255, 255, 250}), ssdpPort)
 
 var ssdpSearchTargets = [...]string{
@@ -56,7 +54,7 @@ func ssdpSearch(ctx context.Context, open opener, local, gw netip.Addr, gwPort u
 		reqs = append(reqs, []byte("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nST: "+st+
 			"\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\n\r\n"))
 	}
-	buf := make([]byte, ssdpMaxResponse)
+	buf := make([]byte, readBufSize)
 	for interval := retransmitInitial; ; interval = min(interval*2, retransmitMax) {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("%w: %w", errNoIGD, context.Cause(ctx))

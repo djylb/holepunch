@@ -156,7 +156,10 @@ func (s *runState) extraArrived(r *probeRec) {
 	s.table.AddFilter(f)
 }
 
-// onSTUN accepts a Binding Success from the server the request went to.
+// onSTUN accepts a Binding Success from the server the request went to. An
+// answer that names no address of the family (a NAT64 path answers an IPv6
+// request with IPv4) ends the server's wait like any answer but enters
+// nothing.
 func (s *runState) onSTUN(in inbound, el time.Duration) {
 	i := slices.IndexFunc(s.stun, func(st *stunTarget) bool { return st.txid == in.txid })
 	if i < 0 || s.stun[i].done || in.from != s.stun[i].addr {
@@ -165,6 +168,10 @@ func (s *runState) onSTUN(in inbound, el time.Duration) {
 	}
 	st := s.stun[i]
 	st.done = true
+	if ip := in.mapped.Addr(); !s.p.spec.Family.Matches(ip) || ip.IsMulticast() {
+		return
+	}
+	st.mapped = true
 	s.table.Record(nat.PointKey{Socket: s.p.primaryID, Source: nat.SourceSTUN, Observer: st.idx}, in.mapped, el, max(el-st.last, 0), 0)
 }
 

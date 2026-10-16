@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -518,6 +519,44 @@ func TestCoordinatorClose(t *testing.T) {
 	}
 	if r.c.Len() != 0 {
 		t.Fatalf("Len %d", r.c.Len())
+	}
+}
+
+// TestCloseDeliversResults: Close returns only once the Results of the
+// sessions it ended are delivered — OnResult has returned and EvClosed has
+// reached the Observer.
+func TestCloseDeliversResults(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var closedEvents atomic.Int32
+	r := newRig(t, func(c *Config) {
+		c.OnResult = func(Result) {
+			close(entered)
+			<-release
+		}
+		c.Observer = func(ev Event) {
+			if ev.Kind == EvClosed {
+				closedEvents.Add(1)
+			}
+		}
+	})
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(free) // before the rig's Close, should the test fail early
+	r.session(SessionOptions{})
+	done := make(chan error, 1)
+	go func() { done <- r.c.Close() }()
+	<-entered
+	select {
+	case err := <-done:
+		t.Fatalf("Close returned while OnResult runs: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	free()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n := closedEvents.Load(); n != 1 {
+		t.Fatalf("%d EvClosed delivered before Close returned", n)
 	}
 }
 

@@ -87,6 +87,7 @@ func (s *scanState) recordUnsolicited(remote netip.Addr, now time.Duration) bool
 	if s.cfg.UnsolicitedInbound <= 0 {
 		return false
 	}
+	s.gc(now) // a scan from many sources must not grow the state while the LAN is silent
 	w := s.unsol[remote]
 	if w == nil {
 		w = &countWindow{win: s.cfg.Window}
@@ -99,8 +100,8 @@ func (s *scanState) recordUnsolicited(remote netip.Addr, now time.Duration) bool
 	return true
 }
 
-// gc forgets idle trackers once per Window, so that the state stays
-// proportional to the recent traffic.
+// gc forgets idle trackers and ended bans once per Window, so that the
+// state stays proportional to the recent traffic.
 func (s *scanState) gc(now time.Duration) {
 	if now-s.lastGC < s.cfg.Window {
 		return
@@ -114,6 +115,13 @@ func (s *scanState) gc(now time.Duration) {
 	for k, w := range s.unsol {
 		if w.count(now) == 0 {
 			delete(s.unsol, k)
+		}
+	}
+	for _, bans := range [...]map[netip.Addr]time.Duration{s.banInt, s.banExt} {
+		for ip, until := range bans {
+			if now >= until {
+				delete(bans, ip)
+			}
 		}
 	}
 }

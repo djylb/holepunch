@@ -79,6 +79,11 @@ func (c *Conn) WriteFrame(ctx context.Context, f Frame) error {
 	if err := c.checkSend(f.Type, len(f.Payload)); err != nil {
 		return err
 	}
+	// A frame queued with a deadline already past would fail the write side
+	// as soon as the writer picked it.
+	if ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
 	deadline := time.Now().Add(c.wtimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
@@ -93,24 +98,29 @@ func (c *Conn) WriteFrame(ctx context.Context, f Frame) error {
 	case err := <-of.done:
 		return err
 	case <-ctx.Done():
-		c.withdraw(of)
-		select {
-		case err := <-of.done:
-			return err
-		default:
-			return context.Cause(ctx)
-		}
 	case <-t.C:
-		if !c.withdraw(of) {
-			select {
-			case err := <-of.done:
-				return err
-			default:
+		// When this goroutine wakes late, ctx may have ended as well; the
+		// frame's own bound decides only if it did not, so that an ended
+		// ctx never fails the write side.
+		if ctx.Err() == nil {
+			if !c.withdraw(of) {
+				select {
+				case err := <-of.done:
+					return err
+				default:
+				}
 			}
+			err := writeTimeout(f.Type)
+			c.failWrite(err)
+			return err
 		}
-		err := writeTimeout(f.Type)
-		c.failWrite(err)
+	}
+	c.withdraw(of)
+	select {
+	case err := <-of.done:
 		return err
+	default:
+		return context.Cause(ctx)
 	}
 }
 
@@ -218,7 +228,9 @@ func (c *Conn) withdraw(f *outFrame) bool {
 
 // complete reports the outcome of a frame that has left the queues. lost
 // marks frames that did not reach the wire because the write side failed or
-// stopped. Callers hold qmu.
+// stopped; the write side is stopped (wstop set) before any frame is
+// completed as lost, so that Flush never sees a loss without its cause.
+// Callers hold qmu.
 func (c *Conn) complete(f *outFrame, err error, lost bool) {
 	if lost && (c.lostMin == 0 || f.seq < c.lostMin) {
 		c.lostMin = f.seq
@@ -253,6 +265,9 @@ func (c *Conn) oldestOutstanding() uint64 {
 // stopQueues stops accepting frames and drops the queued ones; the frame in
 // flight is left to the writer. It is idempotent: only the first cause is kept.
 func (c *Conn) stopQueues(cause error) {
+	// Built before taking qmu: cause may come from the connection, and
+	// formatting it runs the connection's code.
+	dropped := fmt.Errorf("%w: %w", ErrDropped, cause)
 	c.qmu.Lock()
 	defer c.qmu.Unlock()
 	if c.wstop != nil {
@@ -262,7 +277,7 @@ func (c *Conn) stopQueues(cause error) {
 	for p := range c.queues {
 		for _, f := range c.queues[p] {
 			c.dropped.Add(1)
-			c.complete(f, fmt.Errorf("%w: %w", ErrDropped, cause), true)
+			c.complete(f, dropped, true)
 		}
 		clear(c.queues[p])
 		c.queues[p] = c.queues[p][:0]
@@ -295,8 +310,8 @@ func (c *Conn) writeLoop() {
 		// in boundaries of their own; this one keeps a defect in writeOut
 		// itself from leaving the frame in flight and its waiters asleep.
 		if perr := life.Safe("ctl-write", func() { cont = c.writeOut(f) }); perr != nil {
-			c.settleFlight(f, perr)
 			c.failWrite(perr)
+			c.settleFlight(f, perr)
 			return
 		}
 		if !cont {
@@ -377,8 +392,8 @@ func (c *Conn) writeOut(f *outFrame) bool {
 	if !f.deadline.IsZero() {
 		if !f.deadline.After(now) {
 			err := writeTimeout(f.typ)
-			c.endFlight(f, err, true)
 			c.failWrite(err)
+			c.endFlight(f, err, true)
 			return false
 		}
 		if f.deadline.Before(deadline) {
@@ -402,8 +417,8 @@ func (c *Conn) writeOut(f *outFrame) bool {
 		derr = perr
 	}
 	if derr != nil {
-		c.endFlight(f, derr, true)
 		c.failWrite(derr)
+		c.endFlight(f, derr, true)
 		return false
 	}
 	c.dmu.Lock()
@@ -432,6 +447,12 @@ func (c *Conn) writeOut(f *outFrame) bool {
 		// How much of the frame reached the wire is unknown.
 		werr = perr
 		c.wdirty = true
+	case n < 0 || n > len(buf):
+		// A count io.Writer does not allow: the stream position is unknown.
+		if werr == nil {
+			werr = fmt.Errorf("controlwire: Write returned invalid count %d", n)
+		}
+		c.wdirty = true
 	case werr == nil && n != len(buf):
 		werr = io.ErrShortWrite
 		c.wdirty = n > 0
@@ -441,8 +462,8 @@ func (c *Conn) writeOut(f *outFrame) bool {
 	c.dmu.Unlock()
 
 	if werr != nil {
-		c.endFlight(f, werr, true)
 		c.failWrite(werr)
+		c.endFlight(f, werr, true)
 		return false
 	}
 	c.framesOut.Add(1)

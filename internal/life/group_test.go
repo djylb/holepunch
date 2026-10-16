@@ -20,6 +20,7 @@ type closer struct {
 	panics bool
 	log    *closeLog
 	g      *Group
+	done   chan struct{} // closed by Close when not nil
 }
 
 type closeLog struct {
@@ -33,6 +34,9 @@ func (c *closer) Close() error {
 	c.log.order = append(c.log.order, c.name)
 	c.log.canceled = append(c.log.canceled, c.g != nil && c.g.Context().Err() != nil)
 	c.log.mu.Unlock()
+	if c.done != nil {
+		close(c.done)
+	}
 	if c.panics {
 		panic("close " + c.name)
 	}
@@ -154,24 +158,33 @@ func TestOwnRejectsNilAndTypedNil(t *testing.T) {
 func TestCloseOrderCancelThenReverseCloseThenJoin(t *testing.T) {
 	g := New(context.Background())
 	log := &closeLog{}
+	lastClosed := make(chan struct{})
 	for _, n := range []string{"a", "b", "c"} {
-		if !g.Own(n, &closer{name: n, log: log, g: g}) {
+		c := &closer{name: n, log: log, g: g}
+		if n == "a" {
+			c.done = lastClosed // closed last, in reverse order of Own
+		}
+		if !g.Own(n, c) {
 			t.Fatal("Own failed")
 		}
 	}
 	var sawCanceled atomic.Bool
-	var closedBeforeExit atomic.Int32
+	var closedBeforeExit atomic.Int64
 	g.Go("waiter", func(ctx context.Context) {
 		<-ctx.Done()
 		sawCanceled.Store(true)
-		// Give Close the chance to close resources before this goroutine
-		// exits: the join must wait for it.
-		time.Sleep(20 * time.Millisecond)
+		// The join must follow closing, so the last resource is closed while
+		// this goroutine still runs. Were the join first, the wait would end
+		// only at the timeout, with nothing closed yet.
+		select {
+		case <-lastClosed:
+		case <-time.After(5 * time.Second):
+		}
 		log.mu.Lock()
-		closedBeforeExit.Store(int32(len(log.order)))
+		closedBeforeExit.Store(int64(len(log.order)))
 		log.mu.Unlock()
 	})
-	if err := g.Close(time.Second); err != nil {
+	if err := g.Close(10 * time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if !sawCanceled.Load() {
@@ -230,8 +243,8 @@ func TestCloseJoinBoundCountsLeaked(t *testing.T) {
 	if err := g.Close(50 * time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(start); d < 50*time.Millisecond || d > time.Second {
-		t.Fatalf("Close took %v, want about the join bound", d)
+	if d := time.Since(start); d < 50*time.Millisecond || d >= JoinTimeout {
+		t.Fatalf("Close took %v, want about the 50ms join bound", d)
 	}
 	if s := g.Stats(); s.Leaked != 1 || s.Running != 1 {
 		t.Fatalf("stats = %+v, want Leaked=1 Running=1", s)
@@ -327,7 +340,8 @@ func TestOwnAcceptsUncomparableAndClosesIt(t *testing.T) {
 }
 
 func TestGoNilFuncAndNilParent(t *testing.T) {
-	g := New(nil) //nolint:staticcheck // a nil parent is accepted on purpose
+	var parent context.Context // a nil parent is accepted on purpose
+	g := New(parent)
 	if g.Go("nil", nil) {
 		t.Fatal("Go(nil) returned true")
 	}
@@ -340,8 +354,11 @@ func TestOwnTwiceRegistersOnce(t *testing.T) {
 	g := New(context.Background())
 	log := &closeLog{}
 	c := &closer{name: "c", log: log}
-	if !g.Own("c", c) || !g.Own("c", c) {
-		t.Fatal("Own failed")
+	if !g.Own("c", c) {
+		t.Fatal("first Own failed")
+	}
+	if !g.Own("c", c) {
+		t.Fatal("second Own failed")
 	}
 	if s := g.Stats(); s.Owned != 1 {
 		t.Fatalf("owned = %d, want 1", s.Owned)
@@ -359,6 +376,69 @@ func TestCloserPanicIsCounted(t *testing.T) {
 	_ = g.Own("late", &closer{name: "late", panics: true, log: &closeLog{}})
 	if s := g.Stats(); s.Panics != 2 {
 		t.Fatalf("panics = %d, want 2", s.Panics)
+	}
+}
+
+// ifaceCloser is a comparable struct type whose interface field may hold a
+// value that is not comparable; == on two such values panics at run time.
+type ifaceCloser struct{ v any }
+
+func (ifaceCloser) Close() error { return nil }
+
+// TestOwnNeverComparesUncomparableValues: Own compares under the group lock,
+// so a panicking == would leave the lock held and wedge the group.
+func TestOwnNeverComparesUncomparableValues(t *testing.T) {
+	g := New(context.Background())
+	a, b := ifaceCloser{v: []int{1}}, ifaceCloser{v: []int{1}}
+	if !g.Own("a", a) || !g.Own("b", b) {
+		t.Fatal("Own of an uncomparable value failed")
+	}
+	if g.Disown(a) {
+		t.Fatal("Disown matched an uncomparable value")
+	}
+	// A comparable value of the same type is still matched.
+	c := ifaceCloser{v: 1}
+	if !g.Own("c", c) {
+		t.Fatal("first Own failed")
+	}
+	if !g.Own("c", c) {
+		t.Fatal("second Own failed")
+	}
+	if s := g.Stats(); s.Owned != 3 {
+		t.Fatalf("owned = %d, want 3", s.Owned)
+	}
+	if !g.Disown(c) {
+		t.Fatal("Disown(comparable) = false")
+	}
+	if err := g.Close(time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// panickyIsError is an error whose Is method panics, as one returned by a
+// caller-supplied resource may.
+type panickyIsError struct{}
+
+func (panickyIsError) Error() string   { return "close failed" }
+func (panickyIsError) Is(_ error) bool { panic("Is exploded") }
+
+// TestCloseContainsPanicsFromCloseErrors: matching a resource's Close error
+// against net.ErrClosed runs the error's methods, which are caller code.
+func TestCloseContainsPanicsFromCloseErrors(t *testing.T) {
+	g := New(context.Background())
+	log := &closeLog{}
+	g.Own("a", &closer{name: "a", log: log})
+	g.Own("b", &closer{name: "b", err: panickyIsError{}, log: log})
+	err := g.Close(time.Second)
+	var perr *PanicError
+	if !errors.As(err, &perr) || perr.Where() != "close:b" {
+		t.Fatalf("Close = %v, want PanicError at close:b", err)
+	}
+	if len(log.order) != 2 {
+		t.Fatalf("closed %v; the panic must not skip later resources", log.order)
+	}
+	if s := g.Stats(); s.Panics != 1 {
+		t.Fatalf("panics = %d, want 1", s.Panics)
 	}
 }
 

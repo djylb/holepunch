@@ -17,5 +17,5 @@ func reportErrno(e syscall.Errno) bool {
 }
 
 func noRouteErrno(e syscall.Errno) bool {
-	return errors.Is(e, syscall.EHOSTUNREACH) || errors.Is(e, syscall.ENETUNREACH)
+	return errors.Is(e, syscall.EHOSTUNREACH) || errors.Is(e, syscall.ENETUNREACH) || hostDown(e)
 }

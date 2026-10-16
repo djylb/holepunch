@@ -84,12 +84,20 @@ func fail(r protocol.Reason, detail string, err error) *failure {
 }
 
 // classify turns a cause into its reason and detail. A recovered panic is
-// tested first because a panic value may wrap anything; then the caller's own
+// tested first because a panic value may wrap anything — unless the runtime
+// already made the panic its own internal failure, whose detail names it
+// (ctlCause names the control link's side); then the caller's own
 // cancellation — Canceled and DeadlineExceeded alike — then the runtime's
-// structured causes and the wire errors. It never returns nil.
+// structured causes and the wire errors. It never returns nil. Walking the
+// chain calls the methods of whatever errors it holds, the caller's among
+// them (a context cause, a connection's error), so it runs inside a recover
+// boundary.
 func classify(callerCtx context.Context, cause error) *failure {
 	var pe *life.PanicError
 	if errors.As(cause, &pe) {
+		if f := (*failure)(nil); errors.As(cause, &f) && f.reason == protocol.ReasonInternal {
+			return f
+		}
 		return fail(protocol.ReasonInternal, "panic:"+pe.Where(), cause)
 	}
 	if callerCtx.Err() != nil {

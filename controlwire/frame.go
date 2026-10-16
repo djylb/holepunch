@@ -240,12 +240,13 @@ func ParseHeader(h [HeaderSize]byte, capFor func(Type) int) (Type, int, error) {
 		return 0, 0, ErrZeroType
 	}
 	n := binary.BigEndian.Uint32(h[4:])
-	limit := MaxPayload
+	limit := t.Cap()
 	if capFor != nil {
-		limit = min(limit, capFor(t))
-	} else {
-		limit = min(limit, t.Cap())
+		// A negative cap admits only an empty payload; converted as it is,
+		// it would wrap around to a limit of nearly 4 GiB.
+		limit = max(capFor(t), 0)
 	}
+	limit = min(limit, MaxPayload)
 	if n > uint32(limit) {
 		return t, 0, fmt.Errorf("%w: %v length %d > %d", ErrFrameTooLarge, t, n, limit)
 	}

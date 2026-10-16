@@ -11,7 +11,7 @@ import (
 func main() {
 	wd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "lintcheck:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "lintcheck:", err)
 		os.Exit(2)
 	}
 	os.Exit(run(wd, os.Args[1:], os.Stdout, os.Stderr))
@@ -23,7 +23,7 @@ func run(wd string, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("lintcheck", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: lintcheck [packages]   (default ./...)")
+		_, _ = fmt.Fprintln(stderr, "usage: lintcheck [packages]   (default ./...)")
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -34,17 +34,17 @@ func run(wd string, args []string, stdout, stderr io.Writer) int {
 	}
 	root, err := findModuleRoot(wd)
 	if err != nil {
-		fmt.Fprintln(stderr, "lintcheck:", err)
+		_, _ = fmt.Fprintln(stderr, "lintcheck:", err)
 		return 2
 	}
 	mod, err := loadModule(root)
 	if err != nil {
-		fmt.Fprintln(stderr, "lintcheck:", err)
+		_, _ = fmt.Fprintln(stderr, "lintcheck:", err)
 		return 2
 	}
 	targets, warnings, err := mod.match(wd, patterns)
 	if err != nil {
-		fmt.Fprintln(stderr, "lintcheck:", err)
+		_, _ = fmt.Fprintln(stderr, "lintcheck:", err)
 		return 2
 	}
 	for _, p := range mod.pkgs {
@@ -53,11 +53,11 @@ func run(wd string, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	for _, w := range warnings {
-		fmt.Fprintln(stderr, "lintcheck: warning:", w)
+		_, _ = fmt.Fprintln(stderr, "lintcheck: warning:", w)
 	}
 	for _, p := range targets {
 		if p.err != nil {
-			fmt.Fprintln(stderr, "lintcheck:", p.err)
+			_, _ = fmt.Fprintln(stderr, "lintcheck:", p.err)
 			return 2
 		}
 	}
@@ -67,7 +67,7 @@ func run(wd string, args []string, stdout, stderr io.Writer) int {
 		if rel, err := filepath.Rel(wd, name); err == nil && within(wd, name) {
 			name = rel
 		}
-		fmt.Fprintf(stdout, "%s:%d:%d: %s: %s\n", name, d.pos.Line, d.pos.Column, d.rule, d.msg)
+		_, _ = fmt.Fprintf(stdout, "%s:%d:%d: %s: %s\n", name, d.pos.Line, d.pos.Column, d.rule, d.msg)
 	}
 	if len(diags) > 0 {
 		return 1

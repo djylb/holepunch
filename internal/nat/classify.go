@@ -12,7 +12,7 @@ import (
 // result is provisional; natprobe's merge recomputes it from its own records
 // and clears the flag.
 //
-// The primary socket's samples S are the first values it got from the
+// The primary socket's samples are the first values it got from the
 // main-group observers of the classification scope, ordered by first send
 // seq (mapping creation order). The scope is global when any main observer
 // is global, otherwise private: a LAN-only or loopback deployment still
@@ -39,32 +39,32 @@ func (t *ObsTable) Classify() protocol.Traits {
 		return tr
 	}
 	scope := t.classScopeLocked()
-	S := t.firstValuesLocked(p.ID, scope)
-	tr.Samples = uint8(len(S))
+	samples := t.firstValuesLocked(p.ID, scope)
+	tr.Samples = uint8(len(samples))
 	var pub netip.Addr
-	if len(S) > 0 {
-		pub = S[0].Observed.Addr()
+	if len(samples) > 0 {
+		pub = samples[0].Observed.Addr()
 	}
 	tr.CGNAT = t.cgnatLocked(p, pub)
-	if len(S) == 0 {
+	if len(samples) == 0 {
 		return tr
 	}
-	first := S[0].Observed
+	first := samples[0].Observed
 	tr.Observed, tr.PublicIP = first, first.Addr()
-	if lanObserved(S, scope) {
+	if lanObserved(samples, scope) {
 		// The server's public observers saw a private address: the
 		// client reaches the server without NAT, so the samples describe
 		// that path and nothing of the client's NAT toward the Internet.
 		tr.LANObserved, tr.NoNAT = true, protocol.TriUnknown
 		return tr
 	}
-	tr.NoNAT = noNAT(p, S, scope)
+	tr.NoNAT = noNAT(p, samples, scope)
 	xs := t.crossRowsLocked(p.ID, scope, SourceServerAlt, SourcePeer)
-	tr.MultiExit = distinctIPs(S, xs) >= 2
+	tr.MultiExit = distinctIPs(samples, xs) >= 2
 	tr.Drifted = t.anyDriftLocked()
 	tr.MultiHomed = t.multiHomedLocked(first.Addr(), scope)
 
-	classifyMapping(&tr, S, xs, t.secondVariesLocked(scope))
+	classifyMapping(&tr, samples, xs, t.secondVariesLocked(scope))
 	if tr.Drifted && tr.MappingConf > protocol.ConfLow {
 		tr.MappingConf = protocol.ConfLow
 	}
@@ -74,16 +74,16 @@ func (t *ObsTable) Classify() protocol.Traits {
 	switch tr.Mapping {
 	case protocol.MapEIM:
 		if first.Port() == p.Local.Port() {
-			tr.PortAlloc, tr.PortAllocConf = protocol.AllocPreserving, confIf(len(S) >= 2, protocol.ConfHigh, protocol.ConfMedium)
+			tr.PortAlloc, tr.PortAllocConf = protocol.AllocPreserving, confIf(len(samples) >= 2, protocol.ConfHigh, protocol.ConfMedium)
 		}
 	case protocol.MapADM:
 		if first.Port() == p.Local.Port() {
 			tr.PortAlloc, tr.PortAllocConf = protocol.AllocPreserving, protocol.ConfHigh
 		} else {
-			classifyPorts(&tr, t.perIPMappingsLocked(p.ID, S, scope), nil)
+			classifyPorts(&tr, t.perIPMappingsLocked(p.ID, samples, scope), nil)
 		}
 	case protocol.MapAPDM:
-		t.classifyAllocationLocked(&tr, S, p, scope)
+		t.classifyAllocationLocked(&tr, samples, p, scope)
 	case protocol.MapUnknown:
 		// Port allocation stays unclassified without a mapping.
 	}
@@ -101,19 +101,19 @@ type sample struct {
 // groups (a server with several public IPs) compare across addresses
 // directly; a single group is the usual one-IP deployment, where only the
 // cross-address sources can tell EIM from ADM.
-func classifyMapping(tr *protocol.Traits, S []sample, xs []Row, secondVaries bool) {
-	m := len(S)
-	first := S[0].Observed
+func classifyMapping(tr *protocol.Traits, samples []sample, xs []Row, secondVaries bool) {
+	m := len(samples)
+	first := samples[0].Observed
 	withinVary, multiMember, allSame := false, false, true
 	var groups []uint8
-	for _, s := range S {
+	for _, s := range samples {
 		allSame = allSame && s.Observed == first
 		if slices.Contains(groups, s.group) {
 			continue
 		}
 		groups = append(groups, s.group)
 		members := 0
-		for _, o := range S {
+		for _, o := range samples {
 			if o.group != s.group {
 				continue
 			}
@@ -410,11 +410,11 @@ func (t *ObsTable) cgnatLocked(p SocketMeta, pub netip.Addr) protocol.Tri {
 // lanObserved reports whether public observers (scope global) saw the
 // primary socket at private addresses only: a client that reaches the server
 // over a LAN route or through a hairpin without source NAT.
-func lanObserved(S []sample, scope Scope) bool {
-	if scope != ScopeGlobal || len(S) == 0 {
+func lanObserved(samples []sample, scope Scope) bool {
+	if scope != ScopeGlobal || len(samples) == 0 {
 		return false
 	}
-	for _, s := range S {
+	for _, s := range samples {
 		if ScopeOf(s.Observed.Addr()) != ScopePrivate {
 			return false
 		}
@@ -443,11 +443,11 @@ func (t *ObsTable) lanObservedLocked() bool {
 // noNAT: every server value equals the local address, which is global (or
 // private in a private-scope deployment) → true; a mix → unknown (the
 // contradiction has no confidence field to lower); none → false.
-func noNAT(p SocketMeta, S []sample, scope Scope) protocol.Tri {
+func noNAT(p SocketMeta, samples []sample, scope Scope) protocol.Tri {
 	local := p.Local
 	localOK := local.IsValid() && (ScopeOf(local.Addr()) == ScopeGlobal || scope == ScopePrivate)
 	all, some := true, false
-	for _, s := range S {
+	for _, s := range samples {
 		if s.Observed == local {
 			some = true
 		} else {
@@ -463,14 +463,14 @@ func noNAT(p SocketMeta, S []sample, scope Scope) protocol.Tri {
 	return protocol.TriFalse
 }
 
-func distinctIPs(S []sample, xs []Row) int {
+func distinctIPs(samples []sample, xs []Row) int {
 	var ips []netip.Addr
 	add := func(a netip.Addr) {
 		if !slices.Contains(ips, a) {
 			ips = append(ips, a)
 		}
 	}
-	for _, s := range S {
+	for _, s := range samples {
 		add(s.Observed.Addr())
 	}
 	for _, x := range xs {

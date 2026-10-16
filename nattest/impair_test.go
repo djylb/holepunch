@@ -378,3 +378,26 @@ func TestPortNoiseLongIdle(t *testing.T) {
 		t.Fatalf("%d noise events in one catch-up", st.NoiseAllocs)
 	}
 }
+
+// TestScanDefenseForgetsSilentScanners: the trackers of unsolicited sources
+// are forgotten once their window has passed, even when the LAN sends
+// nothing that would sweep them.
+func TestScanDefenseForgetsSilentScanners(t *testing.T) {
+	n, clk := fakeNet(t)
+	nat := n.NAT(NATConfig{ScanDefense: &ScanDefense{UnsolicitedInbound: 2, Window: time.Second, BanFor: time.Second}})
+	target := netip.AddrPortFrom(ext(t, nat), 4000)
+	for range 20 {
+		c := listen(t, n.PublicHost(netip.IPv4Unspecified()), 1)
+		for range 3 { // the third knock bans the source
+			send(t, c, target, "knock")
+		}
+	}
+	if st := nat.Stats(); st.ScanBans != 20 || len(nat.scan.unsol) != 20 || len(nat.scan.banExt) != 20 {
+		t.Fatalf("bans %d, trackers %d, banned %d", st.ScanBans, len(nat.scan.unsol), len(nat.scan.banExt))
+	}
+	clk.Advance(2 * time.Second)
+	send(t, listen(t, n.PublicHost(netip.IPv4Unspecified()), 1), target, "knock")
+	if len(nat.scan.unsol) != 1 || len(nat.scan.banExt) != 0 {
+		t.Fatalf("%d trackers and %d bans kept after their window", len(nat.scan.unsol), len(nat.scan.banExt))
+	}
+}

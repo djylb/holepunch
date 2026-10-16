@@ -85,15 +85,15 @@ type inboundEvidence struct {
 // punching, and natprobe builds one per reported family in Handle.Merge. It
 // is safe for concurrent use.
 type ObsTable struct {
-	mu        sync.Mutex
 	family    protocol.Family
 	sockets   []SocketMeta
 	observers []Observer
 	rows      []Row
 	filters   []FilterEvidence
 	inbound   []inboundEvidence
-	hairpin   protocol.Tri
 	overlay   []netip.Addr // the host's overlay addresses (NoteOverlay)
+	mu        sync.Mutex
+	hairpin   protocol.Tri
 	// reportedFallback lets a LAN-observed table admit the global
 	// addresses its client reported (SetReportedFallback).
 	reportedFallback bool

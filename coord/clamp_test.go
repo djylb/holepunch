@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -520,4 +521,166 @@ func TestClampNeedNotKeepEquality(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUnverifiedOverlayCeiling: in an unverified family the packet ceiling
+// is eight per target the stages aim at, overlay targets included, so a
+// shared overlay's stage does not eat the public targets' packets.
+func TestUnverifiedOverlayCeiling(t *testing.T) {
+	_, s := testSession(t)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u4 := protocol.FamilyUDP4
+	ovl := mustAP("100.101.0.2:50000")
+	st := &s.st
+	st.pair.Unverified = map[protocol.Family]bool{u4: true}
+	st.pair.SharedOverlay = map[protocol.Family]bool{u4: true}
+	st.overlay[1] = map[protocol.Family][]netip.Addr{u4: {ovl.Addr()}}
+	side := protocol.FamilySide{Family: u4, Role: protocol.SideBoth, Sockets: 1, MaxPackets: unverifiedPerTarget + lanRepeats,
+		MaxPPS: 50, MaxNewPerSec: 50, MaxDistinctPorts: 4, Stages: []protocol.Stage{
+			{Kind: protocol.StageDirect, Targets: []netip.AddrPort{pubR}, Repeats: unverifiedPerTarget},
+			{Kind: protocol.StageDirect, Targets: []netip.AddrPort{ovl}, Repeats: lanRepeats},
+		}}
+	if _, _, n := s.clampStagesLocked(1, 0, u4, side.Stages, true, 0); n != 2 {
+		t.Fatalf("%d targets counted, want the public and the overlay one", n)
+	}
+	lim, _ := protocol.BudgetLight.Limits()
+	out, active := s.clampSidesLocked(1, 0, []protocol.FamilySide{side}, lim, 0)
+	if !active || len(out) != 1 || out[0].MaxPackets != side.MaxPackets || len(out[0].Stages) != 2 {
+		t.Fatalf("side %+v, want its %d packets kept", out, side.MaxPackets)
+	}
+}
+
+// TestPlannerOutputSanitized: an unknown advice is dropped rather than
+// failing the summary's encoding, and a stop detail is cut to what
+// punch_abort carries.
+func TestPlannerOutputSanitized(t *testing.T) {
+	long := strings.Repeat("x", 3*maxDetail)
+	r := newRig(t, func(c *Config) { c.Planner = adviceStopPlanner{detail: long} })
+	p := r.pair(SessionOptions{})
+	sums := p.summaries()
+	for i, sum := range sums {
+		if sum.Plan.Advice != "" {
+			t.Fatalf("side %d: advice %q", i, sum.Plan.Advice)
+		}
+		send(t, p.cl[i], simclient.Ready(sum, roleOf(i), 1))
+	}
+	for i := range 2 {
+		expect[protocol.PunchGo](t, p.cl[i])
+	}
+	for i := range 2 {
+		p.windowEnd(i, 1, fired(3))
+	}
+	for i := range 2 {
+		if a := expectAbort(t, p.cl[i]); a.Code != protocol.ReasonCandidateTimeout || a.Detail != long[:maxDetail] {
+			t.Fatalf("side %d: abort %s with a detail of %d bytes", i, a.Code, len(a.Detail))
+		}
+	}
+	if res := r.wait(p.s); res.Code != protocol.ReasonCandidateTimeout || len(res.Detail) != maxDetail || res.Retry.Advice != "" {
+		t.Fatalf("result %s, detail of %d bytes, advice %q", res.Code, len(res.Detail), res.Retry.Advice)
+	}
+}
+
+// adviceStopPlanner is the default planner with an advice no client knows,
+// stopping after round 1 with detail.
+type adviceStopPlanner struct {
+	plan.DefaultPlanner
+	detail string
+}
+
+func (p adviceStopPlanner) Classify(in ClassifyInput) Classification {
+	c := p.DefaultPlanner.Classify(in)
+	c.Advice = "teleport"
+	return c
+}
+
+func (p adviceStopPlanner) Round(in RoundInput) RoundDecision {
+	if in.Round > 1 {
+		return RoundDecision{Stop: protocol.ReasonCandidateTimeout, StopDetail: p.detail}
+	}
+	return p.DefaultPlanner.Round(in)
+}
+
+// scribblePlanner is the default planner writing its input after reading
+// it: the responder's endpoint in the classification views becomes a third
+// party's, the round's classification loses its family, the policy forbids
+// low TTL.
+type scribblePlanner struct{ plan.DefaultPlanner }
+
+var thirdParty = mustAP("8.8.8.8:53")
+
+func (p scribblePlanner) Classify(in ClassifyInput) Classification {
+	c := p.DefaultPlanner.Classify(in)
+	for _, v := range []protocol.PeerView{in.Initiator, in.Responder} {
+		for _, fv := range v.Families {
+			for i := range fv.Endpoints {
+				fv.Endpoints[i].Addr, fv.Endpoints[i].Verified = thirdParty, true
+			}
+		}
+	}
+	for f := range in.Pair.Unverified {
+		in.Pair.Unverified[f] = false
+	}
+	return c
+}
+
+func (p scribblePlanner) Round(in RoundInput) RoundDecision {
+	d := p.DefaultPlanner.Round(in)
+	for i := range in.Class.Families {
+		in.Class.Families[i] = "udp9"
+	}
+	if in.Policy.LowTTL != nil {
+		*in.Policy.LowTTL = false
+	}
+	return d
+}
+
+// endpointsOf lists the endpoint addresses of a view.
+func endpointsOf(v protocol.PeerView) []netip.AddrPort {
+	var out []netip.AddrPort
+	for _, fv := range v.Families {
+		for _, e := range fv.Endpoints {
+			out = append(out, e.Addr)
+		}
+	}
+	return out
+}
+
+// TestPlannerInputPrivate: a planner that writes its input changes neither
+// the admission sets nor the session's classification, policy or kept
+// classification input.
+func TestPlannerInputPrivate(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.Planner = scribblePlanner{} })
+	yes := true
+	p := r.pair(SessionOptions{Policy: &protocol.Policy{LowTTL: &yes}})
+	gos := p.punching()
+	p.s.mu.Lock()
+	sides := [2][]protocol.FamilySide{p.s.st.cur.plans[0].Sides, p.s.st.cur.plans[1].Sides}
+	fams, unverified, lowTTL := slices.Clone(p.s.st.cls.Families), p.s.st.pair.Unverified[protocol.FamilyUDP4], *p.s.starts[0].Policy.LowTTL
+	cin := cloneClassifyInput(p.s.st.cin)
+	p.s.mu.Unlock()
+	for _, v := range []protocol.PeerView{cin.Initiator, cin.Responder} {
+		if targets := endpointsOf(v); len(targets) == 0 || slices.Contains(targets, thirdParty) {
+			t.Fatalf("kept classification input written: %v", targets)
+		}
+	}
+	if !cin.Pair.Unverified[protocol.FamilyUDP4] {
+		t.Fatal("kept classification input written: the family is verified")
+	}
+	for i := range 2 {
+		if gos[i].Round != 1 || len(sides[i]) == 0 || sides[i][0].Role == protocol.SideReplyOnly {
+			t.Fatalf("side %d: go %+v, sides %+v", i, gos[i], sides[i])
+		}
+		if slices.Contains(targetsOf(protocol.RoundPlan{Sides: sides[i]}), thirdParty) {
+			t.Fatalf("side %d aims at the third party: %+v", i, sides[i])
+		}
+	}
+	if !slices.Equal(fams, []protocol.Family{protocol.FamilyUDP4}) || !unverified || !lowTTL {
+		t.Fatalf("session state written: families %v, unverified %v, low TTL %v", fams, unverified, lowTTL)
+	}
+	if gos := p.endRound(1, [2]simclient.Outcome{fired(3), fired(3)}); gos[0] == nil || gos[0].Round != 2 {
+		t.Fatalf("round 2 go %+v", gos[0])
+	}
+	p.s.Abort(protocol.ReasonCanceled, "")
+	r.wait(p.s)
 }

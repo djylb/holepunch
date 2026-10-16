@@ -39,6 +39,9 @@ var packetPool = sync.Pool{New: func() any { return &packet{buf: make([]byte, 0,
 
 func newPacket(b []byte) *packet {
 	p := packetPool.Get().(*packet)
+	// data copies b into the pooled array, which b cannot alias: a pooled
+	// array belongs to one packet and leaves the package only as the
+	// payload a Classifier inspects, which it must not keep.
 	p.data = append(p.buf[:0], b...)
 	if cap(p.data) <= maxPooledPayload {
 		p.buf = p.data[:0]

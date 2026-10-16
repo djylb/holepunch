@@ -391,3 +391,23 @@ func TestSprayItemsPaired(t *testing.T) {
 		}
 	}
 }
+
+// Targets the gate refuses were never written: a background round whose
+// spray runs into the session's distinct-target limit is no failure spike
+// and is not halted.
+func TestBackgroundRoundGateRefusalsNoHalt(t *testing.T) {
+	t.Parallel()
+	pol := &protocol.Policy{Budget: protocol.Budget{MaxDistinctTargets: 2}}
+	so, _, rr := soloRound(t, pol, nil, func(r *protocol.RoundPlan) {
+		r.Budget = protocol.BudgetBackground
+		peer := r.Sides[0].Stages[0].Targets[0]
+		r.Sides[0].Stages = append(r.Sides[0].Stages,
+			protocol.Stage{Kind: protocol.StagePredict, IP: peer.Addr(), Anchor: 6000, Steps: []int16{1}, Span: 32})
+	}, nil)
+	if f := rr.Families[0]; f.Halted || f.Sent == 0 {
+		t.Fatalf("family %+v", f)
+	}
+	if got := so.host.Stats(); got.MaxConsecutiveRun > maxAnswerRun {
+		t.Fatalf("run of %d consecutive ports", got.MaxConsecutiveRun)
+	}
+}

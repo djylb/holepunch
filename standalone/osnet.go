@@ -20,5 +20,6 @@ func DialTCP(ctx context.Context, address string) (net.Conn, error) {
 //
 //holepunch:netimpl
 func ListenTCP(address string) (net.Listener, error) {
-	return net.Listen("tcp", address)
+	var lc net.ListenConfig
+	return lc.Listen(context.Background(), "tcp", address)
 }

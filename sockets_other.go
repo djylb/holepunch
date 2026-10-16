@@ -14,3 +14,7 @@ var errNoRawHopLimit = errors.New("holepunch: hop limit not settable on this pla
 func rawHopLimit(syscall.RawConn, bool) (int, error) { return 0, errNoRawHopLimit }
 
 func setRawHopLimit(syscall.RawConn, bool, int) error { return errNoRawHopLimit }
+
+// oversized reports whether a read failed on a datagram larger than the
+// buffer: never here, where datagrams are truncated.
+func oversized(_ error) bool { return false }

@@ -15,12 +15,14 @@ import (
 // caller passes as Config.Network.
 type osNetwork struct{}
 
-func (osNetwork) ListenPacket(_ context.Context, network string, laddr netip.AddrPort, _ string) (net.PacketConn, error) {
-	return net.ListenUDP(network, net.UDPAddrFromAddrPort(laddr))
+func (osNetwork) ListenPacket(ctx context.Context, network string, laddr netip.AddrPort, _ string) (net.PacketConn, error) {
+	var lc net.ListenConfig
+	return lc.ListenPacket(ctx, network, laddr.String())
 }
 
-func (osNetwork) OutboundAddr(_ context.Context, _ string) (netip.Addr, error) {
-	c, err := net.Dial("udp4", "192.0.2.1:9") // connecting a UDP socket sends nothing
+func (osNetwork) OutboundAddr(ctx context.Context, network string) (netip.Addr, error) {
+	var d net.Dialer
+	c, err := d.DialContext(ctx, network, "192.0.2.1:9") // connecting a UDP socket sends nothing
 	if err != nil {
 		return netip.Addr{}, err
 	}
@@ -35,13 +37,14 @@ func ExampleMapper() {
 	m := portmapper.New(portmapper.Config{Network: osNetwork{}})
 	defer func() { _ = m.Close() }() // deletes every mapping still held
 
-	pc, err := net.ListenPacket("udp4", ":0")
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+	var lc net.ListenConfig
+	pc, err := lc.ListenPacket(ctx, "udp4", ":0")
 	if err != nil {
 		return
 	}
 	defer func() { _ = pc.Close() }()
-	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
-	defer cancel()
 	info, release, err := m.Map(ctx, pc, protocol.PortMappingPolicy{LeaseSeconds: 3600})
 	if err != nil {
 		// No gateway, or none that maps ports: carry on without a mapping.

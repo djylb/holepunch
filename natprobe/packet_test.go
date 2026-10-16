@@ -749,3 +749,28 @@ func TestSandwichZeroAlloc(t *testing.T) {
 		t.Fatalf("delivered %d of %d", delivered, i)
 	}
 }
+
+// A burst too large for the tolerance arithmetic saturates instead of
+// overflowing, and a burst below 1 counts as 1: neither config turns the
+// bucket into one that refuses everything.
+func TestGCRAExtremeBurst(t *testing.T) {
+	const T = int64(10 * time.Second)
+	for _, r := range []Rate{{PerSec: 1, Burst: math.MaxInt}, {PerSec: 1, Burst: math.MaxInt / 1000}, {PerSec: math.MaxInt, Burst: math.MaxInt}} {
+		var tat int64
+		for i := range 10000 {
+			if !gcra(&tat, T, r) {
+				t.Fatalf("%+v: event %d refused at one instant", r, i)
+			}
+		}
+	}
+	for _, burst := range []int{0, -5} {
+		var tat int64
+		r := Rate{PerSec: 1, Burst: burst}
+		if !gcra(&tat, T, r) || gcra(&tat, T, r) {
+			t.Fatalf("burst %d does not admit exactly one event at once", burst)
+		}
+		if !gcra(&tat, T+int64(time.Second), r) {
+			t.Fatalf("burst %d: no event a second later", burst)
+		}
+	}
+}

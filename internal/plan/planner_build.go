@@ -129,7 +129,7 @@ func peerAddrsOf(fp familyPlan, fv protocol.FamilyView) peerAddrs {
 			}
 		}
 	}
-	pa.public = append(verified, reported...)
+	pa.public = slices.Concat(verified, reported)
 	if fp.Unverified {
 		pa.direct = reportedTargets(fv, pa.public, fp.MaxTargets)
 	} else {

@@ -15,7 +15,7 @@ import (
 type prediction struct {
 	anchor  uint16  // the peer's last allocated port extrapolated to FireAt; 0 = none
 	steps   []int16 // the allocation step; the expansion adds it to the anchor
-	minSpan int     // 2·(|v|·σ_t + |step|): the window the timing error spreads over
+	minSpan int     // 2·(|v|·σ_t + |step|), at most the range: the window the timing error spreads over
 }
 
 // minVelocityBase is the shortest interval a punch-time sample is compared
@@ -87,11 +87,21 @@ func predictPeer(in RoundInput, role int, tr protocol.Traits, ip netip.Addr) pre
 		return p
 	}
 	if in.FireAt > 0 && at > 0 && in.FireAt > at && v != 0 {
-		anchor += int(math.Round(v * (in.FireAt - at).Seconds()))
+		// Only the move modulo the range counts (wrapPort folds it), and
+		// taken modulo the range first, a rate however large converts to
+		// the same integer on every platform.
+		anchor += int(math.Mod(math.Round(v*(in.FireAt-at).Seconds()), portRange))
 	}
 	p.anchor = wrapPort(anchor)
-	p.minSpan = int(math.Ceil(2 * (math.Abs(v)*in.D.Seconds() + math.Abs(float64(step)))))
+	p.minSpan = windowSpan(2 * (math.Abs(v)*in.D.Seconds() + math.Abs(float64(step))))
 	return p
+}
+
+// windowSpan is a predicted window's width w rounded up to whole ports, at
+// most the port range: a wider window holds no further port, and a huge
+// rate does not overflow the conversion.
+func windowSpan(w float64) int {
+	return int(math.Ceil(min(w, portRange)))
 }
 
 // refreshedPrediction is predictPeer after an anchor refresh: the
@@ -109,7 +119,7 @@ func refreshedPrediction(in RoundInput, role int, r AnchorRefresh, tr protocol.T
 	}
 	p.anchor = wrapPort(int(port) + step*(after+int(math.Round(ahead))))
 	spread := lambda*in.D.Seconds() + math.Sqrt(ahead) + 1
-	p.minSpan = int(math.Ceil(2 * spread * math.Abs(float64(step))))
+	p.minSpan = windowSpan(2 * spread * math.Abs(float64(step)))
 	return p
 }
 
@@ -250,7 +260,8 @@ func RefreshWanted(in RoundInput, dec RoundDecision, now time.Duration) [2][]pro
 				continue
 			}
 			anchored[role] = true
-			due[role] = tr.PortVelocity > 0 || tr.PortNoisy || now-lastObservation(in, role, tr) > refreshAfter
+			// The velocity has the step's sign: a downward allocator's is negative.
+			due[role] = tr.PortVelocity != 0 || tr.PortNoisy || now-lastObservation(in, role, tr) > refreshAfter
 		}
 		paired := pairedFamily(in, fp)
 		for role := range 2 {

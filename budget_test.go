@@ -443,8 +443,10 @@ func TestGateWriteReport(t *testing.T) {
 func TestBucket(t *testing.T) {
 	now := time.Unix(1000, 0)
 	b := newBucket(10, 2)
-	if b.reserve(now) != 0 || b.reserve(now) != 0 {
-		t.Fatal("burst")
+	for i := range 2 {
+		if w := b.reserve(now); w != 0 {
+			t.Fatalf("burst token %d waits %v", i, w)
+		}
 	}
 	if w := b.reserve(now); w != 100*time.Millisecond {
 		t.Fatalf("wait %v", w)
@@ -458,5 +460,72 @@ func TestBucket(t *testing.T) {
 	var u bucket
 	if u.reserve(now) != 0 || !u.take(now, 0) {
 		t.Fatal("zero rate is unlimited")
+	}
+}
+
+// A write that never started — its ctx ended, with whatever cause, while
+// it waited for the socket's write turn — is no send failure: it counts no
+// send_err and starts no udp_blocked timer.
+func TestGateCanceledWriteNotCounted(t *testing.T) {
+	g := newGateRig(t, bigBudget(), bigSide(), 0)
+	if err := g.sock.acquire(context.Background()); err != nil { // a write in progress
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		h := udpwire.Header{Type: udpwire.TPunch, Round: 1}
+		done <- g.rt.sender.Send(ctx, g.sock, netip.MustParseAddrPort("198.51.100.1:5000"), &h, nil,
+			sendOpt{class: classInitiate, stage: txDirect, round: g.m, quota: quotaPlan})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		g.rt.sender.mu.Lock()
+		gated := g.m.sent == 1
+		g.rt.sender.mu.Unlock()
+		if gated {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the send never passed the gate")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cause := errors.New("session over")
+	cancel(cause)
+	if err := <-done; !errors.Is(err, cause) {
+		t.Fatalf("send: %v", err)
+	}
+	g.sock.releaseTurn()
+	if got := g.rt.fam(protocol.FamilyUDP4).cnt.drops[dropSendErr].Load(); got != 0 {
+		t.Fatalf("send_err %d", got)
+	}
+	g.rt.sender.mu.Lock()
+	failed := g.rt.sender.everFailed
+	g.rt.sender.mu.Unlock()
+	if failed {
+		t.Fatal("a write that never started counts towards udp_blocked")
+	}
+}
+
+// The reply times are kept only while they suppress a reply: a peer
+// answered from ever new sources leaves a map the reply rate bounds.
+func TestReplyTimesSwept(t *testing.T) {
+	g := newGateRig(t, bigBudget(), bigSide(), 0)
+	ip := netip.MustParseAddr("198.51.100.9")
+	for i := range 1000 {
+		to := netip.AddrPortFrom(ip, uint16(10000+7*i))
+		h := udpwire.Header{Type: udpwire.TSuccess, EchoSeq: uint32(i + 1)}
+		tl := udpwire.TLVs{Observed: to}
+		if err := g.rt.sender.Send(context.Background(), g.sock, to, &h, &tl, sendOpt{class: classReply, stage: txReply}); err != nil {
+			t.Fatalf("reply %d: %v", i, err)
+		}
+		g.clk.Advance(replyMinGap)
+	}
+	g.rt.sender.mu.Lock()
+	n := len(g.rt.sender.replyAt)
+	g.rt.sender.mu.Unlock()
+	if n > 2*replySweepMin {
+		t.Fatalf("%d reply times kept for 1000 sources", n)
 	}
 }

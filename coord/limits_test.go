@@ -13,19 +13,19 @@ import (
 	"github.com/djylb/holepunch/protocol"
 )
 
-// busy creates sessions until NewSession refuses one, and returns the error
-// and how many were created.
-func busy(t *testing.T, r *rig, opts SessionOptions, max int) (error, []*Session) {
+// busy creates sessions until NewSession refuses one, and returns the
+// sessions it created and the refusal.
+func busy(t *testing.T, r *rig, opts SessionOptions, max int) ([]*Session, error) {
 	t.Helper()
 	var made []*Session
 	for range max {
 		s, err := r.c.NewSession(opts)
 		if err != nil {
-			return err, made
+			return made, err
 		}
 		made = append(made, s)
 	}
-	return nil, made
+	return made, nil
 }
 
 // TestSessionLimits: every admission limit refuses with ErrBusy
@@ -48,7 +48,7 @@ func TestSessionLimits(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := newRig(t, func(cfg *Config) { cfg.Limits = c.lim })
-			err, made := busy(t, r, c.opts, 50)
+			made, err := busy(t, r, c.opts, 50)
 			if !errors.Is(err, ErrBusy) || reasonOf(err) != protocol.ReasonServerBusy || len(made) != c.want {
 				t.Fatalf("made %d, err %v", len(made), err)
 			}
@@ -83,6 +83,29 @@ func TestPendingLeavesOnSecondAttach(t *testing.T) {
 		t.Fatalf("second pending: %v", err)
 	}
 	p.s.Abort(protocol.ReasonCanceled, "")
+}
+
+// TestRefusalTakesNoRate: a reservation refused by a later limit takes no
+// token of its initiator key's rate.
+func TestRefusalTakesNoRate(t *testing.T) {
+	lim := Limits{MaxSessions: 1, MaxPending: -1, InitiatorKeyRate: Rate{PerSec: 1, Burst: 2},
+		NewSessions: Rate{PerSec: -1}}.withDefaults()
+	l := newLimiter(lim, time.Unix(0, 0))
+	now := time.Unix(10, 0)
+	keys := [2]string{"v", ""}
+	q, _, err := l.reserve(now, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		if _, dim, err := l.reserve(now, keys); !errors.Is(err, ErrBusy) || dim != "sessions" {
+			t.Fatalf("over the session limit: %q %v", dim, err)
+		}
+	}
+	l.release(now, &q)
+	if _, dim, err := l.reserve(now, keys); err != nil {
+		t.Fatalf("the refusals took the key's rate: %q %v", dim, err)
+	}
 }
 
 // TestPacketQuota: grants are charged to the client keys; a key without

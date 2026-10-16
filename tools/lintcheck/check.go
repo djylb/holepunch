@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"sort"
+	"strconv"
 )
 
 // Rule names, as printed in diagnostics and used by fixture markers.
@@ -104,6 +105,7 @@ type pass struct {
 }
 
 func (ps *pass) run() {
+	ps.dotImports()
 	w := &walker{visit: ps.visit}
 	for _, d := range ps.f.ast.Decls {
 		switch d := d.(type) {
@@ -121,6 +123,22 @@ func (ps *pass) run() {
 				ps.globalDecl(vs)
 				w.valueSpec(vs, newScope(nil))
 			}
+		}
+	}
+}
+
+// dotImports reports a dot import of time or net: their identifiers would
+// then appear unqualified, where nosleep and nodirectnet do not look.
+func (ps *pass) dotImports() {
+	for _, spec := range ps.f.ast.Imports {
+		if spec.Name == nil || spec.Name.Name != "." {
+			continue
+		}
+		switch path, _ := strconv.Unquote(spec.Path.Value); path {
+		case "time":
+			ps.c.report(spec.Pos(), ruleNoSleep, "dot import of time hides time.Sleep from this check; import time by name")
+		case "net":
+			ps.c.report(spec.Pos(), ruleNoDirectNet, "dot import of net hides its OS network functions from this check; import net by name")
 		}
 	}
 }

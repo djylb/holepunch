@@ -24,8 +24,8 @@ type cellRun struct {
 	r     *run
 	links [2]linkView
 	m     runMetrics
-	// dumped is the failure dump written for an unsuccessful run without
-	// violations.
+	// dumped is the path of the failure dump written for an unsuccessful
+	// run without violations.
 	dumped string
 }
 
@@ -341,6 +341,9 @@ func (cr *cellRun) violations() []string {
 		}
 		if n := r.out[i].diag.Counters.LeakedGoroutines; n != 0 {
 			add("%s: %d leaked goroutines", roles[i], n)
+		}
+		if err := r.taps[i].logComplete(); err != nil {
+			add("%s: %v", roles[i], err)
 		}
 	}
 

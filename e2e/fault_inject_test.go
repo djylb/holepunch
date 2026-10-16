@@ -231,8 +231,7 @@ func runInject(t *testing.T, ic injectCase, seed int64) (v []string) {
 	}
 	r, err := newRun(w, sides, spec)
 	if err != nil {
-		_ = w.close()
-		return []string{err.Error()}
+		return w.abandon(err)
 	}
 	start := time.Now()
 	r.execute()
@@ -277,9 +276,7 @@ func runInject(t *testing.T, ic injectCase, seed int64) (v []string) {
 		add("point %s fired %d times on Close, want 1", ic.point, faultinject.Fired(ic.point))
 	}
 	if len(v) > 0 {
-		if p, err := cr.dump(t, v, "inject"); err == nil {
-			v = append(v, "dump: "+p)
-		}
+		v = append(v, cr.dumpNote(t, v, "inject"))
 	}
 	return v
 }

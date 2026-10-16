@@ -212,9 +212,10 @@ func (m *traitsMemory) Apply(k TraitsKey, cur protocol.Traits) protocol.Traits {
 	if !k.PublicIP.IsValid() {
 		return cur
 	}
+	now := m.elapsed() // the Clock is the caller's: never called under the lock
 	sh := m.shard(k)
 	sh.mu.Lock()
-	mm, snap := sh.getLocked(k, m.elapsed(), m.ttl)
+	mm, snap := sh.getLocked(k, now, m.ttl)
 	sh.mu.Unlock()
 	if mm == nil || !consistent(cur, &snap) {
 		return cur

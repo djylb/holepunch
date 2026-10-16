@@ -70,8 +70,7 @@ func probeAfterUnreachable(t *testing.T, s *Server, reg *Registry, seen *atomic.
 	}
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
-	c.send(obs, probeOpts{obs: 0})
-	if reps := c.await(1); len(reps) != 1 {
+	if reps := c.exchange(obs, probeOpts{obs: 0}, 1); len(reps) != 1 {
 		t.Fatalf("%d replies after port unreachable", len(reps))
 	}
 	if st := s.Stats(); st.ReadErrors != 0 || st.DeadListeners != 0 {

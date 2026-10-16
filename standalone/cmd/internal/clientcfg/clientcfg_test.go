@@ -37,7 +37,7 @@ func TestConfig(t *testing.T) {
 	}
 	defer cleanup()
 	if cfg.Server != "hp.example:4343" || cfg.AuthToken != "tok" || cfg.Session.LocalAddr.String() != "192.0.2.1" ||
-		cfg.Session.PortMapper == nil || cfg.Session.LocalInterface != "en0" || !cfg.Session.ExcludeOverlay || !cfg.TLS.InsecureSkipVerify || cfg.TLS.VerifyPeerCertificate == nil {
+		cfg.Session.PortMapper == nil || cfg.Session.LocalInterface != "en0" || !cfg.Session.ExcludeOverlay || !cfg.TLS.InsecureSkipVerify || cfg.TLS.VerifyConnection == nil {
 		t.Fatalf("config %+v", cfg)
 	}
 

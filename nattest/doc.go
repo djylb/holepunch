@@ -12,7 +12,7 @@
 // NAT's LAN ([NAT.Host]). Control links that cross no NAT, such as the TCP
 // connections to the coordinator, are pipes ([Network.Pipe]).
 //
-//	n := nattest.NewNetwork(nattest.WithSeed)
+//	n := nattest.NewNetwork(nattest.WithSeed(1))
 //	defer n.Close()
 //	server := n.PublicHost()
 //	a := n.NAT(nattest.PortRestricted()).Host()

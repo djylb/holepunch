@@ -215,6 +215,9 @@ func TestParseHeader(t *testing.T) {
 		{"reserved over discard cap", hdr('h', 'p', Version, 77, DiscardCap+1), nil, 0, 0, ErrFrameTooLarge},
 		{"capFor tighter", hdr('h', 'p', Version, TypeProbeSummary, 100), func(Type) int { return 99 }, 0, 0, ErrFrameTooLarge},
 		{"capFor cannot exceed global", hdr('h', 'p', Version, TypeProbeSummary, MaxPayload+1), func(Type) int { return 1 << 30 }, 0, 0, ErrFrameTooLarge},
+		{"negative capFor admits no payload", hdr('h', 'p', Version, TypeProbeSummary, 1), func(Type) int { return -1 }, 0, 0, ErrFrameTooLarge},
+		{"negative capFor, huge length", hdr('h', 'p', Version, TypeProbeSummary, ^uint32(0)), func(Type) int { return -1 }, 0, 0, ErrFrameTooLarge},
+		{"negative capFor, empty payload", hdr('h', 'p', Version, TypeProbeSummary, 0), func(Type) int { return -1 }, TypeProbeSummary, 0, nil},
 		{"huge length", hdr('h', 'p', Version, TypeProbeSummary, ^uint32(0)), nil, 0, 0, ErrFrameTooLarge},
 	}
 	for _, tc := range cases {

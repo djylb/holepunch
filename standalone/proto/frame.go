@@ -1,13 +1,16 @@
 package proto
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
@@ -19,9 +22,14 @@ const (
 	// HeaderSize is the size of a frame header: version, type and the
 	// big-endian uint16 payload length.
 	HeaderSize = 4
-	// MaxPayload bounds the JSON payload of one frame.
-	MaxPayload = 16 << 10
+	// MaxPayload bounds the JSON payload of one frame: the largest length
+	// the header can carry.
+	MaxPayload = math.MaxUint16
 )
+
+// payloadChunk is the first read of a payload; later reads double what was
+// read, so that a frame's buffer only grows with the bytes that arrived.
+const payloadChunk = 4 << 10
 
 // Type is a message type. The values are consecutive from 1; every other
 // value is unknown.
@@ -116,18 +124,23 @@ func Encode(m Message) ([]byte, error) {
 	if err := m.validate(); err != nil {
 		return nil, err
 	}
-	payload, err := json.Marshal(m)
-	if err != nil {
+	// The payload follows the header in the same buffer. HTML escaping is
+	// off: it would grow '<', '>' and '&' sixfold, and a message that carries
+	// a peer's metadata must fit MaxPayload whatever characters it holds.
+	var buf bytes.Buffer
+	buf.Write([]byte{Version, byte(m.Type()), 0, 0})
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(m); err != nil {
 		return nil, fmt.Errorf("proto: encode %v: %w", m.Type(), err)
 	}
-	if len(payload) > MaxPayload {
-		return nil, fmt.Errorf("%w: %v of %d bytes", ErrTooLarge, m.Type(), len(payload))
+	frame := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	n := len(frame) - HeaderSize
+	if n > MaxPayload {
+		return nil, fmt.Errorf("%w: %v of %d bytes", ErrTooLarge, m.Type(), n)
 	}
-	frame := make([]byte, HeaderSize, HeaderSize+len(payload))
-	frame[0] = Version
-	frame[1] = byte(m.Type())
-	binary.BigEndian.PutUint16(frame[2:], uint16(len(payload)))
-	return append(frame, payload...), nil
+	binary.BigEndian.PutUint16(frame[2:], uint16(n))
+	return frame, nil
 }
 
 // Decode reads exactly one frame from r — never a byte more — and returns its
@@ -145,12 +158,8 @@ func Decode(r io.Reader) (Message, error) {
 	if m == nil {
 		return nil, fmt.Errorf("%w: %d", ErrType, hdr[1])
 	}
-	n := int(binary.BigEndian.Uint16(hdr[2:]))
-	if n > MaxPayload {
-		return nil, fmt.Errorf("%w: %v of %d bytes", ErrTooLarge, t, n)
-	}
-	payload := make([]byte, n)
-	if _, err := io.ReadFull(r, payload); err != nil {
+	payload, err := readPayload(r, int(binary.BigEndian.Uint16(hdr[2:])))
+	if err != nil {
 		return nil, unexpectedEOF(err)
 	}
 	if err := json.Unmarshal(payload, m); err != nil {
@@ -160,6 +169,22 @@ func Decode(r io.Reader) (Message, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+// readPayload reads an n-byte payload. Its buffer grows with the bytes
+// that arrive, so a peer that announces a large frame and stalls holds
+// memory in proportion to what it sent, not to what it announced.
+func readPayload(r io.Reader, n int) ([]byte, error) {
+	payload := make([]byte, 0, min(n, payloadChunk))
+	for len(payload) < n {
+		k := min(n-len(payload), max(len(payload), payloadChunk))
+		payload = slices.Grow(payload, k)
+		if _, err := io.ReadFull(r, payload[len(payload):len(payload)+k]); err != nil {
+			return nil, err
+		}
+		payload = payload[:len(payload)+k]
+	}
+	return payload, nil
 }
 
 // unexpectedEOF reports a stream that ends inside a frame as such.
@@ -214,7 +239,8 @@ func Read(ctx context.Context, conn net.Conn) (Message, error) {
 }
 
 // Expect reads one message from conn (see Read) and returns it as T. A Fail
-// is returned as the error; any other message wraps ErrUnexpected.
+// is returned as the error (as the value only when T is *Fail itself); any
+// other message wraps ErrUnexpected.
 func Expect[T Message](ctx context.Context, conn net.Conn) (T, error) {
 	var zero T
 	m, err := Read(ctx, conn)

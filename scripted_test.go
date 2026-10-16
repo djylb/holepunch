@@ -26,6 +26,7 @@ type solo struct {
 	s      *session
 	res    <-chan attachResult
 	cancel context.CancelFunc
+	stop   context.CancelCauseFunc // cancel with a cause of the test's
 	role   protocol.Role
 }
 
@@ -46,16 +47,17 @@ func newSoloOn(t *testing.T, w *world, host *nattest.Host, tweak func(o *Options
 	if tweak != nil {
 		tweak(&o)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	so.cancel = cancel
-	t.Cleanup(cancel)
+	ctx, stop := context.WithCancelCause(context.Background())
+	so.stop = stop
+	so.cancel = func() { stop(nil) }
+	t.Cleanup(so.cancel)
 	so.res = runClient(ctx, so.cli, o)
 	return so
 }
 
 // open wraps the server end in a controlwire.Conn.
 func (so *solo) open() *srvLink {
-	so.link = newSrvLink(so.t, so.srvEnd, so.role, so.s.sid)
+	so.link = newSrvLink(so.t, so.srvEnd)
 	so.t.Cleanup(so.link.close)
 	return so.link
 }

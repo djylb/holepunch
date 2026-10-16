@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"errors"
+	"maps"
 	"net"
 	"strings"
 	"unicode"
@@ -22,33 +23,36 @@ import (
 type stream struct {
 	raw  net.Conn // as accepted: what the server tracks and closes
 	conn net.Conn // raw, or its TLS server side
+	// The fields below belong to the connection's goroutine.
+	remote string // raw's remote address, for the log
 	// handedOver is set just before the stream is attached to a session,
 	// which takes it whether the attach succeeds or not.
 	handedOver bool
 }
 
 // handle serves one connection inside a recover boundary and closes it
-// unless it was handed to a session.
-func (s *Server) handle(ctx context.Context, raw net.Conn) {
-	st := &stream{raw: raw, conn: raw}
+// unless it was handed to a session. The connection's methods are the
+// caller's code, so every call on it is inside that boundary or closeConn.
+func (s *Server) handle(ctx context.Context, st *stream) {
 	if perr := life.Safe("standalone.conn", func() { s.serve(ctx, st) }); perr != nil {
 		s.panics.Add(1)
-		s.log.Warn("connection handler panicked", "remote", remote(raw), "err", perr)
+		s.log.Warn("connection handler panicked", "remote", st.remote, "err", perr)
 	}
 	if !st.handedOver {
-		s.drop(raw)
+		s.drop(st)
 	}
 }
 
 // serve terminates TLS, reads the first request and dispatches it.
 func (s *Server) serve(ctx context.Context, st *stream) {
+	st.remote = remote(st.raw)
 	hctx, cancel := context.WithTimeout(ctx, s.cfg.HandshakeTimeout)
 	defer cancel()
 	if s.cfg.TLS != nil {
 		tc := tls.Server(st.raw, s.cfg.TLS)
 		if err := tc.HandshakeContext(hctx); err != nil {
 			s.handshakeFailed.Add(1)
-			s.log.Debug("tls handshake failed", "remote", remote(st.raw), "err", err)
+			s.log.Debug("tls handshake failed", "remote", st.remote, "err", err)
 			return
 		}
 		st.conn = tc
@@ -56,8 +60,8 @@ func (s *Server) serve(ctx context.Context, st *stream) {
 	m, err := proto.Read(hctx, st.conn)
 	if err != nil {
 		s.handshakeFailed.Add(1)
-		s.log.Debug("first request failed", "remote", remote(st.raw), "err", err)
-		if errors.Is(err, proto.ErrInvalid) || errors.Is(err, proto.ErrType) || errors.Is(err, proto.ErrVersion) || errors.Is(err, proto.ErrTooLarge) {
+		s.log.Debug("first request failed", "remote", st.remote, "err", err)
+		if errors.Is(err, proto.ErrInvalid) || errors.Is(err, proto.ErrType) || errors.Is(err, proto.ErrVersion) {
 			s.refuse(st, proto.CodeInvalidRequest, err.Error())
 		}
 		return
@@ -119,7 +123,7 @@ func (s *Server) reply(st *stream, sess *broker.Session) bool {
 // attach hands the stream over for good; Attach takes it even on failure.
 func (s *Server) attach(st *stream, sess *broker.Session, role protocol.Role) {
 	st.handedOver = true
-	s.untrack(st.raw)
+	s.untrack(st)
 	if err := sess.Attach(role, st.conn, coord.AttachOptions{Security: s.cfg.Security}); err != nil {
 		s.log.Debug("attach failed", "session", sess.ID(), "role", role, "err", err)
 	}
@@ -138,6 +142,9 @@ func (s *Server) authorize(st *stream, req AuthRequest) error {
 	if s.cfg.Authorize == nil {
 		return nil
 	}
+	// The hook gets its own copy: the request's metadata goes on to the
+	// broker.
+	req.Metadata = maps.Clone(req.Metadata)
 	req.Remote = st.raw.RemoteAddr()
 	if tc, ok := st.conn.(*tls.Conn); ok {
 		cs := tc.ConnectionState()

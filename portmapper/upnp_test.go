@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -57,6 +58,7 @@ func TestUPnPServicesStayOnDeviceHost(t *testing.T) {
 		{"http://127.0.0.1:1/", "/ctl", 1}, // same host, other port
 		{"http://203.0.113.9/", "/ctl", 0},
 		{"", "http://203.0.113.9/ctl", 0},
+		{"", "https://127.0.0.1:1/ctl", 0}, // same host, TLS
 	} {
 		desc := strings.Replace(rootDescXML(svcIGD2), "<controlURL>/ctl</controlURL>", "<controlURL>"+tc.control+"</controlURL>", 1)
 		if tc.base != "" {
@@ -73,6 +75,47 @@ func TestUPnPServicesStayOnDeviceHost(t *testing.T) {
 		if got := len(upnpServices(root, loc, hc)); got != tc.want {
 			t.Errorf("URLBase %q controlURL %q: %d services, want %d", tc.base, tc.control, got, tc.want)
 		}
+	}
+}
+
+// TestHTTPDialEndsWithRequest: net/http dials with a context that is not
+// cancelled with the request, so that another request could use the
+// connection. The dial of a UPnP request must still end with the request, or
+// a gateway that drops the connection attempt keeps it running, after the
+// request and after Close, until the operating system's connect timeout.
+func TestHTTPDialEndsWithRequest(t *testing.T) {
+	hc := newHTTPClient()
+	tr := hc.Transport.(limitTransport).tr
+	t.Cleanup(tr.CloseIdleConnections) // ends a dial left running by a failure
+	dials := make(chan context.Context, 1)
+	// A gateway that drops the connection attempt: the dial waits for its
+	// context, as net.Dialer does.
+	tr.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		dials <- ctx
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://192.0.2.1:5000/rootDesc.xml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := hc.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		errc <- err
+	}()
+	dctx := <-dials
+	cancel()
+	if err := <-errc; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Do() = %v, want the cancellation", err)
+	}
+	if dctx.Err() == nil {
+		t.Fatal("the dial goes on after its request ended")
 	}
 }
 

@@ -190,9 +190,88 @@ func (s *session) later(g *life.Group, clk interface{ AfterFunc(int, func()) }) 
 	defer s.mu.Unlock()
 	g.Go("progress", func(context.Context) { s.opts.OnProgress("later") })
 	clk.AfterFunc(1, func() { s.notify("later") })
-	defer func() { s.notify("deferred") }()
+	defer func() { s.notify("deferred") }() // want "callbacklock"
 	stored := func() { s.notify("stored") }
 	_ = stored
+}
+
+func (s *session) deferredCallbacks() {
+	defer s.notify("runs after the deferred unlock")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer s.notify("runs before the deferred unlock") // want "callbacklock"
+	defer s.opts.OnDone()                             // want "callbacklock"
+}
+
+func (s *session) deferredUnlocker() {
+	s.mu.Lock()
+	defer func() {
+		s.notify("before the unlock in the literal") // want "callbacklock"
+		s.mu.Unlock()
+		s.notify("after it")
+	}()
+	defer s.notify("runs before the literal") // want "callbacklock"
+}
+
+func (s *session) explicitUnlockAfterDefer() {
+	s.mu.Lock()
+	defer s.notify("runs at return, after the explicit unlock")
+	s.mu.Unlock()
+}
+
+func (s *session) deferredRelock() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	func() {
+		s.mu.Unlock()
+		defer s.mu.Lock()
+		defer s.notify("runs before the relock, with the lock released")
+	}()
+	defer s.notify("runs before the deferred unlock") // want "callbacklock"
+}
+
+func (s *session) literalUnderCallerLock() {
+	s.mu.Lock()
+	func() {
+		defer s.notify("runs as the literal returns, the lock still held") // want "callbacklock"
+	}()
+	s.mu.Unlock()
+	func() {
+		defer s.notify("runs with the lock released")
+	}()
+}
+
+func (s *session) releasedAroundLiteral() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.Unlock()
+	func() {
+		defer s.notify("the literal runs with the lock released")
+	}()
+	s.mu.Lock()
+}
+
+func (s *session) deferInDeferredLiteral() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer func() {
+		defer s.notify("the literal runs before the deferred unlock") // want "callbacklock"
+	}()
+}
+
+func (s *session) deferredLockBeforeUnlock() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer s.mu.Lock()
+	s.mu.Unlock()
+	defer s.notify("runs before the relock, with the lock released")
+}
+
+func (s *session) deferredRunner(g *life.Group) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer run(func() { s.notify("run calls it before the deferred unlock") }) // want "callbacklock"
+	defer g.Go("progress", func(context.Context) { s.notify("later") })
 }
 
 func (s *session) otherLock() {

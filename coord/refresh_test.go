@@ -146,7 +146,7 @@ func TestRefreshNotAsked(t *testing.T) {
 	defer s.mu.Unlock()
 	d := decision{ok: true}
 	d.dec.Final = true // a final round may refresh, but not without a registration
-	if s.beginRefreshLocked(2, s.st.gen, d, nil, ClassifyInput{}, RoundInput{}, 0) || s.st.refresh.pending || s.st.ctr.Refreshes != 0 {
+	if s.beginRefreshLocked(2, s.st.gen, d, ClassifyInput{}, RoundInput{}, 0) || s.st.refresh.pending || s.st.ctr.Refreshes != 0 {
 		t.Fatal("refresh without a registration")
 	}
 }
@@ -168,12 +168,12 @@ func TestRefreshNoRefresh(t *testing.T) {
 		cl := pl.Classify(ClassifyInput{Initiator: views[0], Responder: views[1], Policy: policy})
 		in := RoundInput{Round: 1, Class: cl, Views: views, Policy: policy, Remaining: 10 * time.Second, BudgetLeft: [2]int{-1, -1},
 			MaxRounds: 3, HandshakeMs: 10000}
-		d := decision{ok: true, dec: pl.Round(in), cls: cl}
+		d := decision{ok: true, dec: pl.Round(in), cls: cl, planner: pl}
 		if d.dec.Stop != "" {
 			t.Fatalf("round 1 stops: %s", d.dec.Stop)
 		}
 		p.s.mu.Lock()
-		asked := p.s.beginRefreshLocked(1, p.s.st.gen, d, pl, ClassifyInput{}, in, 0)
+		asked := p.s.beginRefreshLocked(1, p.s.st.gen, d, ClassifyInput{}, in, 0)
 		refreshes := p.s.st.ctr.Refreshes
 		p.s.mu.Unlock()
 		if asked == abl.NoRefresh || asked && refreshes != 2 {
@@ -295,5 +295,44 @@ func TestRefreshMapped(t *testing.T) {
 	s.st.refresh.k = 1
 	if got := s.mappedLocked(1, f); got != 0 {
 		t.Fatalf("an earlier round's refresh counted: %d", got)
+	}
+}
+
+// TestRefreshKeepsPlannerSwitch: a planner that panicked deciding a round
+// stays replaced while the round waits for its anchor refresh, which plans
+// it again on the default planner and its classification; a panic while
+// planning round 1 again replaces it as well.
+func TestRefreshKeepsPlannerSwitch(t *testing.T) {
+	u4 := protocol.FamilyUDP4
+	view := func(pub netip.AddrPort) protocol.PeerView {
+		return protocol.PeerView{Families: []protocol.FamilyView{{Family: u4, Traits: simclient.SeqTraits(pub),
+			Endpoints: []protocol.Endpoint{{Addr: pub, Source: protocol.EndpointServer, Verified: true}}}}}
+	}
+	r := newRig(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
+	p := r.pair(SessionOptions{})
+	var def plan.DefaultPlanner
+	views := [2]protocol.PeerView{view(pubI), view(pubR)}
+	policy := protocol.Policy{Budget: protocol.DefaultBudget()}
+	cl := def.Classify(ClassifyInput{Initiator: views[0], Responder: views[1], Policy: policy})
+	in := RoundInput{Round: 1, Class: cl, Views: views, Policy: policy, Remaining: 10 * time.Second, BudgetLeft: [2]int{-1, -1},
+		MaxRounds: 3, HandshakeMs: 10000}
+	switched := decision{ok: true, switched: true, planner: def, cls: cl, dec: def.Round(in)}
+	isDefault := func(pl Planner) bool { _, ok := pl.(plan.DefaultPlanner); return ok }
+
+	p.s.mu.Lock()
+	defer p.s.mu.Unlock()
+	st := &p.s.st
+	st.planner = panicPlanner{where: "round"}
+	if !p.s.beginRefreshLocked(1, st.gen, switched, ClassifyInput{}, in, 0) {
+		t.Fatal("no refresh asked")
+	}
+	if !isDefault(st.planner) || !isDefault(st.refresh.p) || !slices.Equal(st.cls.Ladder, cl.Ladder) {
+		t.Fatalf("planner %T, refresh planner %T", st.planner, st.refresh.p)
+	}
+
+	st.planner, st.state = panicPlanner{where: "round"}, StateSummarized
+	p.s.reanchorRound1Locked(st.gen, switched, true, r.clk.Now())
+	if !isDefault(st.planner) {
+		t.Fatalf("planner %T after round 1 was planned again by the default one", st.planner)
 	}
 }

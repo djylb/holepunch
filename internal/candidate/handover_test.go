@@ -84,7 +84,8 @@ func TestRollReNominatesOther(t *testing.T) {
 	}
 }
 
-// An extra ready during the responder's ack burst appends at most two acks.
+// Extra readies during the responder's ack burst get at most two extra
+// acks, and the burst still ends in the handover.
 func TestExtraReadyBurst(t *testing.T) {
 	r := NewManager(Config{Role: protocol.RoleResponder})
 	base := time.Unix(0, 0)
@@ -94,22 +95,19 @@ func TestExtraReadyBurst(t *testing.T) {
 	if acts := r.RecvReady(base.Add(20*time.Millisecond), 1, rem, 0); count(acts, Confirm) != 1 {
 		t.Fatalf("ready did not confirm: %+v", acts)
 	}
-	// two extra readies during the burst -> two extra acks fired later.
-	r.RecvReady(base.Add(21*time.Millisecond), 1, rem, 0)
-	r.RecvReady(base.Add(22*time.Millisecond), 1, rem, 0)
-	r.RecvReady(base.Add(23*time.Millisecond), 1, rem, 0) // third is ignored (<= 2)
+	// two extra readies during the burst get an ack each at once; a third
+	// gets none.
+	extra := 0
+	for ms := 21; ms <= 23; ms++ {
+		extra += count(r.RecvReady(base.Add(time.Duration(ms)*time.Millisecond), 1, rem, 0), SendAck)
+	}
+	// the burst's own acks at +15 and +30 ms, then the handover.
 	acks := 0
 	for ms := 20; ms <= 60; ms++ {
-		for _, a := range r.Tick(base.Add(time.Duration(ms) * time.Millisecond)) {
-			if a.Kind == SendAck {
-				acks++
-			}
-		}
+		acks += count(r.Tick(base.Add(time.Duration(ms)*time.Millisecond)), SendAck)
 	}
-	// base burst 0/15/30 = but first ack already emitted at confirm; remaining
-	// acks plus up to 2 extras. Just assert the burst completed and handover.
-	if r.Phase() != PhaseDone {
-		t.Fatalf("responder did not hand over, phase %v (acks=%d)", r.Phase(), acks)
+	if extra != maxExtraAcks || acks != 2 || r.Phase() != PhaseDone {
+		t.Fatalf("extra acks %d, burst acks %d, phase %v", extra, acks, r.Phase())
 	}
 }
 

@@ -149,6 +149,7 @@ func TestStallUntilDisarm(t *testing.T) {
 	disarm := faultinject.Arm("wait.go", faultinject.Stall(0), 1)
 	done := make(chan error, 1)
 	go func() { done <- faultinject.Point("wait.go") }()
+	waitFired(t, "wait.go", 1) // otherwise disarm may come first and nothing stalls
 	select {
 	case err := <-done:
 		t.Fatalf("stalled point returned %v before disarm", err)

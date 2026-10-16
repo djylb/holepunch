@@ -80,8 +80,9 @@
 // session owns a single Clock timer, re-armed under the mutex to the nearest
 // of its stage deadline, its next ping and pending sandwich events; the timer
 // callback only changes state or wakes the session goroutine. User code — the
-// Planner, StrategyMemory, natprobe.TraitsMemory, Handle.Merge, the Observer
-// and OnResult — always runs outside the mutex, inside life.Safe, and the
+// Planner, StrategyMemory, natprobe.TraitsMemory, Handle.Merge, the Observer,
+// OnResult, and the methods of the errors the caller's connections fail with
+// — always runs outside the mutex, inside life.Safe, and the
 // result of an out-of-lock call is discarded when the session's generation
 // changed meanwhile. A Planner that never returns keeps only the session
 // goroutine; the stage deadline still ends the session and frees everything

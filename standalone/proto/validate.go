@@ -6,7 +6,8 @@ import (
 	"unicode/utf8"
 )
 
-// Field limits. They keep every message far below MaxPayload.
+// Field limits. They keep every valid message, JSON escaping included, well
+// below MaxPayload.
 const (
 	MaxNameLen      = 64  // host and dialer IDs, session IDs, metadata keys
 	MaxSecretLen    = 128 // auth tokens, credentials, tickets

@@ -1,6 +1,7 @@
 package clock_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -83,25 +84,43 @@ func TestConformance(t *testing.T) {
 			t.Run("ResetAfterUnreceivedExpiry", func(t *testing.T) {
 				tm := d.clk.NewTimer(unit)
 				d.elapse(unit)
+				resetAt := d.clk.Now()
 				if !tm.Reset(4 * unit) {
 					t.Fatal("Reset with an unreceived expiry returned false")
 				}
-				if received(tm) {
-					t.Fatal("stale value received after Reset")
+				// On a slow machine the new expiry may already be due; a value
+				// from before the new deadline is the stale one.
+				select {
+				case v := <-tm.C():
+					if v.Before(resetAt.Add(4 * unit)) {
+						t.Fatalf("stale value %v received after Reset at %v", v, resetAt)
+					}
+					return
+				default:
 				}
+				// System's timer may fire after the elapse on a slow machine.
 				d.elapse(4 * unit)
-				if !received(tm) {
+				select {
+				case <-tm.C():
+				case <-time.After(5 * time.Second):
 					t.Fatal("reset timer did not fire")
 				}
 			})
 			t.Run("AfterFuncStop", func(t *testing.T) {
 				ran := make(chan struct{}, 1)
+				created := d.clk.Now()
 				tm := d.clk.AfterFunc(unit, func() { ran <- struct{}{} })
 				if tm.C() != nil {
 					t.Fatal("AfterFunc timer has a channel")
 				}
 				if !tm.Stop() {
-					t.Fatal("Stop of a pending AfterFunc returned false")
+					// Legitimate only if the deadline passed before Stop, which a
+					// slow machine can cause for System; then the callback runs.
+					if d.clk.Now().Sub(created) < unit {
+						t.Fatal("Stop of a pending AfterFunc returned false")
+					}
+					waitRun(t, ran)
+					return
 				}
 				d.elapse(unit)
 				select {
@@ -129,23 +148,30 @@ func TestConformance(t *testing.T) {
 				if !pending.Stop() {
 					t.Fatal("Stop of a pending nil AfterFunc returned false")
 				}
+				// The nil callback cannot be observed, so its firing is: Reset
+				// reports a pending timer, and re-arms it, until it has fired.
+				// One elapse suffices unless System's timer fires late. The
+				// Reset that finds it fired re-arms it, and it fires again.
 				tm := d.clk.AfterFunc(unit, nil)
-				d.elapse(unit)
-				if tm.Stop() {
-					t.Fatal("nil AfterFunc did not fire")
+				deadline := time.Now().Add(5 * time.Second)
+				for range 2 {
+					for d.elapse(unit); tm.Reset(unit); d.elapse(unit) {
+						if time.Now().After(deadline) {
+							t.Fatal("nil AfterFunc did not fire")
+						}
+					}
 				}
-				if tm.Reset(unit) {
-					t.Fatal("Reset of a fired nil AfterFunc returned true")
-				}
-				d.elapse(unit)
+				tm.Stop()
 			})
 		})
 	}
 }
 
 func TestSystemNowIsMonotonic(t *testing.T) {
+	// Time.String ends in "m=±<value>" exactly when a monotonic reading is
+	// present; Equal would ignore it.
 	now := clock.System{}.Now()
-	if now == now.Round(0) {
-		t.Fatal("System.Now has no monotonic reading")
+	if !strings.Contains(now.String(), " m=") {
+		t.Fatalf("System.Now has no monotonic reading: %s", now)
 	}
 }

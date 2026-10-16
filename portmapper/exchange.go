@@ -17,9 +17,12 @@ const (
 	retransmitMax     = 2 * time.Second
 )
 
-// maxGatewayResponse is the read buffer for PCP and NAT-PMP answers; PCP
-// messages are at most 1100 bytes (RFC 6887, section 7).
-const maxGatewayResponse = 1100
+// readBufSize is the read buffer of a request socket: room for any UDP
+// datagram, so that none is cut short. Answers are far smaller (a PCP
+// message is at most 1100 bytes, RFC 6887, section 7), but Windows fails a
+// read whose datagram does not fit instead of truncating it, and a stray
+// oversized datagram would then end the request.
+const readBufSize = 64 << 10
 
 // outcome tells the caller of exchange what the gateway may have done.
 type outcome int
@@ -37,7 +40,7 @@ const (
 // datagrams from anyone but server are ignored.
 func (c *reqConn) exchange(ctx context.Context, server netip.AddrPort, req []byte, accept func([]byte) (bool, error)) (outcome, error) {
 	dst := net.UDPAddrFromAddrPort(server)
-	buf := make([]byte, maxGatewayResponse)
+	buf := make([]byte, readBufSize)
 	out := notSent
 	for interval := retransmitInitial; ; interval = min(interval*2, retransmitMax) {
 		if ctx.Err() != nil {
@@ -81,14 +84,16 @@ func noAnswer(ctx context.Context, out outcome) error {
 func (c *reqConn) readRound(ctx context.Context, deadline time.Time, buf []byte, match func([]byte, netip.AddrPort) (bool, error)) (bool, error) {
 	if err := c.pc.SetReadDeadline(deadline); err != nil {
 		if ctx.Err() != nil {
-			return false, nil
+			return false, nil // the end of ctx closed the socket: not a socket failure
 		}
 		return false, err
 	}
 	for {
 		n, addr, err := c.pc.ReadFrom(buf)
 		if err != nil {
-			// The end of ctx closed the socket, or the deadline passed.
+			// The end of ctx closed the socket, or the deadline passed:
+			// neither is a socket failure, the caller retransmits or reports
+			// the end of ctx.
 			var ne net.Error
 			if ctx.Err() != nil || errors.As(err, &ne) && ne.Timeout() {
 				return false, nil

@@ -37,10 +37,10 @@ type classFlow struct {
 const minClassFlows = 256
 
 // classifyLocked runs the device's Classifier on a datagram leaving through
-// the uplink from src (translated) to dst, and reports whether it passes.
-// The caller holds nat.mu.
-func (nat *NAT) classifyLocked(src, dst netip.AddrPort, payload []byte, now time.Duration) bool {
-	c := nat.cfg.Classifier
+// the uplink from src (translated) to dst. It reports whether the datagram
+// passes and, when it is one of the first Window of a flow not yet allowed,
+// the flow that inspect judges it for. The caller holds nat.mu.
+func (nat *NAT) classifyLocked(src, dst netip.AddrPort, now time.Duration) (bool, *classFlow) {
 	k := flowKey{src, dst}
 	f := nat.flows[k]
 	if f == nil || !nat.fresh(f.last, now) {
@@ -53,13 +53,25 @@ func (nat *NAT) classifyLocked(src, dst netip.AddrPort, payload []byte, now time
 	f.last = now
 	switch {
 	case f.allowed:
-		return true
-	case f.seen >= c.Window:
-		return false
+		return true, nil
+	case f.seen >= nat.cfg.Classifier.Window:
+		return false, nil
 	}
 	f.seen++
-	f.allowed = c.Allow(payload)
-	return true
+	return true, f
+}
+
+// inspect runs the Classifier's Allow, the caller's code, on a datagram of
+// flow f without any lock held, and lets the flow through for good when it
+// allows the datagram. The datagram itself passes either way: it is one of
+// the inspected first ones.
+func (nat *NAT) inspect(f *classFlow, payload []byte) {
+	if !nat.cfg.Classifier.Allow(payload) {
+		return
+	}
+	nat.mu.Lock()
+	f.allowed = true
+	nat.mu.Unlock()
 }
 
 // sweepFlowsLocked drops the flows idle for MappingTimeout once the table

@@ -43,7 +43,7 @@ type Coordinator struct {
 
 	mu      sync.Mutex
 	closed  bool
-	live    int           // sessions whose Done is not closed yet
+	live    int           // sessions whose Result is not delivered yet (EvClosed queued, OnResult returned)
 	drained chan struct{} // closed once closed and live == 0
 	drainOK bool
 	index   [16]indexShard
@@ -158,10 +158,12 @@ func (c *Coordinator) Memory() StrategyMemory { return c.set.memory }
 
 // Close ends every session with server_shutdown — sessions still before the
 // punch get punch_abort{server_shutdown}, punching and confirming sessions
-// only have their links closed — and stops the
-// coordinator's goroutines. It waits at most 3 s. It is idempotent and safe
-// for concurrent use: every caller waits for the first call's shutdown and
-// gets its result. NewSession and Attach return ErrClosed afterwards.
+// only have their links closed — delivers their Results (OnResult has
+// returned for each, and their EvClosed events are queued before the event
+// dispatcher stops) and stops the coordinator's goroutines. It waits at
+// most 3 s. It is idempotent and safe for concurrent use: every caller waits
+// for the first call's shutdown and gets its result. NewSession and Attach
+// return ErrClosed afterwards.
 //
 // Close returns nil, or what went wrong, in the order of the shutdown's steps:
 // a panic as a *life.PanicError, and ErrShutdownTimeout when sessions or
@@ -260,7 +262,7 @@ func (c *Coordinator) checkDrained() {
 	}
 }
 
-// sessionGone is called when a session's Done closes.
+// sessionGone is called once a session's Result is delivered.
 func (c *Coordinator) sessionGone() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

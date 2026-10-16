@@ -65,11 +65,19 @@ func (ho *handoff) sockFor(s *udpSock) *handSock {
 }
 
 // disown moves every socket and its port mapping out of the session group
-// and detaches it from the sender (finish step 1). The primary path's
-// socket failing to detach fails the session; an extra path's is lost.
+// and detaches it from the sender (finish step 1). A socket the group does
+// not give up would be closed with it, under the caller. The primary path's
+// socket failing to leave the group or to detach fails the session; an extra
+// path's is lost.
 func (rt *runtime) disown(ho *handoff) *failure {
 	for i, hs := range ho.socks {
-		rt.g.Disown(hs.sock.conn)
+		if !rt.g.Disown(hs.sock.owner) {
+			if i == 0 {
+				return fail(protocol.ReasonInternal, "disown", nil)
+			}
+			rt.lose(hs)
+			continue
+		}
 		hs.owned = true
 		if fs := rt.fam(hs.sock.fam); fs.primary == hs.sock && fs.mapping != nil {
 			if info, rc, ok := fs.mapping.result(); ok {

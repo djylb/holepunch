@@ -256,7 +256,10 @@ func TestNatprobeEndToEnd(t *testing.T) {
 	udp[1].probeFrom(obs[0], helper, &[2]uint8{1, nat.SandwichBefore})
 	udp[1].probeFrom(obs[1], helper, &[2]uint8{1, nat.SandwichAfter})
 	var win *protocol.Assist
-	for win == nil {
+	for deadline := time.Now().Add(waitLimit); win == nil; {
+		if time.Now().After(deadline) {
+			t.Fatal("no sandwich window")
+		}
 		r.clk.Advance(0)
 		m, _, err := p.cl[0].Next(ctxShort(t))
 		if err != nil {

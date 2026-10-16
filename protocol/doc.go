@@ -10,7 +10,9 @@
 // messages; the frame-type table itself (numbers, caps, directions) lives in
 // controlwire. Decoding enforces the JSON rules of a control payload — a
 // UTF-8 object nested at most 8 levels — and then Validate, the structural
-// check: required fields, enumeration values, string and list limits. A
+// check: required fields, enumeration values, string and list limits. The
+// list limits of the messages a client sends are checked before decoding as
+// well, so that a frame cannot make the server allocate many times its size. A
 // violation is a *ValidationError whose Reason (protocol_violation or
 // control_version_mismatch) and Detail (the field path) go on the wire.
 // Normalize is separate: it returns the message with the receiver-side

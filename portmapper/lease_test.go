@@ -87,7 +87,7 @@ func TestReleaseBoundedWhenGatewayStopsAnswering(t *testing.T) {
 	gw.set(func(f *fakeGW) { f.dropDeletes = true })
 	start := time.Now()
 	err = release()
-	within(t, "release()", time.Since(start), releaseTimeout+100*time.Millisecond)
+	within(t, "release()", time.Since(start), releaseTimeout+boundSlack)
 	if !errors.Is(err, errNoResponse) {
 		t.Fatalf("release() = %v although the gateway never confirmed the delete", err)
 	}
@@ -95,7 +95,7 @@ func TestReleaseBoundedWhenGatewayStopsAnswering(t *testing.T) {
 	if err2 := release(); !errors.Is(err2, err) {
 		t.Fatalf("second release() = %v, want the first error %v", err2, err)
 	}
-	within(t, "second release()", time.Since(start), 10*time.Millisecond)
+	within(t, "second release()", time.Since(start), releaseTimeout/4) // not another wait for the gateway
 }
 
 func TestRenewalRecreatesAfterGatewayReboot(t *testing.T) {

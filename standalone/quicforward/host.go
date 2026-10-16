@@ -36,7 +36,10 @@ type HostConfig struct {
 	// Dial connects a target; nil dials TCP with standalone.DialTCP. It is
 	// called inside a recover boundary.
 	Dial func(ctx context.Context, address string) (net.Conn, error) //holepunch:callback
-	// DialTimeout bounds a target dial; 0 means DefaultDialTimeout.
+	// DialTimeout bounds a target dial; 0 means DefaultDialTimeout. A
+	// stream's request, the dial and the answer must all fit in 15 s, after
+	// which the dialer takes the unanswered stream for a sign of a dead
+	// connection and opens a new session: keep it well below that.
 	DialTimeout time.Duration
 	// Logger receives the forwarding events; nil discards them.
 	Logger *slog.Logger

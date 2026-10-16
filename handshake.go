@@ -166,7 +166,6 @@ func (rt *runtime) pathKind(fam protocol.Family, remote netip.AddrPort, k candid
 	return protocol.PathPublic
 }
 
-// isHit reports whether a valid packet came from `to`.
 // heardOn reports whether a valid peer packet arrived on the socket bound
 // at local: its pairs are candidates.
 func (st *punchState) heardOn(local netip.AddrPort) bool {
@@ -180,6 +179,7 @@ func (st *punchState) heardOn(local netip.AddrPort) bool {
 	return false
 }
 
+// isHit reports whether a valid packet came from to.
 func (st *punchState) isHit(to netip.AddrPort) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()

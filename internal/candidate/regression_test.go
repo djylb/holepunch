@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -62,10 +63,10 @@ func TestHighRTTConverges(t *testing.T) {
 func TestRTOBackoffPerPair(t *testing.T) {
 	m := NewManager(Config{Role: protocol.RoleInitiator})
 	m.cur = &Candidate{MinRTT: 100 * time.Millisecond}
-	for k, want := range []time.Duration{150, 300, 600, 1200, 1200, 1200} {
+	for k, ms := range []int{150, 300, 600, 1200, 1200, 1200} {
 		m.cur.NomFailures = k
-		if got := m.rto(); got != want*time.Millisecond {
-			t.Fatalf("rto after %d rolls = %v, want %v", k, got, want*time.Millisecond)
+		if got, want := m.rto(), time.Duration(ms)*time.Millisecond; got != want {
+			t.Fatalf("rto after %d rolls = %v, want %v", k, got, want)
 		}
 	}
 	m.cur = &Candidate{MinRTT: 10 * time.Millisecond, NomFailures: 1}
@@ -182,11 +183,9 @@ func TestNextDeadlineDrivesExactly(t *testing.T) {
 		}
 	}
 	// collect 60 ms (clamp(250)), ×2 at 60/70, rto 80 → 140, 220
-	want := []time.Duration{60, 70, 140, 220}
-	for i := range want {
-		if noms[i] != want[i]*time.Millisecond {
-			t.Fatalf("nominates at %v, want %v ms", noms, want)
-		}
+	want := []time.Duration{60 * time.Millisecond, 70 * time.Millisecond, 140 * time.Millisecond, 220 * time.Millisecond}
+	if !slices.Equal(noms, want) {
+		t.Fatalf("nominates at %v, want %v", noms, want)
 	}
 
 	r := NewManager(Config{Role: protocol.RoleResponder})
@@ -339,8 +338,8 @@ func TestExtraAckImmediate(t *testing.T) {
 	if acts := r.RecvReady(conf, 1, rem, 0); count(acts, SendAck) != 1 {
 		t.Fatalf("confirm: %+v", acts)
 	}
-	for i, d := range []time.Duration{2, 3, 4} {
-		acts := r.RecvReady(conf.Add(d*time.Millisecond), 1, rem, 0)
+	for i, d := range []time.Duration{2 * time.Millisecond, 3 * time.Millisecond, 4 * time.Millisecond} {
+		acts := r.RecvReady(conf.Add(d), 1, rem, 0)
 		if want := min(1, 2-i); count(acts, SendAck) != max(want, 0) {
 			t.Fatalf("extra ready %d: %+v", i+1, acts)
 		}
@@ -478,15 +477,17 @@ func TestCandKindTargets(t *testing.T) {
 	if c.CandKind() != protocol.CandTargets {
 		t.Fatalf("cand_kind %q", c.CandKind())
 	}
-	if !(KindObserved.baseScore() > KindTargets.baseScore() && KindTargets.baseScore() > KindPredicted.baseScore()) {
+	if KindObserved.baseScore() <= KindTargets.baseScore() || KindTargets.baseScore() <= KindPredicted.baseScore() {
 		t.Fatal("peer_targets must rank between observed and predicted")
 	}
 }
 
 // Random event sequences — time going backwards, zero addresses, invalid
-// roles, stale and garbage epochs, read errors — never panic, never confirm
-// or hand over twice, never send after a terminal action, and a handover
-// always names the confirmed pair and epoch.
+// roles, stale and garbage epochs, garbage slots, rooms and PATHS, read
+// errors — never panic, never confirm or hand over twice, never send after a
+// terminal action, a handover always names the confirmed pair and epoch, and
+// the extra paths handed over are within MaxPaths and no duplicate of the
+// primary path or of one another.
 func TestRandomEventsInvariants(t *testing.T) {
 	addrs := []netip.AddrPort{{}, ap("192.0.2.1:1"), ap("192.0.2.1:2"), ap("203.0.113.9:40000"), ap("203.0.113.9:40001"), ap("[2001:db8::1]:5")}
 	seeds := uint64(4000)
@@ -496,7 +497,7 @@ func TestRandomEventsInvariants(t *testing.T) {
 	for seed := range seeds {
 		rng := rand.New(rand.NewPCG(seed, 9))
 		role := []protocol.Role{protocol.RoleInitiator, protocol.RoleResponder, "", protocol.RoleServer}[rng.IntN(4)]
-		m := NewManager(Config{Role: role})
+		m := NewManager(Config{Role: role, MaxPaths: rng.IntN(protocol.MaxPaths + 2)})
 		now := time.Unix(500, 0)
 		confirms, handovers, fails := 0, 0, 0
 		var confA Action
@@ -511,6 +512,18 @@ func TestRandomEventsInvariants(t *testing.T) {
 					if confirms == 0 || a.Local != confA.Local || a.Remote != confA.Remote || a.Epoch != confA.Epoch {
 						t.Fatalf("seed %d %s: handover %+v, confirm %+v", seed, ev, a, confA)
 					}
+					w, _ := m.Winner()
+					held := []*Candidate{&w}
+					xs := m.Extras()
+					for i := range xs {
+						if duplicateOfAny(&xs[i], held) {
+							t.Fatalf("seed %d %s: duplicate extra paths %v (primary %v)", seed, ev, xs, w)
+						}
+						held = append(held, &xs[i])
+					}
+					if len(xs) > m.cfg.MaxPaths-1 {
+						t.Fatalf("seed %d %s: %d extra paths, MaxPaths %d", seed, ev, len(xs), m.cfg.MaxPaths)
+					}
 				case Fail:
 					fails++
 				default:
@@ -524,10 +537,10 @@ func TestRandomEventsInvariants(t *testing.T) {
 			}
 		}
 		for step := range 300 {
-			switch r := rng.IntN(20); {
-			case r == 0:
+			switch rng.IntN(20) {
+			case 0:
 				now = now.Add(-time.Duration(rng.IntN(200)) * time.Millisecond)
-			case r == 1:
+			case 1:
 				now = now.Add(time.Duration(rng.IntN(5000)) * time.Millisecond)
 			default:
 				now = now.Add(time.Duration(rng.IntN(20)) * time.Millisecond)
@@ -538,8 +551,9 @@ func TestRandomEventsInvariants(t *testing.T) {
 				e = m.Epoch()
 			}
 			var acts []Action
-			ev := ""
-			switch rng.IntN(11) {
+			var ev string
+			slot, bits := uint8(rng.IntN(protocol.MaxPaths+1)), uint8(rng.Uint32())
+			switch rng.IntN(14) {
 			case 0:
 				ev = "observe"
 				m.Observe(now, l, r, protocol.FamilyUDP4, Kind(rng.IntN(10)))
@@ -554,19 +568,29 @@ func TestRandomEventsInvariants(t *testing.T) {
 				acts = m.RecvNominate(now, e, l, r, protocol.FamilyUDP4)
 			case 4:
 				ev = "accept"
-				acts = m.RecvAccept(now, e, r, 0)
+				acts = m.RecvAccept(now, e, r, bits)
 			case 5:
 				ev = "ready"
-				acts = m.RecvReady(now, e, r, 0)
+				acts = m.RecvReady(now, e, r, bits)
 			case 6:
 				ev = "ack"
 				acts = m.RecvHandoverAck(now, e, r)
 			case 7:
 				ev = "upper"
-				acts = m.RecvUpperLayer(now, netip.AddrPort{}, r)
+				acts = m.RecvUpperLayer(now, l, r)
 			case 8:
 				ev = "read failed"
 				acts = m.ReadFailed(now, l)
+			case 9:
+				ev = "extra nominate"
+				acts = m.RecvExtraNominate(now, e, slot, l, r)
+			case 10:
+				ev = "extra accept"
+				acts = m.RecvExtraAccept(now, e, slot, l, r)
+			case 11:
+				ev = "describe"
+				kinds := []protocol.PathKind{"", protocol.PathPublic, protocol.PathLAN, protocol.PathOverlay, protocol.PathPortmap}
+				m.Describe(l, r, kinds[rng.IntN(len(kinds))], uint8(rng.IntN(3)))
 			default:
 				ev = "tick"
 				acts = m.Tick(now)
@@ -600,6 +624,105 @@ func TestLossyConvergence(t *testing.T) {
 				t.Fatalf("scenario %d seed %d: I %v R %v, paths %d/%d, epochs %d/%d\n%v",
 					si, i, r.iDone, r.rDone, r.iPath, r.rPath, r.iEpoch, r.rEpoch, tail(r.log, 30))
 			}
+			if r.rBy == protocol.ConfirmedByReady && r.rDoneAt-r.rConfirmAt > 2*ackBurstStep {
+				t.Fatalf("scenario %d seed %d: R confirmed at %v, handed over at %v", si, i, r.rConfirmAt, r.rDoneAt)
+			}
+		}
+	}
+}
+
+// A roll that leaves only cooling-down pairs waits for the first cooldown,
+// but a pair that answers in the meantime is nominated after the
+// collection window, not after the cooldown; a cooling-down pair's own
+// packets do not shorten the wait.
+func TestFreshPairEndsCooldownWait(t *testing.T) {
+	base := time.Unix(0, 0)
+	loc := ap("192.0.2.1:5000")
+	a, b := ap("203.0.113.9:40000"), ap("203.0.113.9:40001")
+	m := NewManager(Config{Role: protocol.RoleInitiator, EpochCooldown: 2 * time.Second})
+	m.Success(base, loc, a, protocol.FamilyUDP4, 40*time.Millisecond)
+	var rolled time.Time
+	for m.Epoch() < 2 {
+		at, ok := m.NextDeadline()
+		if !ok || at.Sub(base) > 5*time.Second {
+			t.Fatalf("no roll: phase %v epoch %d", m.Phase(), m.Epoch())
+		}
+		m.Tick(at)
+		if m.Phase() == PhaseCollect && m.Epoch() == 1 {
+			rolled = at
+			break
+		}
+	}
+	if rolled.IsZero() {
+		t.Fatalf("the roll re-nominated the cooling-down pair: epoch %d", m.Epoch())
+	}
+	if at, _ := m.NextDeadline(); !at.Equal(rolled.Add(2 * time.Second)) {
+		t.Fatalf("waiting until %v, want the end of the cooldown %v", at, rolled.Add(2*time.Second))
+	}
+	m.Success(rolled.Add(5*time.Millisecond), loc, a, protocol.FamilyUDP4, 40*time.Millisecond)
+	if at, _ := m.NextDeadline(); !at.Equal(rolled.Add(2 * time.Second)) {
+		t.Fatalf("the cooling-down pair moved the wait to %v", at)
+	}
+	fresh := rolled.Add(10 * time.Millisecond)
+	m.Success(fresh, loc, b, protocol.FamilyUDP4, 40*time.Millisecond)
+	at, _ := m.NextDeadline()
+	if want := fresh.Add(m.nomDelay()); !at.Equal(want) {
+		t.Fatalf("collect at %v after a fresh pair, want %v", at, want)
+	}
+	if acts := m.Tick(at); count(acts, SendNominate) != 1 || acts[0].Remote != b || acts[0].Epoch != 2 {
+		t.Fatalf("fresh pair not nominated: %+v", acts)
+	}
+}
+
+// When the cooldown the initiator waits for ends on a pair that has closed
+// meanwhile, it waits for the next cooldown instead of stalling in punching.
+func TestCooldownWaitSkipsClosedPair(t *testing.T) {
+	base := time.Unix(0, 0)
+	l1, l2, rem := ap("192.0.2.1:5000"), ap("192.0.2.1:5001"), ap("203.0.113.9:40000")
+	m := NewManager(Config{Role: protocol.RoleInitiator})
+	m.Success(base, l1, rem, protocol.FamilyUDP4, 40*time.Millisecond)
+	m.Success(base, l2, rem, protocol.FamilyUDP4, 40*time.Millisecond)
+	m.Table().get(l1, rem).CooldownUntil = base.Add(time.Second)
+	m.Table().get(l2, rem).CooldownUntil = base.Add(2 * time.Second)
+	if acts := m.Tick(base.Add(100 * time.Millisecond)); len(acts) != 0 {
+		t.Fatalf("nominated a cooling-down pair: %+v", acts)
+	}
+	if acts := m.ReadFailed(base.Add(500*time.Millisecond), l1); len(acts) != 0 {
+		t.Fatalf("ReadFailed acted: %+v", acts)
+	}
+	if acts := m.Tick(base.Add(time.Second)); len(acts) != 0 {
+		t.Fatalf("nominated at the closed pair's cooldown end: %+v", acts)
+	}
+	at, ok := m.NextDeadline()
+	if !ok || !at.Equal(base.Add(2*time.Second)) || m.Phase() != PhaseCollect {
+		t.Fatalf("phase %v, deadline %v %v; want collecting until the second cooldown ends", m.Phase(), at, ok)
+	}
+	if acts := m.Tick(at); count(acts, SendNominate) != 1 || acts[0].Local != l2 {
+		t.Fatalf("after the second cooldown: %+v", acts)
+	}
+}
+
+// Eviction does not depend on the map order: among equally useful pairs
+// the address order decides, and a closed pair goes first.
+func TestEvictionDeterministic(t *testing.T) {
+	base := time.Unix(0, 0)
+	loc := ap("192.0.2.1:5000")
+	remote := func(i int) netip.AddrPort {
+		return netip.AddrPortFrom(netip.AddrFrom4([4]byte{198, 51, byte(i >> 8), byte(i)}), 1)
+	}
+	for range 20 {
+		tab := newTable()
+		for i := range maxCandidates {
+			tab.Success(base, loc, remote(i), protocol.FamilyUDP4, 0)
+		}
+		tab.Success(base, loc, ap("192.0.2.99:1"), protocol.FamilyUDP4, 0)
+		if tab.get(loc, remote(0)) != nil || tab.get(loc, remote(1)) == nil || tab.Len() != maxCandidates {
+			t.Fatal("evicted another pair than the first in address order")
+		}
+		tab.get(loc, remote(200)).State = StateClosed
+		tab.Observe(base.Add(time.Second), loc, ap("192.0.2.98:1"), protocol.FamilyUDP4, KindPredicted)
+		if tab.get(loc, remote(200)) != nil || tab.get(loc, remote(1)) == nil {
+			t.Fatal("a closed pair outlived an open one")
 		}
 	}
 }

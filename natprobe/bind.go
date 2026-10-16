@@ -40,8 +40,11 @@ type pool struct {
 
 func (p *pool) usable() bool { return p != nil && len(p.conns) > 0 }
 
+// pick returns the next socket in turn. The index is reduced in uint32: an
+// int conversion first would turn negative on 32-bit platforms once the
+// counter passes 2^31.
 func (p *pool) pick() (packetConn, uint16) {
-	i := int(p.next.Add(1)) % len(p.conns)
+	i := p.next.Add(1) % uint32(len(p.conns))
 	return p.conns[i], p.ports[i]
 }
 
@@ -72,6 +75,11 @@ func (s *Server) bind(g *life.Group) ([]*listener, [2]*pool, error) {
 				return nil, alt, err
 			}
 			if lp == 0 {
+				if port == 0 {
+					// The kernel chose a port the conn does not tell: the
+					// observer could not be advertised.
+					return nil, alt, fmt.Errorf("natprobe: listen %s %v: unknown local port", fam, grp.Bind)
+				}
 				lp = uint16(port)
 			}
 			group = append(group, &listener{id: id, group: uint8(gi), fam: fam, alt: grp.Alt, flags: flags,

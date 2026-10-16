@@ -42,10 +42,12 @@
 //
 // noglobalstate: a package-level variable must be read-only after
 // initialisation. Reported at its declaration are variables that are written
-// anywhere in the module outside func init — assignment, ++/--, range
-// assignment, delete, clear, copy or append on it, including writes from
-// test files and from other packages (pkg.Var = x) — or whose address is
-// taken, since an address lets anyone write later. Also reported are
+// anywhere in the module outside func init and the package-level
+// initialisers — assignment, ++/--, range assignment, delete, clear, copy or
+// append on it, including writes from test files and from other packages
+// (pkg.Var = x) — or whose address is taken, since an address lets anyone
+// write later. A function literal that init or an initialiser creates
+// without calling it runs later, so its writes count. Also reported are
 // declarations that can only be mutable state: sync and sync/atomic types
 // other than sync.Pool, channels, and pointers (&T{}, new(T), &v) except
 // those to a sync.Pool and Err*/err* sentinel errors.
@@ -54,10 +56,12 @@
 // network — Dial*, Listen*, File*, Interface*, Lookup*, Resolve*, Dialer,
 // ListenConfig, Resolver and DefaultResolver — may be used only inside a
 // function annotated with //holepunch:netimpl. Everything else goes through
-// holepunch.Network, so tests can count and simulate every socket.
+// holepunch.Network, so tests can count and simulate every socket. A dot
+// import of net is reported too: it would hide those identifiers.
 //
 // nosleep: time.Sleep is forbidden, including as a function value; waits
-// must be cancellable (a context or a Clock timer).
+// must be cancellable (a context or a Clock timer). A dot import of time is
+// reported too: it would hide the call.
 //
 // callbacklock: calling user code while holding a lock is reported. User code
 // is whatever carries //holepunch:callback: a function or method that calls
@@ -69,11 +73,18 @@
 // ending in return or panic are dropped, loops merge with their entry state.
 // Function literals passed to an ordinary call are assumed to run synchronously
 // under the caller's locks (life.Safe, sort.Slice); those passed to Go or
-// AfterFunc, started by go, deferred or stored run under unknown locks and are
-// analysed with none held. Annotated package-level functions are matched by
-// import path and name; annotated methods, fields and interface methods are
-// matched by name, module-wide when exported and within their package
-// otherwise. A package-qualified call (fmt.Errorf) never matches a method name.
+// AfterFunc, started by go or stored run under unknown locks and are analysed
+// with none held. A deferred call runs at return, before the Unlocks deferred
+// earlier on its path, so under those locks, and so do the function literals
+// passed to it unless it is Go or AfterFunc; a function literal that runs
+// synchronously returns under the locks it was called under, so the calls it
+// defers run under them too. A deferred function literal that unlocks a held
+// lock counts as that lock's deferred Unlock, and a deferred Lock (x.Unlock();
+// defer x.Lock()) releases x for the calls deferred after it, which run
+// before it. Annotated package-level functions are matched by import path and
+// name; annotated methods, fields and interface methods are matched by name,
+// module-wide when exported and within their package otherwise. A
+// package-qualified call (fmt.Errorf) never matches a method name.
 //
 // directive: //holepunch: directives must be known, take no arguments (a
 // trailing // comment is allowed) and sit where they apply:
@@ -85,16 +96,41 @@
 //	                      in natprobe
 //
 // A misplaced or misspelt directive would otherwise silently switch a check
-// off.
+// off; so would a known one written with a space after the slashes
+// ("// holepunch:callback"), which is reported too unless more prose
+// follows it.
 //
 // # Limitations
 //
 // Without type information, callbacklock matches callbacks by name and only
 // within a single function: a callback reached through an unannotated helper, a
 // method value or a renamed variable is not seen, and a lock taken through one
-// expression and released through another looks held. noglobalstate cannot see
-// writes made by methods with pointer receivers (var r = newRegistry();
-// r.Add()) or through a slice or map handed out by reference; only explicit
-// address-of counts as escaping. nodirectnet covers package net, not raw
-// syscalls or net/http's own dialing.
+// expression and released through another looks held. Its lock state is a
+// single pass over the statements, not a fixed point, and errs both ways:
+//
+//   - a loop body is analysed once, from the state on entry: a lock still
+//     held at the end of one iteration, or at a continue, is not seen at the
+//     top of the next, and every loop, for {} included, is taken to possibly
+//     run zero times;
+//   - goto ends a path, and fallthrough carries a clause's state to the end
+//     of the switch, not into the next clause;
+//   - a function literal's own Lock and Unlock calls do not change its
+//     caller's state: a literal that releases a lock its caller holds without
+//     retaking it still has the calls it defers reported, and a literal that
+//     takes a lock leaves the caller's later calls unreported;
+//   - a deferred function literal that takes a lock is not a deferred Lock,
+//     one that unlocks counts as a deferred Unlock even when the unlock is
+//     conditional, and a deferred Unlock counts only for a lock held when it
+//     is deferred;
+//   - TryLock is not a Lock;
+//   - Go and AfterFunc are recognised by name alone, and a function literal
+//     that an ordinary call stores instead of running (sync.OnceFunc) is
+//     still analysed under the caller's locks;
+//   - function literals in package-level variable initialisers are not
+//     analysed.
+//
+// noglobalstate cannot see writes made by methods with pointer receivers
+// (var r = newRegistry(); r.Add()) or through a slice or map handed out by
+// reference; only explicit address-of counts as escaping. nodirectnet covers
+// package net, not raw syscalls or net/http's own dialing.
 package main

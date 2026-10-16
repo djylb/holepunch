@@ -41,6 +41,7 @@ const (
 	portWindow       = 10 * time.Second
 	blockedAfter     = time.Second // every write failing this long while punching is udp_blocked
 	nonWaitDebt      = 2           // tokens replies and handshakes may borrow from the pps bucket
+	replySweepMin    = 64          // reply times kept before the first sweep of the stale ones
 )
 
 var (
@@ -319,6 +320,7 @@ type sender struct {
 	perIP      map[netip.Addr]*ipPorts
 	marks      []classMark
 	replyAt    map[replyKey]time.Time
+	replyKept  int         // reply times left by the last sweep
 	recent     []time.Time // initiated sends within the last second, for PeakPPS
 	peakPPS    int
 	failSince  time.Time // first write failure since the last success
@@ -454,6 +456,7 @@ func (s *sender) gateLocked(now time.Time, sock *udpSock, to netip.AddrPort, o *
 			return 0, errBudget
 		}
 		s.replyAt[k] = now
+		s.sweepRepliesLocked(now)
 	case classHandshake:
 		if s.handshakes >= handshakeReserve {
 			return 0, errBudget
@@ -464,6 +467,22 @@ func (s *sender) gateLocked(now time.Time, sock *udpSock, to netip.AddrPort, o *
 		// Bounded by the prober and natprobe, not here.
 	}
 	return 0, nil
+}
+
+// sweepRepliesLocked forgets the reply times that no longer suppress
+// anything once the map has doubled since the last sweep, so that it holds
+// about the remotes answered within replyMinGap, which the pps bucket
+// bounds, rather than every source the peer ever sent from.
+func (s *sender) sweepRepliesLocked(now time.Time) {
+	if len(s.replyAt) < 2*max(s.replyKept, replySweepMin) {
+		return
+	}
+	for k, at := range s.replyAt {
+		if now.Sub(at) >= replyMinGap {
+			delete(s.replyAt, k)
+		}
+	}
+	s.replyKept = len(s.replyAt)
 }
 
 // sendOpt says how to account and shape one packet.
@@ -481,36 +500,48 @@ type sendOpt struct {
 // packet the run guard holds back returns errRun before the gate has
 // counted anything.
 func (s *sender) Send(ctx context.Context, sock *udpSock, to netip.AddrPort, h *udpwire.Header, t *udpwire.TLVs, o sendOpt) error {
+	wrapped, wrote, err := s.sendLaned(ctx, sock, to, h, t, &o)
+	if !wrote {
+		return err
+	}
+	return s.account(ctx, sock, &o, wrapped, err)
+}
+
+// sendLaned is Send up to the write, in the family's lane. wrote reports
+// that the write happened, err then being its outcome; otherwise err says
+// why the packet stopped. A write error may come from the caller's conn,
+// so it is inspected (account) only after the lane is released.
+func (s *sender) sendLaned(ctx context.Context, sock *udpSock, to netip.AddrPort, h *udpwire.Header, t *udpwire.TLVs, o *sendOpt) (wrapped, wrote bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return context.Cause(ctx)
+		return false, false, context.Cause(ctx)
 	}
 	l := s.lanes[famIndex(sock.fam)]
 	if err := l.acquire(ctx); err != nil {
-		return err
+		return false, false, err
 	}
 	defer l.release()
 	fc := &s.rt.fam(sock.fam).cnt
 	now := s.rt.clk.Now()
-	if !s.runAllows(l, to, &o, now) {
-		return errRun
+	if !s.runAllows(l, to, o, now) {
+		return false, false, errRun
 	}
 	s.mu.Lock()
-	wait, err := s.gateLocked(now, sock, to, &o)
+	wait, err := s.gateLocked(now, sock, to, o)
 	s.mu.Unlock()
 	switch {
 	case errors.Is(err, errRejected):
 		fc.targetRejected.Add(1)
 		fc.drop(dropTargetRejected)
-		return err
+		return false, false, err
 	case errors.Is(err, errBudget):
 		fc.drop(dropBudget)
-		return err
+		return false, false, err
 	case err != nil:
-		return err
+		return false, false, err
 	}
 	if wait > 0 {
 		if err := s.rt.sleep(ctx, s.rt.pace.spread(wait, 0.2)); err != nil {
-			return err
+			return false, false, err
 		}
 	}
 	h.Role = s.codec.Role()
@@ -524,58 +555,69 @@ func (s *sender) Send(ctx context.Context, sock *udpSock, to netip.AddrPort, h *
 	defer s.pool.Put(bp)
 	pkt, err := s.codec.Seal((*bp)[:0], h, t, 0)
 	if err != nil {
-		return err
+		return false, false, err
 	}
 	*bp = pkt[:0]
 	if o.class == classProbe {
 		if err := faultinject.Point(fiProbeSend); err != nil {
-			return err
+			return false, false, err
 		}
 	}
-	wrapped, err := sock.write(ctx, pkt, to, o.hops)
+	wrapped, err = sock.write(ctx, pkt, to, o.hops)
 	if err == nil {
 		l.wrote(to, s.rt.clk.Now())
 	}
-	return s.account(sock, &o, wrapped, err)
+	return wrapped, true, err
 }
 
 // SendRaw writes an already sealed probe-class datagram (the prober seals
 // its own probes) through the family's lane.
 func (s *sender) SendRaw(ctx context.Context, sock *udpSock, to netip.AddrPort, pkt []byte) error {
+	o := sendOpt{class: classProbe, stage: txProbe}
+	wrapped, wrote, err := s.rawLaned(ctx, sock, to, pkt, &o)
+	if !wrote {
+		return err
+	}
+	return s.account(ctx, sock, &o, wrapped, err)
+}
+
+// rawLaned is SendRaw up to the write, in the family's lane; see sendLaned.
+func (s *sender) rawLaned(ctx context.Context, sock *udpSock, to netip.AddrPort, pkt []byte, o *sendOpt) (wrapped, wrote bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return context.Cause(ctx)
+		return false, false, context.Cause(ctx)
 	}
 	l := s.lanes[famIndex(sock.fam)]
 	if err := l.acquire(ctx); err != nil {
-		return err
+		return false, false, err
 	}
 	defer l.release()
-	o := sendOpt{class: classProbe, stage: txProbe}
-	if !s.runAllows(l, to, &o, s.rt.clk.Now()) {
-		return errRun
+	if !s.runAllows(l, to, o, s.rt.clk.Now()) {
+		return false, false, errRun
 	}
 	if err := faultinject.Point(fiProbeSend); err != nil {
-		return err
+		return false, false, err
 	}
-	wrapped, err := sock.write(ctx, pkt, to, 0)
+	wrapped, err = sock.write(ctx, pkt, to, 0)
 	if err == nil {
 		l.wrote(to, s.rt.clk.Now())
 	}
-	return s.account(sock, &o, wrapped, err)
+	return wrapped, true, err
 }
 
 // account counts the outcome of a write; one that left as an opener
-// (wrapped) is still one packet of its class. A write that fails
+// (wrapped) is still one packet of its class. A write that never started —
+// ctx ended while it waited for the socket's write turn — or found the
+// socket handed over failed nothing. A write that fails
 // with the ICMP report of an earlier datagram (Windows, or a connected conn)
 // is a soft signal like the same report on a read: the socket works, the
 // report says nothing about this destination, so it neither drops the
 // target nor counts towards udp_blocked. Only "no route" names this
 // destination.
-func (s *sender) account(sock *udpSock, o *sendOpt, wrapped bool, err error) error {
+func (s *sender) account(ctx context.Context, sock *udpSock, o *sendOpt, wrapped bool, err error) error {
 	fc := &s.rt.fam(sock.fam).cnt
 	now := s.rt.clk.Now()
 	if err != nil {
-		if errors.Is(err, errDetached) || errors.Is(err, context.Canceled) {
+		if ctx.Err() != nil || errors.Is(err, errDetached) {
 			return err
 		}
 		fc.drop(dropSendErr)

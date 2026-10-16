@@ -62,7 +62,7 @@ func (nat *NAT) allocPort(f *natFam, alloc PortAlloc, ext netip.Addr, want uint1
 	case allocPool:
 		lo, hi := alloc.bounds()
 		return nat.randomFree(f, ext, int(lo), int(hi), now)
-	default: // Random, and any unknown strategy
+	default: // Random; NATConfig.normalized maps unknown strategies to Preserve
 		return nat.randomFree(f, ext, f.lo, f.hi, now)
 	}
 }

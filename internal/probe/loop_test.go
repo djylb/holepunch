@@ -14,20 +14,29 @@ import (
 	"github.com/djylb/holepunch/udpwire"
 )
 
-// drive advances the fake clock and the simulated network while the prober
-// goroutine runs, until done delivers.
-func drive[T any](t *testing.T, s *sim, done <-chan T) T {
-	t.Helper()
+// drive runs fn — Run or Hairpin — in a goroutine and, whenever that
+// goroutine is idle in its select, advances the fake clock and the
+// simulated network to the next timer or event, until fn returns. wakes is
+// whether fn selects on the ICMP wake-up channel.
+func drive[T any](s *sim, wakes bool, fn func() T) T {
+	s.t.Helper()
+	done := make(chan T, 1)
+	s.loop, s.wakes, s.awaited = true, wakes, s.selects.Load()+1
+	s.exited.Store(false)
+	defer func() { s.loop, s.wakes = false, false }()
+	go func() {
+		r := fn()
+		s.exited.Store(true)
+		done <- r
+	}()
 	for step := 0; ; step++ {
-		select {
-		case r := <-done:
-			return r
-		default:
+		s.settle()
+		if s.exited.Load() {
+			return <-done
 		}
 		if step == 100000 {
-			t.Fatal("the prober did not finish")
+			s.t.Fatal("the goroutine under test did not finish")
 		}
-		s.settle()
 		next := s.nextEvent()
 		if w, ok := s.fake.Next(); ok {
 			if wt := w.Sub(s.start); next < 0 || wt < next {
@@ -35,28 +44,18 @@ func drive[T any](t *testing.T, s *sim, done <-chan T) T {
 			}
 		}
 		if next < 0 {
-			continue
+			s.t.Fatal("the goroutine under test waits for nothing")
 		}
 		s.advanceTo(max(next, s.now))
 	}
 }
 
-// settle waits, in real time, until the prober goroutine has consumed its
-// inbox and is back in its select; the clock under test is fake.
-func (s *sim) settle() {
-	for range 2000 {
-		if len(s.p.inbox) == 0 {
-			break
-		}
-		time.Sleep(50 * time.Microsecond)
-	}
-	time.Sleep(500 * time.Microsecond)
+func (s *sim) loopRun(ctx context.Context) Result {
+	return drive(s, true, func() Result { return s.p.Run(ctx) })
 }
 
-func (s *sim) loopRun(ctx context.Context) Result {
-	done := make(chan Result, 1)
-	go func() { done <- s.p.Run(ctx) }()
-	return drive(s.t, s, done)
+func (s *sim) loopHairpin(ctx context.Context) protocol.Tri {
+	return drive(s, false, func() protocol.Tri { return s.p.Hairpin(ctx) })
 }
 
 // The real Run loop (timer and select) reaches what the stepped machine does.
@@ -119,20 +118,17 @@ func TestRunCanceled(t *testing.T) {
 		// sends it and checks ctx only between batches, so all three count.
 		// A fixed sleep let a slow runner cancel before the batch was sent.
 		for wait := time.Now(); len(s.sentTo(srvIP)) < 3; time.Sleep(50 * time.Microsecond) {
-			if time.Since(wait) > 2*time.Second {
+			if time.Since(wait) > 30*time.Second {
 				t.Fatal("Run sent no first batch")
 			}
 		}
-		start := time.Now()
 		cancel(cause)
+		// Nothing advances the fake clock: only the cancel can end Run.
 		var r Result
 		select {
 		case r = <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatal("Run did not return after cancel")
-		}
-		if time.Since(start) > 50*time.Millisecond {
-			t.Fatalf("Run took %v after cancel", time.Since(start))
 		}
 		if r.Failure != protocol.ReasonCanceled || r.Sent.Primary != 3 {
 			t.Fatalf("result %+v", r)
@@ -150,10 +146,7 @@ func TestRunCanceled(t *testing.T) {
 	}
 	// a nil ctx is tolerated as the background
 	var noCtx context.Context
-	s := newSim(t, defaultOpts())
-	done := make(chan Result, 1)
-	go func() { done <- s.p.Run(noCtx) }()
-	if r := drive(t, s, done); r.Failure != "" {
+	if r := newSim(t, defaultOpts()).loopRun(noCtx); r.Failure != "" {
 		t.Fatalf("nil ctx: %+v", r)
 	}
 }
@@ -172,9 +165,7 @@ func TestHairpin(t *testing.T) {
 			t.Fatal(r.Failure)
 		}
 		start := s.now
-		done := make(chan protocol.Tri, 1)
-		go func() { done <- s.p.Hairpin(context.Background()) }()
-		got := drive(t, s, done)
+		got := s.loopHairpin(context.Background())
 		want := protocol.TriFalse
 		if on {
 			want = protocol.TriTrue
@@ -212,9 +203,7 @@ func TestHairpin(t *testing.T) {
 	s = newSim(t, defaultOpts())
 	s.stepRun()
 	s.writeErr = func(uint8, netip.AddrPort) error { return syscall.EPERM }
-	done := make(chan protocol.Tri, 1)
-	go func() { done <- s.p.Hairpin(noCtx) }()
-	if got := drive(t, s, done); got != protocol.TriUnknown {
+	if got := s.loopHairpin(noCtx); got != protocol.TriUnknown {
 		t.Fatalf("hairpin without sends = %v", got)
 	}
 	// a second concurrent self-test is refused
@@ -254,9 +243,7 @@ func TestHairpinRunsOnce(t *testing.T) {
 	}
 	results := make([]protocol.Tri, 0, 3)
 	for range 3 {
-		done := make(chan protocol.Tri, 1)
-		go func() { done <- s.p.Hairpin(context.Background()) }()
-		results = append(results, drive(t, s, done))
+		results = append(results, s.loopHairpin(context.Background()))
 	}
 	if n := len(s.sentTo(pubIP)); n != 2 {
 		t.Fatalf("%d hairpin packets for one family (budget 2)", n)

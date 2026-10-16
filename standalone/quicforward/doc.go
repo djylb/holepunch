@@ -15,8 +15,9 @@
 // Both sides use an Identity: a self-signed certificate whose pin travels to
 // the peer as the session's TransportData through the coordinator, whose
 // control streams are authenticated TLS. Each side verifies the other's
-// certificate against that pin, so the QUIC connection is mutually
-// authenticated without any certificate authority.
+// certificate against that pin on every handshake, and no TLS session is
+// ever resumed, so the QUIC connection is mutually authenticated without any
+// certificate authority.
 //
 // The QUIC layer takes the raw winning socket (Session.Holepunch()) and no
 // residual filter: quic-go drops holepunch's late handshake packets by their

@@ -15,7 +15,8 @@ type varKey struct{ pkg, name string }
 // state) and other packages (pkg.Var = x). A write is an assignment, ++/--,
 // a range assignment, delete, clear, copy or append on the variable, or
 // taking its address — an address lets anyone write later. Function init and
-// package-level initialisers are initialisation, not run time.
+// package-level initialisers are initialisation, not run time — except the
+// function literals they create without calling them, which run later.
 func (c *checker) collectWrites() {
 	for _, p := range c.mod.pkgs {
 		own := ""
@@ -34,12 +35,17 @@ func (c *checker) collectWrites() {
 }
 
 func (c *checker) fileWrites(p *pkg, f *file, samePackage bool) {
+	w := &walker{}
+	// initTime is set while walking init and the package-level
+	// initialisers, where only the bodies of literals called later write
+	// at run time.
+	initTime := false
 	mark := func(e ast.Expr, pos token.Pos, sc *scope) {
 		id, sel := rootOf(e)
-		if id == nil || sc.local(id.Name) {
+		if id == nil || sc.local(id.Name) || initTime && w.later == 0 {
 			return
 		}
-		key := varKey{}
+		var key varKey
 		switch imp, isImport := f.imports[id.Name]; {
 		case isImport && sel != nil:
 			key = varKey{imp, sel.Sel.Name}
@@ -52,7 +58,7 @@ func (c *checker) fileWrites(p *pkg, f *file, samePackage bool) {
 			c.writes[key] = pos
 		}
 	}
-	w := &walker{visit: func(n ast.Node, s *scope) {
+	w.visit = func(n ast.Node, s *scope) {
 		switch n := n.(type) {
 		case *ast.AssignStmt:
 			if n.Tok != token.DEFINE {
@@ -82,10 +88,20 @@ func (c *checker) fileWrites(p *pkg, f *file, samePackage bool) {
 				}
 			}
 		}
-	}}
+	}
 	for _, d := range f.ast.Decls {
-		if fd, ok := d.(*ast.FuncDecl); ok && !(fd.Recv == nil && fd.Name.Name == "init") {
-			w.funcDecl(fd)
+		switch d := d.(type) {
+		case *ast.FuncDecl:
+			initTime = d.Recv == nil && d.Name.Name == "init"
+			w.funcDecl(d)
+		case *ast.GenDecl:
+			if d.Tok != token.VAR {
+				continue
+			}
+			initTime = true
+			for _, s := range d.Specs {
+				w.valueSpec(s.(*ast.ValueSpec), newScope(nil))
+			}
 		}
 	}
 }

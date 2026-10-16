@@ -106,19 +106,35 @@ func TestRepeatedAcceptResendsReady(t *testing.T) {
 	}
 }
 
-// startNominating with no responsive candidate falls back to punching.
+// startNominating with only a cooling-down candidate waits for its
+// cooldown to expire and nominates it then; with no candidate left at all
+// it falls back to punching.
 func TestCollectWithNoBest(t *testing.T) {
 	m := NewManager(Config{Role: protocol.RoleInitiator})
 	base := time.Unix(0, 0)
 	loc, rem := ap("192.0.2.1:5000"), ap("203.0.113.9:40000")
 	m.Success(base, loc, rem, protocol.FamilyUDP4, 40*time.Millisecond)
 	// Put the only candidate into cooldown before the collect timer fires.
-	m.Table().get(loc, rem).CooldownUntil = base.Add(10 * time.Second)
+	until := base.Add(10 * time.Second)
+	m.Table().get(loc, rem).CooldownUntil = until
 	acts := m.Tick(base.Add(200 * time.Millisecond)) // collect fires at ~100ms
 	if count(acts, SendNominate) != 0 {
 		t.Fatalf("nominated a cooling-down candidate: %+v", acts)
 	}
-	if m.Phase() != PhasePunching {
-		t.Fatalf("phase %v, want back to punching", m.Phase())
+	if at, ok := m.NextDeadline(); m.Phase() != PhaseCollect || !ok || !at.Equal(until) {
+		t.Fatalf("phase %v, deadline %v %v; want collecting until the cooldown ends", m.Phase(), at, ok)
+	}
+	if acts := m.Tick(until); count(acts, SendNominate) != 1 || acts[0].Remote != rem {
+		t.Fatalf("after the cooldown: %+v", acts)
+	}
+
+	m = NewManager(Config{Role: protocol.RoleInitiator})
+	m.Success(base, loc, rem, protocol.FamilyUDP4, 40*time.Millisecond)
+	m.Table().get(loc, rem).State = StateClosed
+	if acts := m.Tick(base.Add(200 * time.Millisecond)); len(acts) != 0 || m.Phase() != PhasePunching {
+		t.Fatalf("no candidate: %+v, phase %v", acts, m.Phase())
+	}
+	if _, ok := m.NextDeadline(); ok {
+		t.Fatal("a deadline without a candidate")
 	}
 }

@@ -60,26 +60,30 @@ func peerPin(data string) (string, error) {
 }
 
 // serverTLS is the host's QUIC TLS configuration: the dialer must present
-// the certificate with peerPin.
+// the certificate with peerPin. The pin is checked on every handshake
+// (tlsid.VerifyPin), and no session ticket is issued: a connection is never
+// resumed, it authenticates afresh.
 func (id *Identity) serverTLS(peerPin string) *tls.Config {
 	return &tls.Config{
-		MinVersion:            tls.VersionTLS13,
-		Certificates:          []tls.Certificate{id.cert},
-		ClientAuth:            tls.RequireAnyClientCert,
-		VerifyPeerCertificate: tlsid.VerifyPin(peerPin),
-		NextProtos:            []string{ALPN},
+		MinVersion:             tls.VersionTLS13,
+		Certificates:           []tls.Certificate{id.cert},
+		ClientAuth:             tls.RequireAnyClientCert,
+		VerifyConnection:       tlsid.VerifyPin(peerPin),
+		SessionTicketsDisabled: true,
+		NextProtos:             []string{ALPN},
 	}
 }
 
 // clientTLS is the dialer's QUIC TLS configuration: the pin replaces the
-// chain verification.
+// chain verification, and without a session cache every handshake is a
+// full one.
 func (id *Identity) clientTLS(peerPin string) *tls.Config {
 	return &tls.Config{
-		MinVersion:            tls.VersionTLS13,
-		Certificates:          []tls.Certificate{id.cert},
-		InsecureSkipVerify:    true,
-		VerifyPeerCertificate: tlsid.VerifyPin(peerPin),
-		ServerName:            ALPN,
-		NextProtos:            []string{ALPN},
+		MinVersion:         tls.VersionTLS13,
+		Certificates:       []tls.Certificate{id.cert},
+		InsecureSkipVerify: true, // the pin replaces the chain verification
+		VerifyConnection:   tlsid.VerifyPin(peerPin),
+		ServerName:         ALPN,
+		NextProtos:         []string{ALPN},
 	}
 }

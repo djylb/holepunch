@@ -2,9 +2,7 @@ package e2e
 
 import (
 	"fmt"
-	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -323,7 +321,11 @@ func TestAblation(t *testing.T) {
 	if suite().level == levelNightly {
 		runs = nightlyRuns
 	}
-	if v, err := strconv.Atoi(os.Getenv(envAblationRuns)); err == nil && v > 0 {
+	v, err := envCount(envAblationRuns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v > 0 {
 		runs = v
 	}
 	if runs == 0 {

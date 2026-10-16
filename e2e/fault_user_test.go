@@ -204,20 +204,21 @@ func runUserFault(t *testing.T, uf userFault, seed int64) []string {
 	if uf.client != nil {
 		uf.client(sides, &spec, fired)
 	}
-	stop := make(chan struct{})
-	defer close(stop)
-	spec.prepare = func(r *run) { silencePeers(r, sides, uf.quiet, stop) }
+	h := newCellHelpers()
+	spec.prepare = func(r *run) { silencePeers(r, sides, uf.quiet, h) }
 	r, err := newRun(w, sides, spec)
 	if err != nil {
-		_ = w.close()
-		return []string{err.Error()}
+		return w.abandon(err)
 	}
 	r.execute()
+	var v []string
+	add := func(format string, args ...any) { v = append(v, fmt.Sprintf(format, args...)) }
+	if !h.end(scaled(helperJoin)) {
+		add("the cell's helper goroutines did not end within %v", scaled(helperJoin))
+	}
 	for _, s := range sides {
 		s.net.dropFrom(nil)
 	}
-	var v []string
-	add := func(format string, args ...any) { v = append(v, fmt.Sprintf(format, args...)) }
 	if fired.Load() == 0 {
 		add("the user code never ran")
 	}
@@ -244,9 +245,7 @@ func runUserFault(t *testing.T, uf userFault, seed int64) []string {
 	cr.measure()
 	v = append(v, cr.checkResources()...)
 	if len(v) > 0 {
-		if p, err := cr.dump(t, v, "user"); err == nil {
-			v = append(v, "dump: "+p)
-		}
+		v = append(v, cr.dumpNote(t, v, "user"))
 	}
 	if err := w.close(); err != nil {
 		add("world close: %v", err)

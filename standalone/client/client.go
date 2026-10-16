@@ -101,7 +101,7 @@ func New(cfg Config) (*Client, error) {
 	if tc.ServerName == "" && !tc.InsecureSkipVerify {
 		return nil, errors.New("client: no TLS server name to verify the server with")
 	}
-	c := &Client{cfg: cfg, tls: tc, log: cfg.Logger, group: life.New(nil), sessions: map[*Session]struct{}{}}
+	c := &Client{cfg: cfg, tls: tc, log: cfg.Logger, group: life.New(context.Background()), sessions: map[*Session]struct{}{}}
 	if c.log == nil {
 		c.log = slog.New(slog.DiscardHandler)
 	}

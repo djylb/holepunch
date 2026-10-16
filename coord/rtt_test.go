@@ -18,8 +18,8 @@ func TestRTTEstimator(t *testing.T) {
 			t.Fatalf("%v accepted", d)
 		}
 	}
-	for _, d := range []time.Duration{50, 40, 90, 60, 45, 70, 80, 85, 95, 100} {
-		if !e.add(d * time.Millisecond) {
+	for _, ms := range []int{50, 40, 90, 60, 45, 70, 80, 85, 95, 100} {
+		if !e.add(time.Duration(ms) * time.Millisecond) {
 			t.Fatal("valid sample refused")
 		}
 	}

@@ -56,7 +56,7 @@ func TestDependencies(t *testing.T) {
 	const mod = "github.com/djylb/holepunch"
 	deps := func(pkg string) []string {
 		t.Helper()
-		out, err := exec.Command("go", "list", "-deps", "-json=ImportPath,Standard", "./"+pkg).Output()
+		out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", "-json=ImportPath,Standard", "./"+pkg).Output()
 		if err != nil {
 			t.Fatalf("go list %s: %v", pkg, err)
 		}

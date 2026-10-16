@@ -26,8 +26,9 @@ const (
 )
 
 // Read-error handling: a conn that only fails must not spin a core. ICMP
-// reports are not failures: they name an earlier reply's client, and the
-// socket reads on.
+// reports and truncated datagrams are not failures: a report names an
+// earlier reply's client, a truncated datagram was received, and the socket
+// reads on.
 const (
 	readErrorBurst = 64
 	readErrorPause = 10 * time.Millisecond
@@ -77,6 +78,17 @@ func (rd *reader) loop(ctx context.Context) {
 				return
 			}
 			if udpicmp.IsReport(err) {
+				continue
+			}
+			if n > 0 {
+				// A datagram longer than the buffer, which Windows reports as
+				// an error with the truncated bytes: far longer than any
+				// probe, so foreign, and no read failure — a flood of them
+				// must not pause the reader.
+				failures = 0
+				rd.st.packetsIn.Add(1)
+				rd.st.bytesIn.Add(uint64(n))
+				rd.st.foreign.Add(1)
 				continue
 			}
 			rd.st.readErrs.Add(1)

@@ -18,6 +18,7 @@ func TestClassifyWinsock(t *testing.T) {
 		{wsaENETRESET, true, false},
 		{wsaEHOSTUNREACH, true, true},
 		{wsaENETUNREACH, true, true},
+		{wsaEHOSTDOWN, true, true},
 		{syscall.WSAECONNABORTED, false, false},
 		{syscall.WSAEACCES, false, false},
 	}

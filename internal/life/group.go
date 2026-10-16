@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 )
@@ -116,6 +117,7 @@ func (g *Group) Own(name string, c io.Closer) bool {
 	if IsNil(c) {
 		return false
 	}
+	matchable := isComparable(c)
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()
@@ -124,11 +126,9 @@ func (g *Group) Own(name string, c io.Closer) bool {
 		}
 		return false
 	}
-	for _, o := range g.owned {
-		if sameCloser(o.c, c) {
-			g.mu.Unlock()
-			return true
-		}
+	if matchable && g.indexLocked(c) >= 0 {
+		g.mu.Unlock()
+		return true
 	}
 	g.owned = append(g.owned, owned{name: name, c: c})
 	g.mu.Unlock()
@@ -139,25 +139,34 @@ func (g *Group) Own(name string, c io.Closer) bool {
 // reports whether c was owned. c must be the same comparable value that was
 // passed to Own (normally a pointer).
 func (g *Group) Disown(c io.Closer) bool {
-	if IsNil(c) {
+	if IsNil(c) || !isComparable(c) {
 		return false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for i, o := range g.owned {
-		if sameCloser(o.c, c) {
-			g.owned = append(g.owned[:i], g.owned[i+1:]...)
-			return true
-		}
+	i := g.indexLocked(c)
+	if i < 0 {
+		return false
 	}
-	return false
+	g.owned = slices.Delete(g.owned, i, i+1)
+	return true
 }
 
-// sameCloser compares two closers without panicking on dynamic types that
-// are not comparable; such values can be owned but never matched.
-func sameCloser(a, b io.Closer) bool {
-	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
-	return ta == tb && ta.Comparable() && a == b
+// isComparable reports whether c can be compared with == without panicking;
+// a value that cannot is owned but never matched by Own or Disown. The check
+// covers the dynamic values inside c: a comparable struct type can still hold
+// an interface field whose value is not comparable.
+func isComparable(c io.Closer) bool { return reflect.ValueOf(c).Comparable() }
+
+// indexLocked returns the position of c in g.owned, or -1. c must be
+// comparable, which guarantees that == cannot panic against any owned value.
+func (g *Group) indexLocked(c io.Closer) int {
+	for i, o := range g.owned {
+		if o.c == c {
+			return i
+		}
+	}
+	return -1
 }
 
 func (g *Group) countPanic() {
@@ -177,7 +186,9 @@ func (g *Group) countPanic() {
 // net.ErrClosed; a panicking Close counts as an error. It is idempotent and
 // safe for concurrent use: every caller waits for the first call to finish
 // and gets the same result. It must not be called from one of the group's own
-// goroutines.
+// goroutines (the join would wait for the caller until the bound expires),
+// nor from the Close method of an owned resource, which would wait for
+// itself forever.
 func (g *Group) Close(join time.Duration) error {
 	g.closeOnce.Do(func() {
 		defer close(g.closeDone)
@@ -203,11 +214,15 @@ func (g *Group) shutdown(join time.Duration) error {
 	for i := len(list) - 1; i >= 0; i-- {
 		o := list[i]
 		var err error
-		if perr := Safe("close:"+o.name, func() { err = o.c.Close() }); perr != nil {
+		// The error comes from the resource's own code, and errors.Is runs
+		// its Is and Unwrap methods: both stay inside the recover boundary.
+		if perr := Safe("close:"+o.name, func() {
+			if err = o.c.Close(); errors.Is(err, net.ErrClosed) {
+				err = nil
+			}
+		}); perr != nil {
 			g.countPanic()
 			err = perr
-		} else if errors.Is(err, net.ErrClosed) {
-			err = nil
 		}
 		if err != nil && first == nil {
 			first = err

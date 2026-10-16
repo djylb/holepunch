@@ -525,7 +525,7 @@ const (
 	WarnUnverifiedTargets         = "unverified_targets"
 	WarnInsecureControlForTesting = "insecure_control_for_testing"
 	WarnInterfaceListUnavailable  = "interface_list_unavailable" // no LAN addresses this session
-	// WarnLANObserved: the server saw a client only at private addresses
+	// WarnLANObserved means the server saw a client only at private addresses
 	// (Traits.LANObserved), a deployment where clients reach the server
 	// over a LAN route or a hairpin without source NAT.
 	WarnLANObserved = "lan_observed"

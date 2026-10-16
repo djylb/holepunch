@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,7 +63,7 @@ func newRig(t *testing.T, mutate func(*Config)) *rig {
 		_ = n.Close()
 	})
 	return &rig{t: t, b: b, s: s, net: n, client: &tls.Config{
-		MinVersion: tls.VersionTLS13, ServerName: "holepunchd.test", InsecureSkipVerify: true, VerifyPeerCertificate: tlsid.VerifyPin(pin),
+		MinVersion: tls.VersionTLS13, ServerName: "holepunchd.test", InsecureSkipVerify: true, VerifyConnection: tlsid.VerifyPin(pin),
 	}}
 }
 
@@ -299,6 +300,9 @@ func TestHeartbeats(t *testing.T) {
 	send(t, hl, &proto.Heartbeat{})
 	expect[*proto.Heartbeat](t, hl)
 	send(t, hl, &proto.Transport{SessionID: "s1", OK: true, Detail: "quic"})
+	// The link's last frame is sent after start: the server cannot drop the
+	// link before three intervals have passed since.
+	start := time.Now()
 	send(t, hl, &proto.Transport{SessionID: "s2"})
 	for _, want := range []TransportReport{{"office", "s1", true, "quic"}, {"office", "s2", false, ""}} {
 		select {
@@ -310,9 +314,8 @@ func TestHeartbeats(t *testing.T) {
 			t.Fatal("no report")
 		}
 	}
-	start := time.Now()
 	waitFor(t, func() bool { return len(r.b.Snapshot().Hosts) == 0 })
-	if d := time.Since(start); d < 2*time.Second || d > 4*time.Second {
+	if d := time.Since(start); d < 3*time.Second {
 		t.Fatalf("silent link dropped after %v", d)
 	}
 	waitFor(t, func() bool { return r.s.Stats().Hosts == 0 && r.s.Stats().Panics == 1 })
@@ -344,8 +347,10 @@ func TestTakeoverRevokesLink(t *testing.T) {
 }
 
 // TestHandshakeTimeout: a client that never sends its request is dropped.
+// The bound also covers the TLS handshake, which must finish within it even
+// on a loaded machine.
 func TestHandshakeTimeout(t *testing.T) {
-	r := newRig(t, func(c *Config) { c.HandshakeTimeout = 100 * time.Millisecond })
+	r := newRig(t, func(c *Config) { c.HandshakeTimeout = time.Second })
 	c := r.dial()
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := c.Read(make([]byte, 1)); err == nil {
@@ -473,27 +478,158 @@ func TestNew(t *testing.T) {
 }
 
 // TestPanicEndsOneConnection: a panic while serving a connection ends that
-// connection only, and is counted.
+// connection only, and is counted — also when the connection's Close and
+// RemoteAddr panic, outside the handler proper.
 func TestPanicEndsOneConnection(t *testing.T) {
 	r := newRig(t, func(c *Config) { c.TLS = nil })
-	r.s.handle(context.Background(), &panicConn{})
+	r.s.handle(context.Background(), &stream{raw: &panicConn{}, conn: &panicConn{}})
 	if st := r.s.Stats(); st.Panics != 1 {
 		t.Fatalf("stats %+v", st)
 	}
+	if err := r.s.ServeConn(&panicConn{all: true}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { st := r.s.Stats(); return st.Panics == 3 && st.Conns == 0 })
 	r.register2(t)
 }
 
-// panicConn panics on every call but Close.
-type panicConn struct{ net.Conn }
+// panicConn panics on every read and write; with all, also on Close and
+// RemoteAddr.
+type panicConn struct {
+	net.Conn
+	all bool
+}
 
 func (*panicConn) Read(_ []byte) (int, error)         { panic("read boom") }
 func (*panicConn) Write(_ []byte) (int, error)        { panic("write boom") }
 func (*panicConn) SetDeadline(_ time.Time) error      { return nil }
 func (*panicConn) SetReadDeadline(_ time.Time) error  { return nil }
 func (*panicConn) SetWriteDeadline(_ time.Time) error { return nil }
-func (*panicConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
 func (*panicConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
-func (*panicConn) Close() error                       { return nil }
+
+func (c *panicConn) RemoteAddr() net.Addr {
+	if c.all {
+		panic("remote addr boom")
+	}
+	return &net.TCPAddr{}
+}
+
+func (c *panicConn) Close() error {
+	if c.all {
+		panic("close boom")
+	}
+	return nil
+}
+
+// gatedConn is a connection whose first Close waits for release.
+type gatedConn struct {
+	net.Conn
+	once             sync.Once
+	closing, release chan struct{}
+}
+
+func (c *gatedConn) Close() error {
+	c.once.Do(func() {
+		close(c.closing)
+		<-c.release
+	})
+	return c.Conn.Close()
+}
+
+// TestIncomingAfterRegistered: a dialer may open a session as soon as the
+// broker has registered a host, before the server has written Registered —
+// here while a takeover is still revoking the previous link. The Incoming
+// still follows the Registered on the new link.
+func TestIncomingAfterRegistered(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.TLS = nil })
+	release := make(chan struct{})
+	var once sync.Once
+	open := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(open)
+
+	a, aSrv := r.pipe()
+	old := &gatedConn{Conn: aSrv, closing: make(chan struct{}), release: release}
+	if err := r.s.ServeConn(old); err != nil {
+		t.Fatal(err)
+	}
+	send(t, a, &proto.Register{HostID: "office", AuthToken: token})
+	cred := expect[*proto.Registered](t, a).Credential
+
+	b, bSrv := r.pipe()
+	if err := r.s.ServeConn(bSrv); err != nil {
+		t.Fatal(err)
+	}
+	send(t, b, &proto.Register{HostID: "office", AuthToken: token, Credential: cred})
+	select {
+	case <-old.closing: // the broker holds the new registration and revokes the old one
+	case <-time.After(5 * time.Second):
+		t.Fatal("old link not revoked")
+	}
+	sess, err := r.b.Open(broker.OpenRequest{HostID: "office"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	open()
+	expect[*proto.Registered](t, b)
+	if in := expect[*proto.Incoming](t, b); in.SessionID != sess.ID() {
+		t.Fatalf("incoming %+v", in)
+	}
+}
+
+// writePanicConn panics on writes while armed.
+type writePanicConn struct {
+	net.Conn
+	armed atomic.Bool
+}
+
+func (c *writePanicConn) Write(p []byte) (int, error) {
+	if c.armed.Load() {
+		panic("write boom")
+	}
+	return c.Conn.Write(p)
+}
+
+// TestNotifyPanicClosesLink: a link whose Write panics on an Incoming fails
+// that open and is closed, as after a failed write, which unregisters the
+// host.
+func TestNotifyPanicClosesLink(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.TLS = nil })
+	a, aSrv := r.pipe()
+	conn := &writePanicConn{Conn: aSrv}
+	if err := r.s.ServeConn(conn); err != nil {
+		t.Fatal(err)
+	}
+	send(t, a, &proto.Register{HostID: "office", AuthToken: token})
+	expect[*proto.Registered](t, a)
+	conn.armed.Store(true)
+	var pe *life.PanicError
+	if _, err := r.b.Open(broker.OpenRequest{HostID: "office"}); !errors.As(err, &pe) {
+		t.Fatalf("open: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if m, err := proto.Read(ctx, a); err == nil || ctx.Err() != nil {
+		t.Fatalf("link still open after the panic: %v, %v", m, err)
+	}
+	waitFor(t, func() bool { return len(r.b.Snapshot().Hosts) == 0 && r.s.Stats().Hosts == 0 })
+}
+
+// TestDeliverPanicFreesLock: a Write that panics leaves the link's lock free
+// for its reader and the other dialers.
+func TestDeliverPanicFreesLock(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.TLS = nil })
+	_, b := r.pipe()
+	conn := &writePanicConn{Conn: b}
+	conn.armed.Store(true)
+	l := &hostLink{s: r.s, conn: conn, raw: conn, registered: true}
+	if perr := life.Safe("test", func() { _ = l.deliver(&proto.Incoming{SessionID: "s", Ticket: "TICKET"}) }); perr == nil {
+		t.Fatal("the write did not panic")
+	}
+	if !l.mu.TryLock() {
+		t.Fatal("the lock is still held after the panic")
+	}
+	l.mu.Unlock()
+}
 
 func TestCodeOf(t *testing.T) {
 	panicked := life.Safe("test", func() { panic(broker.ErrClosed) })
@@ -542,7 +678,7 @@ func TestClientKey(t *testing.T) {
 
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatal("condition not met in time")

@@ -300,14 +300,6 @@ func TestReadFromAndDeadlines(t *testing.T) {
 	if err := <-done; !isTimeout(err) {
 		t.Fatalf("interrupt: %v", err)
 	}
-	// Extending a deadline lets the blocked read wait for data.
-	_ = c.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
-	go func() { _, _, err := c.ReadFrom(make([]byte, 10)); done <- err }()
-	_ = c.SetReadDeadline(time.Now().Add(time.Hour))
-	send(t, c, netip.AddrPortFrom(h.Addrs()[0], 1000), "late")
-	if err := <-done; err != nil {
-		t.Fatalf("extended deadline: %v", err)
-	}
 	// Close interrupts a blocked read too.
 	_ = c.SetReadDeadline(time.Time{})
 	go func() { _, _, err := c.ReadFrom(make([]byte, 10)); done <- err }()
@@ -329,6 +321,24 @@ func TestReadFromAndDeadlines(t *testing.T) {
 		if !isClosedErr(err) {
 			t.Errorf("%s after Close: %v", name, err)
 		}
+	}
+}
+
+// TestExtendedDeadlineKeepsBlockedRead: moving the deadline of a blocked
+// read later lets it wait past the old deadline for data. The fake clock
+// passes the old deadline only after the extension, whatever the load.
+func TestExtendedDeadlineKeepsBlockedRead(t *testing.T) {
+	n, clk := fakeNet(t)
+	h := n.PublicHost(netip.IPv4Unspecified())
+	c := listen(t, h, 1000)
+	_ = c.SetReadDeadline(clk.Now().Add(20 * time.Millisecond))
+	done := make(chan error, 1)
+	go func() { _, _, err := c.ReadFrom(make([]byte, 10)); done <- err }()
+	_ = c.SetReadDeadline(clk.Now().Add(time.Hour))
+	clk.Advance(30 * time.Millisecond)
+	send(t, c, netip.AddrPortFrom(h.Addrs()[0], 1000), "late")
+	if err := <-done; err != nil {
+		t.Fatalf("extended deadline: %v", err)
 	}
 }
 
