@@ -142,6 +142,9 @@ func (c *Coordinator) newSession(opts SessionOptions) (*Session, error) {
 			return nil, err
 		}
 		s.handle = h
+		for r := range s.starts {
+			h.Announce(roleOf(r), s.starts[r].Probe.Observers)
+		}
 		s.regAt = registeredAt(h.Registered(), before, c.set.clock.Now()).Sub(now)
 		defer func() {
 			if !ok {

@@ -130,6 +130,7 @@ func runEndToEnd(t *testing.T, f protocol.Family, ip netip.Addr) {
 		t.Fatal(err)
 	}
 	defer h.Close()
+	h.Announce(protocol.RoleResponder, srv.Observers(f))
 
 	codec, err := udpwire.NewCodec(token, route, udpwire.RoleResponder, udpwire.PadPolicy{Min: 64, Max: 160}, nil)
 	if err != nil {

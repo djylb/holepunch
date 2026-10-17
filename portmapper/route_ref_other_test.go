@@ -8,4 +8,4 @@ import (
 )
 
 // referenceGateway has no independent source on this platform.
-func referenceGateway(*testing.T) (netip.Addr, string, bool) { return netip.Addr{}, "", false }
+func referenceGateway(_ *testing.T) (netip.Addr, string, bool) { return netip.Addr{}, "", false }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
 
 	"github.com/djylb/holepunch/protocol"
 )
@@ -23,28 +24,44 @@ const (
 	defaultSourceBurst  = 1024
 	defaultSourceTable  = 4096
 	maxSourceTable      = 1 << 20 // the limiter preallocates its table, so the size is bounded
-	maxGroups           = 32      // observer id = group*8 + port index fits a byte
+	maxObserverGroups   = 32      // observer id = observer group*8 + port index fits a byte
 	portsPerGroup       = 8
-	maxFamilyObservers  = 16 // a family's listeners
+	maxFamilyObservers  = 16 // a family's observer ids
 	maxSpecObservers    = 16 // ProbeSpec.observers in all (protocol)
 )
 
-// ObserverGroup describes one server IP of one address family, bound
-// explicitly so that replies leave from the probed address (no
-// IP_PKTINFO, hence no golang.org/x/net).
+// ObserverGroup is one set of observer sockets of one address family, bound
+// to Bind, and the addresses the clients are sent to for it. A socket bound
+// to a specific address replies from it; one bound to the wildcard address
+// (0.0.0.0, ::) replies from the address each probe was sent to, on the
+// systems that report it (udpsock.EnableDstAddr), and from the address the
+// system routes by elsewhere, which on a host with several addresses of the
+// family may not be the probed one (ServerStats.WildcardMultiIP).
 type ObserverGroup struct {
-	Bind netip.Addr // local bind address; unspecified (0.0.0.0, ::) only on single-IP hosts
-	// Advertise is the address announced to clients in Server.ProbeSpec
-	// (≠ Bind behind a 1:1 NAT); zero means Bind. A wildcard Bind may leave
-	// it zero when every session gets the address from coord.Config.Probe
-	// or coord.AttachOptions.Probe instead — a host whose public address
-	// changes, say; Scope must then say what kind of address that is.
-	Advertise netip.Addr
-	// Scope is the kind of address the clients reach this group at: what
-	// natprobe counts an observation through it as (public evidence, or LAN
-	// evidence only). ScopeAuto takes it from Advertise.
+	Bind netip.Addr
+	// Advertise lists the addresses the clients are sent to for these
+	// sockets: Bind as seen from outside (≠ Bind behind a 1:1 NAT), and
+	// any other address that reaches the same sockets — a second public
+	// address routed to this host, the LAN address clients on the server's
+	// network use. Each is announced as an observer group of its own, so a
+	// client probes every one and its observations count per address. Empty
+	// means Bind; a wildcard Bind may leave it empty when sessions get
+	// their addresses from Server.ProbeSpecAt.
+	Advertise []netip.Addr
+	// Slots is how many addresses one session may announce for these
+	// sockets: Advertise's, then those Server.ProbeSpecAt adds. 0 means
+	// len(Advertise), and at least 1. Every slot is an observer group:
+	// Slots × PortCount observer ids.
+	Slots int
+	// Scope is the kind of address the clients reach these sockets at, which
+	// decides what an observation through them is evidence of (a public
+	// mapping, or a LAN path only). ScopeAuto takes each address's own,
+	// as announced in the session.
 	Scope Scope
-	Alt   bool // a second public IP: one listener on BasePort that serves change-IP replies
+	// Alt makes the group a second public IP: one listener on BasePort
+	// that serves change-IP replies. It needs a specific Bind and has one
+	// address.
+	Alt bool
 }
 
 // Scope is the kind of address an observer group is reached at
@@ -53,15 +70,15 @@ type Scope uint8
 
 // Scopes.
 const (
-	ScopeAuto    Scope = iota // from ObserverGroup.Advertise (or Bind)
-	ScopePublic               // a public address: observations are evidence of the clients' public mappings
-	ScopePrivate              // a private (LAN) address: observations are LAN evidence only
+	ScopeAuto    Scope = iota // each address's own: public, or private (RFC 1918, ULA, link-local, 100.64/10)
+	ScopePublic               // public: observations are evidence of the clients' public mappings
+	ScopePrivate              // private: observations are LAN evidence only
 )
 
 // ServerConfig configures a Server.
 type ServerConfig struct {
 	Registry           *Registry       // required; shared, not owned
-	Groups             []ObserverGroup // at least one non-alt group; ≤ 32 groups, ≤ 16 observers and ≤ 1 alt group per family
+	Groups             []ObserverGroup // at least one non-alt group; ≤ 32 addresses (slots) in all, ≤ 16 observers and ≤ 1 alt group per family
 	BasePort           int             // listeners on BasePort..BasePort+PortCount-1; 0 = ports chosen by the kernel
 	PortCount          int             // default 3, 2..8
 	NoExtraReply       bool            // disables extra replies; the ack says so
@@ -116,49 +133,63 @@ func normalize(cfg ServerConfig) (ServerConfig, error) {
 		return cfg, errors.New("natprobe: config: SourceRate.PerSec is 0")
 	case cfg.SourceTableSize < srcShards || cfg.SourceTableSize > maxSourceTable:
 		return cfg, fmt.Errorf("natprobe: config: SourceTableSize %d not in [%d, %d]", cfg.SourceTableSize, srcShards, maxSourceTable)
-	case len(cfg.Groups) == 0 || len(cfg.Groups) > maxGroups:
-		return cfg, fmt.Errorf("natprobe: config: %d groups, want 1..%d", len(cfg.Groups), maxGroups)
+	case len(cfg.Groups) == 0:
+		return cfg, errors.New("natprobe: config: no group")
 	}
 	groups, err := normalizeGroups(cfg.Groups, cfg.PortCount)
 	cfg.Groups = groups
 	return cfg, err
 }
 
-// normalizeGroups checks every group and fills Advertise from a specific
-// Bind; the
-// result is a copy, so the caller's slice is never shared.
+// normalizeGroups checks every group, fills Advertise from a specific Bind
+// and Slots from Advertise; the result is a deep copy, so the caller's
+// slices are never shared.
 func normalizeGroups(in []ObserverGroup, portCount int) ([]ObserverGroup, error) {
-	groups := append([]ObserverGroup(nil), in...)
+	groups := slices.Clone(in)
 	var observers, alts [2]int
-	main := false
+	var announced []netip.Addr // every Advertise: an address is one observer group
+	main, ogs := false, 0
 	for i := range groups {
 		g := &groups[i]
+		g.Advertise = slices.Clone(g.Advertise)
 		if !g.Bind.IsValid() || g.Bind.Is4In6() || g.Bind.Zone() != "" || g.Bind.IsMulticast() {
 			return nil, fmt.Errorf("natprobe: config: group %d: bad Bind %v", i, g.Bind)
 		}
 		if g.Scope > ScopePrivate {
 			return nil, fmt.Errorf("natprobe: config: group %d: unknown Scope %d", i, g.Scope)
 		}
-		if !g.Advertise.IsValid() && !g.Bind.IsUnspecified() {
-			g.Advertise = g.Bind
+		if len(g.Advertise) == 0 && !g.Bind.IsUnspecified() {
+			g.Advertise = []netip.Addr{g.Bind}
 		}
 		fam := protocol.FamilyOf(g.Bind)
-		switch {
-		case g.Advertise.IsValid():
-			g.Advertise = g.Advertise.Unmap()
-			if protocol.FamilyOf(g.Advertise) != fam || g.Advertise.IsUnspecified() || g.Advertise.IsMulticast() || g.Advertise.Zone() != "" {
-				return nil, fmt.Errorf("natprobe: config: group %d: Advertise %v does not fit Bind %v", i, g.Advertise, g.Bind)
+		for k, a := range g.Advertise {
+			a = a.Unmap()
+			if protocol.FamilyOf(a) != fam || a.IsUnspecified() || a.IsMulticast() || a.Zone() != "" || slices.Contains(announced, a) {
+				return nil, fmt.Errorf("natprobe: config: group %d: Advertise %v does not fit Bind %v, or is announced twice", i, a, g.Bind)
 			}
-		case g.Scope == ScopeAuto:
-			return nil, fmt.Errorf("natprobe: config: group %d: a wildcard Bind without Advertise needs a Scope", i)
+			g.Advertise[k] = a
+			announced = append(announced, a)
+		}
+		if g.Slots == 0 {
+			g.Slots = max(len(g.Advertise), 1)
 		}
 		f := famIndex(fam)
-		if g.Alt {
+		switch {
+		case g.Slots < len(g.Advertise) || g.Slots < 1:
+			return nil, fmt.Errorf("natprobe: config: group %d: %d Slots for %d addresses", i, g.Slots, len(g.Advertise))
+		case g.Alt && g.Slots != 1:
+			return nil, fmt.Errorf("natprobe: config: group %d: an alt group has one address, not %d", i, g.Slots)
+		case g.Alt && g.Bind.IsUnspecified():
+			return nil, fmt.Errorf("natprobe: config: group %d: an alt group binds a specific address", i)
+		case g.Alt:
 			alts[f]++
 			observers[f]++
-		} else {
+		default:
 			main = true
-			observers[f] += portCount
+			observers[f] += g.Slots * portCount
+		}
+		if ogs += g.Slots; ogs > maxObserverGroups {
+			return nil, fmt.Errorf("natprobe: config: more than %d addresses in all", maxObserverGroups)
 		}
 		if alts[f] > 1 || observers[f] > maxFamilyObservers {
 			return nil, fmt.Errorf("natprobe: config: too many observers or alt groups for %s", fam)

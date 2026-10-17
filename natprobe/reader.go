@@ -47,6 +47,8 @@ type reader struct {
 	h     udpwire.Header
 	t     udpwire.TLVs
 	buf   [2048]byte
+	oob   [udpsock.ControlSize]byte // the destination report of a datagram read
+	soob  [udpsock.ControlSize]byte // the source of a reply
 	plain [udpwire.MaxPlaintext + udpwire.TagSize]byte
 	wbuf  [udpwire.PeerOuterSize + udpwire.MaxPlaintext + udpwire.TagSize]byte
 	obuf  [udpwire.MaxWrapped]byte // a reply in the opener form
@@ -72,7 +74,7 @@ func (s *Server) readLoop(ctx context.Context, l *listener, st *readerStats) {
 func (rd *reader) loop(ctx context.Context) {
 	failures := 0
 	for {
-		n, src, err := rd.l.conn.ReadFromUDPAddrPort(rd.buf[:])
+		n, src, dst, err := rd.read()
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) || rd.l.dead.Load() {
 				return
@@ -101,11 +103,25 @@ func (rd *reader) loop(ctx context.Context) {
 			continue
 		}
 		failures = 0
-		if perr := life.Safe("natprobe/packet", func() { rd.process(rd.buf[:n], src) }); perr != nil {
+		if perr := life.Safe("natprobe/packet", func() { rd.process(rd.buf[:n], src, dst) }); perr != nil {
 			rd.st.panics.Add(1)
 			rd.s.logPanic(perr)
 		}
 	}
+}
+
+// read reads one datagram and, from a wildcard socket that reports it, the
+// address it was sent to.
+func (rd *reader) read() (n int, src netip.AddrPort, dst netip.Addr, err error) {
+	if rd.l.msg == nil {
+		n, src, err = rd.l.conn.ReadFromUDPAddrPort(rd.buf[:])
+		return n, src, netip.Addr{}, err
+	}
+	n, oobn, _, src, err := rd.l.msg.ReadMsgUDPAddrPort(rd.buf[:], rd.oob[:])
+	if err == nil {
+		dst, _ = udpsock.DstAddr(rd.oob[:oobn])
+	}
+	return n, src, dst, err
 }
 
 // pause waits d or until ctx ends and reports whether d elapsed.
@@ -129,7 +145,7 @@ func pause(ctx context.Context, d time.Duration) bool {
 // openers too — the ack on the reverse of that flow, an extra or alt
 // reply from a socket that has not sent to this client before — without
 // any per-flow state on the server.
-func (rd *reader) process(pkt []byte, src netip.AddrPort) {
+func (rd *reader) process(pkt []byte, src netip.AddrPort, dst netip.Addr) {
 	st, l := rd.st, rd.l
 	st.packetsIn.Add(1)
 	st.bytesIn.Add(uint64(len(pkt)))
@@ -195,7 +211,7 @@ func (rd *reader) process(pkt []byte, src netip.AddrPort) {
 		st.badPayload.Add(1)
 		return
 	}
-	if h.Aux != uint16(l.id) {
+	if !l.serves(h.Aux) {
 		st.badObserver.Add(1)
 		return
 	}
@@ -207,7 +223,7 @@ func (rd *reader) process(pkt []byte, src netip.AddrPort) {
 	if wrapped {
 		st.openers.Add(1)
 	}
-	rd.reply(e, h, src, now, plan)
+	rd.reply(e, h, src, dst, now, plan)
 	// The coordinator gets sandwich events after the replies left, so a slow
 	// sink never delays the client's ack.
 	if t.Sandwich.Set {
@@ -245,6 +261,8 @@ func (rd *reader) admit(e *entry, h *udpwire.Header, src netip.AddrPort, now tim
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	switch {
+	case rs.unannounced(uint8(h.Aux)):
+		return replyPlan{}, &st.badObserver
 	case !gcra(&rs.tat, mono, cfg.SessionRate):
 		return replyPlan{}, &st.rateSession
 	case rs.accepted >= cfg.ProbeBudgetPerRole:
@@ -253,7 +271,7 @@ func (rd *reader) admit(e *entry, h *udpwire.Header, src netip.AddrPort, now tim
 		return replyPlan{}, &st.replay
 	}
 	rs.accepted++
-	sl := rs.upsert(h.Sock, l.id, l.flags, src, h.Seq, ms, cfg.SlotsPerRole, rd.rng)
+	sl := rs.upsert(h.Sock, uint8(h.Aux), l.flags, src, h.Seq, ms, cfg.SlotsPerRole, rd.rng)
 	wantExtra := h.FA && !rd.s.cfg.NoExtraReply && rs.extraLeft > 0 && l.pool.usable()
 	wantAlt := h.FB && !l.alt && altPool.usable() && rs.altLeft > 0
 	var p replyPlan
@@ -283,19 +301,26 @@ func (rd *reader) admit(e *entry, h *udpwire.Header, src netip.AddrPort, now tim
 	return p, nil
 }
 
-// reply seals and sends the ack and the optional extra or alt to src.
-func (rd *reader) reply(e *entry, h *udpwire.Header, src netip.AddrPort, now time.Time, p replyPlan) {
+// reply seals and sends the ack and the optional extra or alt to src; the
+// ack and the extra leave from dst, the address the probe was sent to, when
+// the sockets can name their source.
+func (rd *reader) reply(e *entry, h *udpwire.Header, src netip.AddrPort, dst netip.Addr, now time.Time, p replyPlan) {
 	st, l := rd.st, rd.l
 	if p.ackLen == 0 {
 		return // recorded, but L < 83: any reply would outgrow the probe
 	}
 	var xconn packetConn
+	var xmsg msgConn
 	var xport uint16
 	switch {
 	case p.sendExtra:
-		xconn, xport = l.pool.pick()
+		xconn, xmsg, xport = l.pool.pick()
 	case p.sendAlt:
-		xconn, _ = rd.s.altPools[famIndex(l.fam)].pick()
+		xconn, _, _ = rd.s.altPools[famIndex(l.fam)].pick()
+	}
+	var from []byte // the reply source's control data
+	if dst.IsValid() {
+		from = udpsock.AppendSrcAddr(rd.soob[:0], dst)
 	}
 	ts := uint32(now.UnixMilli())
 	ah := udpwire.Header{Type: udpwire.TProbeAck, Role: udpwire.RoleServer, FA: p.sendExtra, FB: p.sendAlt, FC: p.quota,
@@ -309,7 +334,7 @@ func (rd *reader) reply(e *entry, h *udpwire.Header, src netip.AddrPort, now tim
 	if p.wrap {
 		ack = e.codec.Wrap(rd.obuf[:0], ack)
 	}
-	if _, err := l.conn.WriteToUDPAddrPort(ack, src); err != nil {
+	if _, err := rd.write(l.conn, l.msg, ack, from, src); err != nil {
 		st.writeErrs.Add(1)
 	} else {
 		st.acks.Add(1)
@@ -333,7 +358,10 @@ func (rd *reader) reply(e *entry, h *udpwire.Header, src netip.AddrPort, now tim
 	if p.wrap {
 		x = e.codec.Wrap(rd.obuf[:0], x)
 	}
-	if _, err := xconn.WriteToUDPAddrPort(x, src); err != nil {
+	if p.sendAlt {
+		xmsg = nil // the alt socket is bound to its own address
+	}
+	if _, err := rd.write(xconn, xmsg, x, from, src); err != nil {
 		st.writeErrs.Add(1)
 		return
 	}
@@ -343,6 +371,20 @@ func (rd *reader) reply(e *entry, h *udpwire.Header, src netip.AddrPort, now tim
 	} else {
 		st.extras.Add(1)
 	}
+}
+
+// write sends b to `to`, from the source in from when the socket can name
+// it; a system that refuses that source gets the datagram from the address
+// it routes by, which some clients still accept.
+func (rd *reader) write(c packetConn, m msgConn, b, from []byte, to netip.AddrPort) (int, error) {
+	if m != nil && len(from) > 0 {
+		n, _, err := m.WriteMsgUDPAddrPort(b, from, to)
+		if err == nil || errors.Is(err, net.ErrClosed) {
+			return n, err
+		}
+		rd.st.srcRefused.Add(1)
+	}
+	return c.WriteToUDPAddrPort(b, to)
 }
 
 // roleOf maps a client header role to the protocol role.

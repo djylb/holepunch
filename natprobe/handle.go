@@ -32,7 +32,7 @@ func (h *handle) Observations(role protocol.Role) []nat.Observation {
 	out := make([]nat.Observation, 0, len(rs.slots))
 	for _, s := range rs.slots {
 		out = append(out, nat.Observation{
-			Socket: s.sock, Observer: s.obs, Alt: s.flags&slotAlt != 0, LAN: s.flags&slotPrivate != 0,
+			Socket: s.sock, Observer: s.obs, Alt: s.flags&slotAlt != 0, LAN: rs.lan(s),
 			Observed: s.last.addrPort(), First: s.first.addrPort(), Changes: s.changes, Count: s.count,
 			FirstSeq: s.firstSeq, Cookie: s.cookie,
 			FirstAt: e.created.Add(time.Duration(s.firstAt) * time.Millisecond), LastAt: e.created.Add(time.Duration(s.lastAt) * time.Millisecond),
@@ -44,6 +44,39 @@ func (h *handle) Observations(role protocol.Role) []nat.Observation {
 		return cmp.Or(cmp.Compare(a.Socket, b.Socket), cmp.Compare(a.Observer, b.Observer))
 	})
 	return out
+}
+
+// Announce records the observers announced to role in its punch_start:
+// with ScopeAuto, an observer announced at a private address counts as LAN
+// evidence only. Later calls replace earlier ones.
+func (h *handle) Announce(role protocol.Role, observers []protocol.ObserverSpec) {
+	if h == nil || h.e == nil || !role.IsPunch() {
+		return
+	}
+	rs := &h.e.roles[role.Code()-1]
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.announced, rs.private, rs.anyAnnounced = [4]uint64{}, [4]uint64{}, true
+	for _, o := range observers {
+		rs.announced[o.ID/64] |= 1 << (o.ID % 64)
+		if nat.ScopeOf(o.Addr.Addr()) == nat.ScopePrivate {
+			rs.private[o.ID/64] |= 1 << (o.ID % 64)
+		}
+	}
+}
+
+// unannounced reports whether obs is an observer the role was not
+// announced, while it was announced some: a probe to a free slot's id. The
+// caller holds rs.mu.
+func (rs *roleState) unannounced(obs uint8) bool {
+	return rs.anyAnnounced && rs.announced[obs/64]&(1<<(obs%64)) == 0
+}
+
+// lan reports whether s's observations are LAN evidence: a ScopePrivate
+// group's, or with ScopeAuto one announced at a private address. The
+// caller holds rs.mu.
+func (rs *roleState) lan(s slot) bool {
+	return s.flags&slotPrivate != 0 || s.flags&slotPublic == 0 && rs.private[s.obs/64]&(1<<(s.obs%64)) != 0
 }
 
 // ProbesLeft is how many more probes of role the entry accepts in its

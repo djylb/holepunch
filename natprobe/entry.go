@@ -79,13 +79,20 @@ type roleState struct {
 	extraLeft uint8
 	altLeft   uint8
 	replySeq  uint32 // seq of natprobe's replies to this role
+	// announced and private mark, by observer id, the observers announced
+	// to this role and those of them at a private address (Announce): a
+	// probe to another observer is refused once anything was announced,
+	// and with ScopeAuto a private one's observations are LAN evidence.
+	announced, private [4]uint64
+	anyAnnounced       bool
 }
 
 // Slot flags: observer properties kept with the slot, so that a merge needs
 // no access to the Server.
 const (
 	slotAlt     = 1 << 0 // an observer of the alt group
-	slotPrivate = 1 << 1 // an observer advertised on a private address
+	slotPrivate = 1 << 1 // an observer of a ScopePrivate group
+	slotPublic  = 1 << 2 // an observer of a ScopePublic group
 )
 
 // slot is one observation slot (role, sock, observer), about 60 bytes.

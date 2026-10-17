@@ -46,7 +46,7 @@ func TestProbeReplies(t *testing.T) {
 		t.Fatalf("%d replies", len(out))
 	}
 	ack, extra := out[0], out[1]
-	if ack.from != r.ls[1].adv || ack.to != srcA || extra.to != srcA || extra.from != netip.MustParseAddrPort("198.51.100.1:40999") {
+	if ack.from != netip.AddrPortFrom(r.ls[1].advs[0], r.ls[1].port) || ack.to != srcA || extra.to != srcA || extra.from != netip.MustParseAddrPort("198.51.100.1:40999") {
 		t.Fatalf("addresses ack %v→%v extra %v→%v", ack.from, ack.to, extra.from, extra.to)
 	}
 	if len(ack.b)+len(extra.b) > len(pkt) || len(ack.b) < 83 || len(extra.b) < 73 {
@@ -492,13 +492,13 @@ func TestSandwichQueue(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		r.rds[0].process(c.probe(probeOpts{sandwich: sw}), srcA)
+		r.rds[0].process(c.probe(probeOpts{sandwich: sw}), srcA, netip.Addr{})
 	}()
 	<-entered
 	// meanwhile reader 1 keeps answering; with the event in the sink, 7 more
 	// fit the capacity of 8
 	for range 12 {
-		r.rds[1].process(c.probe(probeOpts{obs: 1, sandwich: sw}), srcA)
+		r.rds[1].process(c.probe(probeOpts{obs: 1, sandwich: sw}), srcA, netip.Addr{})
 	}
 	if r.stats.acks.Load() != 14 || r.stats.sandwichDropped.Load() != 5 {
 		t.Fatalf("acks %d dropped %d", r.stats.acks.Load(), r.stats.sandwichDropped.Load())
@@ -575,8 +575,8 @@ func realClockPath(regCfg RegistryConfig, src Rate, n int) (*Registry, []*reader
 	st := &readerStats{}
 	var rds []*reader
 	for i := range n {
-		l := &listener{id: uint8(i % 3), fam: protocol.FamilyUDP4, conn: discardConn{}, pool: p,
-			adv: netip.AddrPortFrom(netip.MustParseAddr("198.51.100.1"), uint16(3478+i%3))}
+		l := &listener{id: uint8(i % 3), pi: uint8(i % 3), slots: 1, fam: protocol.FamilyUDP4, conn: discardConn{}, pool: p,
+			port: uint16(3478 + i%3), advs: []netip.Addr{netip.MustParseAddr("198.51.100.1")}}
 		rds = append(rds, newReader(s, l, st))
 	}
 	return reg, rds, st
@@ -590,7 +590,7 @@ func floodFor(rds []*reader, pkts [][]byte, src netip.AddrPort, d time.Duration)
 	for i, rd := range rds {
 		wg.Go(func() {
 			for time.Since(start) < d {
-				rd.process(pkts[i%len(pkts)], src)
+				rd.process(pkts[i%len(pkts)], src, netip.Addr{})
 			}
 		})
 	}

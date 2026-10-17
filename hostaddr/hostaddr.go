@@ -17,6 +17,7 @@
 package hostaddr
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"strings"
@@ -75,12 +76,21 @@ func List() ([]Addr, error) {
 // Interfaces returns the host's network interfaces and, at the same index,
 // each one's addresses with their prefixes, IPv4-mapped addresses unmapped.
 // An interface whose addresses cannot be read is listed without any.
-// Android 11 and later refuse the list to ordinary apps.
+//
+// Where the system refuses package net's interface list — Android 11 and
+// later to ordinary apps, some sandboxes — Linux reads the addresses from a
+// netlink address dump instead, which those systems allow: every interface
+// with an address is then reported up, with the loopback and
+// point-to-point flags its addresses show and the name of its IPv4 label
+// (an IPv6-only interface has none).
 //
 //holepunch:netimpl
 func Interfaces() ([]net.Interface, [][]netip.Prefix, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
+		if fi, fa, ferr := interfacesFallback(); ferr == nil {
+			return fi, fa, nil
+		}
 		return nil, nil, err
 	}
 	addrs := make([][]netip.Prefix, len(ifaces))
@@ -168,6 +178,8 @@ func OverlayName(name string) bool {
 	}
 	return false
 }
+
+var errNoFallback = errors.New("hostaddr: no fallback interface list")
 
 // inCGN reports whether a is in the RFC 6598 shared address space
 // 100.64.0.0/10.

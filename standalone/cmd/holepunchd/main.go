@@ -75,7 +75,9 @@ func parse(args []string) (options, error) {
 	fs.StringVar(&o.certFile, "cert", "", "PEM certificate of the server (default: self-signed at every start)")
 	fs.StringVar(&o.keyFile, "key", "", "PEM private key of -cert")
 	fs.StringVar(&o.token, "auth-token", "", "shared token the clients must present")
-	fs.Var(&o.probeIPs, "probe-ip", "public IP of a natprobe observer group, IP or BIND=ADVERTISE; repeatable, one at least")
+	fs.Var(&o.probeIPs, "probe-ip", "public IP of a natprobe observer group, IP or BIND=ADVERTISE[,ADVERTISE...] "+
+		"(every address that reaches the bound sockets, each probed by the clients; BIND 0.0.0.0 or :: binds every address, "+
+		"needs ADVERTISE and replies from the probed one); repeatable, one at least")
 	fs.Var(&o.altIPs, "probe-alt-ip", "second public IP for change-IP replies, IP or BIND=ADVERTISE; one per family")
 	var stunFlag cli.StringList
 	fs.Var(&stunFlag, "stun", "HOST:PORT or IP:PORT of a public STUN server the clients also ask, a second view of their mapping; repeatable; "+
@@ -243,16 +245,24 @@ func observerGroups(o options) ([]natprobe.ObserverGroup, error) {
 	return groups, nil
 }
 
-// bindAdvertise parses IP or BIND=ADVERTISE.
-func bindAdvertise(v string) (bind, adv netip.Addr, err error) {
-	b, a, split := strings.Cut(v, "=")
+// bindAdvertise parses IP or BIND=ADVERTISE[,ADVERTISE...].
+func bindAdvertise(v string) (bind netip.Addr, adv []netip.Addr, err error) {
+	b, list, split := strings.Cut(v, "=")
 	if bind, err = netip.ParseAddr(b); err != nil {
-		return bind, adv, fmt.Errorf("probe address %q: %w", v, err)
+		return bind, nil, fmt.Errorf("probe address %q: %w", v, err)
 	}
-	if split {
-		if adv, err = netip.ParseAddr(a); err != nil {
-			return bind, adv, fmt.Errorf("probe address %q: %w", v, err)
+	if !split {
+		if bind.IsUnspecified() {
+			return bind, nil, fmt.Errorf("probe address %q: a wildcard address needs =ADVERTISE, the address the clients reach", v)
 		}
+		return bind, nil, nil
+	}
+	for a := range strings.SplitSeq(list, ",") {
+		ip, err := netip.ParseAddr(strings.TrimSpace(a))
+		if err != nil {
+			return bind, nil, fmt.Errorf("probe address %q: %w", v, err)
+		}
+		adv = append(adv, ip)
 	}
 	return bind, adv, nil
 }

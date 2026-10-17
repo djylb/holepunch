@@ -17,9 +17,10 @@ type ServerStats struct {
 	SandwichDropped              uint64 // sandwich queue full or closed
 	Panics                       uint64 // recovered: per packet, reader loops, sinks
 	WriteErrors, ReadErrors      uint64
+	SourceRefused                uint64 // replies the system would not send from the probed address, sent from its routed one instead
 	CloseTimeouts                uint64
 	DeadListeners                int  // listeners stopped by a reader-loop panic
-	WildcardMultiIP              bool // a wildcard group on a host with ≥ 2 global addresses of its family
+	WildcardMultiIP              bool // a wildcard group that cannot reply from the probed address, on a host with ≥ 2 global addresses of its family
 }
 
 // readerStats are one reader goroutine's counters: each reader writes only
@@ -31,7 +32,7 @@ type readerStats struct {
 	rateSession, budget, replay             atomic.Uint64
 	acks, extras, alts, openers             atomic.Uint64
 	sandwichEvents, sandwichDropped, panics atomic.Uint64
-	writeErrs, readErrs                     atomic.Uint64
+	writeErrs, readErrs, srcRefused         atomic.Uint64
 	_                                       [32]byte
 }
 
@@ -55,6 +56,7 @@ func (r *readerStats) addTo(st *ServerStats) {
 	st.Alts += r.alts.Load()
 	st.Openers += r.openers.Load()
 	st.SandwichEvents += r.sandwichEvents.Load()
+	st.SourceRefused += r.srcRefused.Load()
 	st.SandwichDropped += r.sandwichDropped.Load()
 	st.Panics += r.panics.Load()
 	st.WriteErrors += r.writeErrs.Load()

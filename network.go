@@ -48,9 +48,10 @@ type Network interface {
 	// net.FlagLoopback and net.FlagPointToPoint: overlay addresses —
 	// Tailscale, WireGuard, ZeroTier, other tunnels, 100.64/10 — are kept
 	// apart from the LAN ones (Options.ExcludeOverlay), and
-	// Options.LocalInterface is looked up by name. On failure — Android 11
-	// and later refuse the netlink request to ordinary apps — the session
-	// runs without LAN and overlay addresses and Diagnostics.Warn carries
+	// Options.LocalInterface is looked up by name. SystemNetwork's works on
+	// Android 11 and later too (hostaddr.Interfaces), where an interface
+	// may then have no name. On failure the session runs without LAN and
+	// overlay addresses and Diagnostics.Warn carries
 	// interface_list_unavailable; a host app that knows its interfaces can
 	// inject a Network that returns them.
 	InterfaceAddrs() ([]net.Interface, [][]netip.Prefix, error) //holepunch:callback

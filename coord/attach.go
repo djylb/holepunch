@@ -254,6 +254,7 @@ func (s *Session) commitAttach(l *link, now time.Time) effects {
 		s.starts[r].Probe = *l.probe
 		if s.handle != nil {
 			s.unobserved = unobservedFamilies([2]protocol.ProbeSpec{s.starts[0].Probe, s.starts[1].Probe})
+			s.handle.Announce(roleOf(r), l.probe.Observers)
 		}
 	}
 	start := cloneStart(s.starts[r])

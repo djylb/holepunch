@@ -48,7 +48,7 @@ func probeAfterUnreachable(t *testing.T, s *Server, reg *Registry, seen *atomic.
 	obs := observerAddr(t, s, 0)
 	var l *listener
 	for _, x := range s.listeners {
-		if x.adv == obs {
+		if len(x.advs) > 0 && netip.AddrPortFrom(x.advs[0], x.port) == obs {
 			l = x
 		}
 	}

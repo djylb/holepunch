@@ -115,13 +115,13 @@ func newRig(t *testing.T, o rigOpts) *rig {
 	p := &pool{conns: []packetConn{mk("198.51.100.1:40999")}, ports: []uint16{40999}}
 	for i := range 3 {
 		a := netip.AddrPortFrom(netip.MustParseAddr("198.51.100.1"), uint16(3478+i))
-		r.ls = append(r.ls, &listener{id: uint8(i), fam: protocol.FamilyUDP4, adv: a, conn: mk(a.String()), pool: p})
+		r.ls = append(r.ls, &listener{id: uint8(i), pi: uint8(i), slots: 1, fam: protocol.FamilyUDP4, port: a.Port(), advs: []netip.Addr{a.Addr()}, conn: mk(a.String()), pool: p})
 	}
 	if o.alt {
 		ap := &pool{conns: []packetConn{mk("198.51.100.2:41999")}, ports: []uint16{41999}}
 		r.s.altPools[0] = ap
-		r.ls = append(r.ls, &listener{id: 8, group: 1, fam: protocol.FamilyUDP4, alt: true, flags: slotAlt,
-			adv: netip.MustParseAddrPort("198.51.100.2:3478"), conn: mk("198.51.100.2:3478"), pool: ap})
+		r.ls = append(r.ls, &listener{id: 8, og: 1, slots: 1, group: 1, fam: protocol.FamilyUDP4, alt: true, flags: slotAlt,
+			port: 3478, advs: []netip.Addr{netip.MustParseAddr("198.51.100.2")}, conn: mk("198.51.100.2:3478"), pool: ap})
 	}
 	for _, l := range r.ls {
 		r.rds = append(r.rds, newReader(r.s, l, &r.stats))
@@ -134,7 +134,7 @@ func (r *rig) deliver(i int, pkt []byte, src netip.AddrPort) []captured {
 	r.outMu.Lock()
 	r.out = r.out[:0]
 	r.outMu.Unlock()
-	r.rds[i].process(pkt, src)
+	r.rds[i].process(pkt, src, netip.Addr{})
 	r.outMu.Lock()
 	defer r.outMu.Unlock()
 	return append([]captured(nil), r.out...)

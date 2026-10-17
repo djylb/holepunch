@@ -115,15 +115,25 @@ func (s *Server) Start() (err error) {
 	return nil
 }
 
-// checkWildcard flags wildcard groups on a host with several global
-// addresses of their family; the server still starts, since virtual
+// checkWildcard flags the wildcard groups that cannot reply from the probed
+// address (no destination reports on this system) on a host with several
+// global addresses of their family; the server still starts, since virtual
 // interfaces (docker and the like) trigger the check too.
 func (s *Server) checkWildcard() {
+	var blind []ObserverGroup
+	for _, l := range s.listeners {
+		if g := s.cfg.Groups[l.group]; g.Bind.IsUnspecified() && l.msg == nil {
+			blind = append(blind, g)
+		}
+	}
+	if len(blind) == 0 {
+		return
+	}
 	prefixes, err := interfacePrefixes()
 	if err != nil {
 		return
 	}
-	for _, fam := range wildcardFamilies(s.cfg.Groups, prefixes) {
+	for _, fam := range wildcardFamilies(blind, prefixes) {
 		s.wildcard.Store(true)
 		s.log(slog.LevelWarn, "natprobe: wildcard_multi_ip: bind each IP explicitly", "family", string(fam))
 	}
@@ -156,9 +166,16 @@ func (s *Server) Close() error {
 	return s.closeErr
 }
 
-// Observers returns the observers of family f for punch_start.probe:
-// the live listeners of the started server, ordered by id.
-func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec {
+// Observers returns the observers of family f for punch_start.probe: one
+// per address of Advertise and port of each live listener, ordered by id.
+func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec { return s.observersAt(f, nil) }
+
+// observersAt is Observers with the free address slots of the groups
+// filled from at. An address is announced once per family: a group's
+// Advertise first, then each address of at in the first group with a free
+// slot. The same address in two observer groups would tell the classifier
+// two server IPs where there is one.
+func (s *Server) observersAt(f protocol.Family, at []netip.Addr) []protocol.ObserverSpec {
 	if s == nil {
 		return nil
 	}
@@ -167,10 +184,36 @@ func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec {
 	if s.state != stateStarted {
 		return nil
 	}
+	slots := map[uint8][]netip.Addr{} // config group -> its slots' addresses
+	var used []netip.Addr
+	for gi, g := range s.cfg.Groups {
+		if protocol.FamilyOf(g.Bind) == f {
+			slots[uint8(gi)] = slices.Clone(g.Advertise)
+			used = append(used, g.Advertise...)
+		}
+	}
+	for _, a := range at {
+		a = a.Unmap().WithZone("")
+		if protocol.FamilyOf(a) != f || a.IsUnspecified() || a.IsMulticast() || slices.Contains(used, a) {
+			continue
+		}
+		for gi, g := range s.cfg.Groups {
+			if l := slots[uint8(gi)]; protocol.FamilyOf(g.Bind) == f && !g.Alt && len(l) < g.Slots {
+				slots[uint8(gi)] = append(l, a)
+				used = append(used, a)
+				break
+			}
+		}
+	}
 	var out []protocol.ObserverSpec
 	for _, l := range s.listeners {
-		if l.fam == f && !l.dead.Load() {
-			out = append(out, protocol.ObserverSpec{ID: l.id, Addr: l.adv, Group: l.group, Alt: l.alt})
+		if l.fam != f || l.dead.Load() {
+			continue
+		}
+		for k, a := range slots[l.group] {
+			og := int(l.og) + k
+			out = append(out, protocol.ObserverSpec{ID: uint8(og*portsPerGroup + int(l.pi)), Addr: netip.AddrPortFrom(a, l.port),
+				Group: uint8(og), Alt: l.alt})
 		}
 	}
 	slices.SortFunc(out, func(a, b protocol.ObserverSpec) int { return cmp.Compare(a.ID, b.ID) })
@@ -178,10 +221,11 @@ func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec {
 }
 
 // ProbeSpec returns the ProbeSpec that sends clients to this server, for
-// coord.Config.DefaultProbe: the live observers of both families, extra
-// replies unless the server was configured with NoExtraReply, and the
-// second-socket probe, which tells the port allocation of a symmetric NAT
-// apart. The caller adds third-party STUN servers, if any:
+// coord.Config.DefaultProbe: the live observers of both families at the
+// groups' Advertise addresses, extra replies unless the server was
+// configured with NoExtraReply, and the second-socket probe, which tells the
+// port allocation of a symmetric NAT apart. The caller adds third-party
+// STUN servers, if any:
 //
 //	spec := probe.ProbeSpec()
 //	spec.STUN, _ = natprobe.ResolveSTUN(ctx, nil, stun.DefaultServers())
@@ -193,54 +237,29 @@ func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec {
 // its first main group's observers, then its alt observer, then its other
 // groups'.
 //
-// An observer of a group without Advertise has a zero Addr: the caller sets
-// it for each session (coord.Config.Probe, coord.AttachOptions.Probe), and a
-// spec with a zero observer address is refused by coord.
-//
 // Call it after Start; before Start, and after Close, the spec has no
 // observers.
-func (s *Server) ProbeSpec() protocol.ProbeSpec {
+func (s *Server) ProbeSpec() protocol.ProbeSpec { return s.ProbeSpecAt() }
+
+// ProbeSpecAt is ProbeSpec with the free address slots of the groups
+// (ObserverGroup.Slots) announced at addrs, in order, each at its
+// observer's ports: the addresses a session's clients reach this server at
+// that are known only now — the current address of a host whose public
+// address changes, the address a client says it connected to, a DDNS name's
+// address. Each address goes to the first group of its family with a free
+// slot; one of another family, one already announced, or one beyond the free
+// slots is left out. When the spec outgrows its 16 observers the groups'
+// first slots are kept first, so list the address that matters most first,
+// in a group's Advertise or at the front of addrs. For a client's own
+// session give the spec to coord.AttachOptions.Probe; for every session,
+// return it from coord.Config.Probe.
+func (s *Server) ProbeSpecAt(addrs ...netip.Addr) protocol.ProbeSpec {
 	spec := protocol.ProbeSpec{V: protocol.ProbeSpecVersion, SecondSocket: true}
 	if s == nil {
 		return spec
 	}
 	spec.ExtraReply = !s.cfg.NoExtraReply
-	spec.Observers = specObservers(s.Observers(protocol.FamilyUDP4), s.Observers(protocol.FamilyUDP6))
-	return spec
-}
-
-// ProbeSpecAt is ProbeSpec with the observers of groups without Advertise
-// announced at addrs, one address per family, each at its observer's port:
-// what a session gets whose clients reach this server at an address known
-// only now (a host whose public address changes, the address a client says
-// it reached the server at). Such an observer whose family has no address in
-// addrs is left out; the other observers keep their Advertise.
-func (s *Server) ProbeSpecAt(addrs ...netip.Addr) protocol.ProbeSpec {
-	spec := s.ProbeSpec()
-	if s == nil {
-		return spec
-	}
-	at := func(f protocol.Family, obs []protocol.ObserverSpec) []protocol.ObserverSpec {
-		var addr netip.Addr
-		for _, a := range addrs {
-			if a = a.Unmap(); protocol.FamilyOf(a) == f {
-				addr = a
-				break
-			}
-		}
-		kept := obs[:0]
-		for _, o := range obs {
-			if !o.Addr.Addr().IsValid() {
-				if !addr.IsValid() {
-					continue
-				}
-				o.Addr = netip.AddrPortFrom(addr, o.Addr.Port())
-			}
-			kept = append(kept, o)
-		}
-		return kept
-	}
-	spec.Observers = specObservers(at(protocol.FamilyUDP4, s.Observers(protocol.FamilyUDP4)), at(protocol.FamilyUDP6, s.Observers(protocol.FamilyUDP6)))
+	spec.Observers = specObservers(s.observersAt(protocol.FamilyUDP4, addrs), s.observersAt(protocol.FamilyUDP6, addrs))
 	return spec
 }
 

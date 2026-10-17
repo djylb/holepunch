@@ -33,8 +33,8 @@ func TestLoadManySessions(t *testing.T) {
 	pool6 := &pool{conns: []packetConn{discardConn{}}, ports: []uint16{40999}}
 	var ls []*listener
 	for i := range 3 {
-		ls = append(ls, &listener{id: uint8(i), fam: protocol.FamilyUDP4, conn: discardConn{}, pool: pool4})
-		ls = append(ls, &listener{id: uint8(portsPerGroup + i), group: 1, fam: protocol.FamilyUDP6, conn: discardConn{}, pool: pool6})
+		ls = append(ls, &listener{id: uint8(i), pi: uint8(i), slots: 1, fam: protocol.FamilyUDP4, conn: discardConn{}, pool: pool4})
+		ls = append(ls, &listener{id: uint8(portsPerGroup + i), og: 1, pi: uint8(i), slots: 1, group: 1, fam: protocol.FamilyUDP6, conn: discardConn{}, pool: pool6})
 	}
 	type job struct {
 		pkt []byte
@@ -89,7 +89,7 @@ func TestLoadManySessions(t *testing.T) {
 		wg.Go(func() {
 			for i := 0; i < len(mine); i += 2 { // two readers per listener share its packets
 				t0 := time.Now()
-				rd.process(mine[i].pkt, mine[i].src)
+				rd.process(mine[i].pkt, mine[i].src, netip.Addr{})
 				lat[r] = append(lat[r], time.Since(t0))
 			}
 		})

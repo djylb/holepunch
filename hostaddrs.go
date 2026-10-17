@@ -36,9 +36,8 @@ func hostAddrsOf(ifaces []net.Interface, addrs [][]netip.Prefix) []hostAddr {
 
 // interfaceAddrs asks the Network for the host's interfaces once, at
 // punch_start. Without them the session runs with no LAN and no overlay
-// addresses and says so in Diagnostics.Warn: Android 11 and later refuse
-// the list to ordinary apps, and a host app that knows its interfaces
-// can then inject a Network that returns them.
+// addresses and says so in Diagnostics.Warn; a host app that knows its
+// interfaces can inject a Network that returns them.
 func (rt *runtime) interfaceAddrs() []hostAddr {
 	var ifaces []net.Interface
 	var addrs [][]netip.Prefix
@@ -57,9 +56,8 @@ func (rt *runtime) interfaceAddrs() []hostAddr {
 // readHosts reads the host's interfaces once, at punch_start: every address
 // is one of this host's (admission refuses them as targets), and
 // Options.LocalInterface picks the primary sockets' addresses by name.
-// Android refuses the interface table, and a missing interface looks the
-// same: either way the session runs without the preference and says so,
-// once.
+// A refused interface table and a missing interface look the same: either
+// way the session runs without the preference and says so, once.
 func (rt *runtime) readHosts() {
 	rt.hosts = rt.interfaceAddrs()
 	for _, h := range rt.hosts {

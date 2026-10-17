@@ -67,6 +67,9 @@ type ProbeHandle interface {
 	// Close ends the registration: the route's packets are dropped from now
 	// on. It is idempotent.
 	Close()
+	// Announce records the observers announced to role in its punch_start,
+	// whose addresses decide which observations are LAN evidence.
+	Announce(role protocol.Role, observers []protocol.ObserverSpec)
 	// Merge computes the server's authoritative view of role from its
 	// probe_report. mem is the natprobe.TraitsMemory that refines it, or nil;
 	// clientKey completes its key; verifiedOnly keeps a LAN-observed family

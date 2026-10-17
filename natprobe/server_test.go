@@ -256,9 +256,8 @@ func TestNewServerValidation(t *testing.T) {
 		"invalid bind":     {Registry: reg, Groups: []ObserverGroup{{}}},
 		"mapped bind":      {Registry: reg, Groups: []ObserverGroup{{Bind: netip.MustParseAddr("::ffff:127.0.0.1")}}},
 		"zoned bind":       {Registry: reg, Groups: []ObserverGroup{{Bind: netip.MustParseAddr("fe80::1%lo0")}}},
-		"wildcard no adv":  {Registry: reg, Groups: []ObserverGroup{{Bind: netip.IPv4Unspecified()}}},
-		"family mismatch":  {Registry: reg, Groups: []ObserverGroup{{Bind: lo4, Advertise: v6}}},
-		"unspecified adv":  {Registry: reg, Groups: []ObserverGroup{{Bind: lo4, Advertise: netip.IPv4Unspecified()}}},
+		"family mismatch":  {Registry: reg, Groups: []ObserverGroup{{Bind: lo4, Advertise: []netip.Addr{v6}}}},
+		"unspecified adv":  {Registry: reg, Groups: []ObserverGroup{{Bind: lo4, Advertise: []netip.Addr{netip.IPv4Unspecified()}}}},
 		"only alt":         {Registry: reg, Groups: []ObserverGroup{{Bind: lo4, Alt: true}}},
 		"two alt":          {Registry: reg, Groups: []ObserverGroup{{Bind: lo4}, {Bind: lo4, Alt: true}, {Bind: lo4, Alt: true}}},
 		"too many v4 obs":  {Registry: reg, Groups: []ObserverGroup{{Bind: lo4}, {Bind: lo4}, {Bind: lo4}}, PortCount: 8},
@@ -271,13 +270,13 @@ func TestNewServerValidation(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	groups := []ObserverGroup{{Bind: netip.IPv4Unspecified(), Advertise: netip.MustParseAddr("198.51.100.1")}, {Bind: v6}}
+	groups := []ObserverGroup{{Bind: netip.IPv4Unspecified(), Advertise: []netip.Addr{netip.MustParseAddr("198.51.100.1")}}, {Bind: v6}}
 	s, err := NewServer(ServerConfig{Registry: reg, Groups: groups, SourceRate: Rate{PerSec: 100}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.cfg.PortCount != 3 || s.cfg.ExtraSockets != 4 || s.cfg.ReadersPerListener != 2 || s.cfg.SourceRate != (Rate{100, 200}) ||
-		s.cfg.Groups[1].Advertise != v6 || groups[1].Advertise.IsValid() {
+		len(s.cfg.Groups[1].Advertise) != 1 || s.cfg.Groups[1].Advertise[0] != v6 || len(groups[1].Advertise) != 0 {
 		t.Fatalf("defaults %+v (caller's groups %+v)", s.cfg, groups)
 	}
 	if s2, _ := NewServer(ServerConfig{Registry: reg, Groups: loGroup()}); s2.cfg.SourceRate != (Rate{512, 1024}) {
@@ -845,7 +844,7 @@ func TestExplicitBindReplySource(t *testing.T) {
 
 func TestServerWildcard(t *testing.T) {
 	reg := NewRegistry(RegistryConfig{})
-	s := startServer(t, ServerConfig{Registry: reg, Groups: []ObserverGroup{{Bind: netip.IPv4Unspecified(), Advertise: lo4}}})
+	s := startServer(t, ServerConfig{Registry: reg, Groups: []ObserverGroup{{Bind: netip.IPv4Unspecified(), Advertise: []netip.Addr{lo4}}}})
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
 	o := s.Observers(protocol.FamilyUDP4)[0]
@@ -863,8 +862,8 @@ func TestWildcardFamilies(t *testing.T) {
 		}
 		return out
 	}
-	wild4 := ObserverGroup{Bind: netip.IPv4Unspecified(), Advertise: netip.MustParseAddr("198.51.100.1")}
-	wild6 := ObserverGroup{Bind: netip.IPv6Unspecified(), Advertise: netip.MustParseAddr("2001:db8::1")}
+	wild4 := ObserverGroup{Bind: netip.IPv4Unspecified(), Advertise: []netip.Addr{netip.MustParseAddr("198.51.100.1")}}
+	wild6 := ObserverGroup{Bind: netip.IPv6Unspecified(), Advertise: []netip.Addr{netip.MustParseAddr("2001:db8::1")}}
 	explicit := ObserverGroup{Bind: netip.MustParseAddr("198.51.100.1")}
 	two4 := pfx("198.51.100.1/24", "203.0.113.7/24", "10.0.0.1/8", "127.0.0.1/8", "2001:db8::1/64")
 	if f := wildcardFamilies([]ObserverGroup{wild4, wild4, wild6}, two4); len(f) != 1 || f[0] != protocol.FamilyUDP4 {
@@ -1010,7 +1009,7 @@ func TestPoolPickWraps(t *testing.T) {
 	for _, start := range []uint32{1<<31 - 2, math.MaxUint32 - 2} {
 		p.next.Store(start)
 		for range 6 {
-			if _, port := p.pick(); port < 1 || port > 3 {
+			if _, _, port := p.pick(); port < 1 || port > 3 {
 				t.Fatalf("port %d after %d", port, start)
 			}
 		}

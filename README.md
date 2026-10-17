@@ -150,20 +150,31 @@ long-running server, as `holepunchd` does). A long-running server can hand
 every session the current list through `coord.Config.Probe` instead of
 `DefaultProbe`.
 
-### Servers with a changing public address
+### Server addresses known per session
 
-A server whose public address changes binds its observers to the wildcard
-address with a `Scope` instead of an `Advertise` address
-(`natprobe.ObserverGroup{Bind: netip.IPv4Unspecified(), Scope: natprobe.ScopePublic}`),
-and gives each client the address it is reached at when it attaches:
+One set of observer sockets can be announced at several addresses: each is
+probed by the clients as an observer group of its own, so a server can offer
+every address a client might reach it at — its public address, the address
+the client connected to, a DDNS name's address, the LAN address of clients
+on its own network. Fixed addresses go in `ObserverGroup.Advertise`;
+addresses known only per session fill the group's free `Slots`:
 
 ```go
-spec := probe.ProbeSpecAt(addrTheClientReached)
+probe, err := natprobe.NewServer(natprobe.ServerConfig{
+	Registry: reg,
+	Groups:   []natprobe.ObserverGroup{{Bind: netip.IPv4Unspecified(), Slots: 3}},
+	BasePort: 3478,
+})
+// ...
+spec := probe.ProbeSpecAt(currentPublicIP, addrTheClientConnectedTo)
 err = sess.Attach(protocol.RoleResponder, connB, coord.AttachOptions{Probe: &spec})
 ```
 
-On a host with several addresses of a family, bind each address in its own
-group: replies leave from the bound address, which a restricted NAT requires.
+A socket bound to the wildcard address replies from the address each probe
+was sent to (Linux, macOS, FreeBSD, OpenBSD, Windows), so a host whose
+address changes, or that has several, needs no rebinding. Whether an
+observation is evidence of a client's public mapping or of a LAN path
+follows each announced address, or `ObserverGroup.Scope` when set.
 
 ### Clients on the server's LAN
 

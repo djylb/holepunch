@@ -25,9 +25,19 @@ func TestParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) != 2 || groups[0].Bind.String() != "10.0.0.5" || groups[0].Advertise.String() != "203.0.113.5" ||
-		groups[0].Alt || !groups[1].Alt || groups[1].Advertise.IsValid() {
+	if len(groups) != 2 || groups[0].Bind.String() != "10.0.0.5" || len(groups[0].Advertise) != 1 || groups[0].Advertise[0].String() != "203.0.113.5" ||
+		groups[0].Alt || !groups[1].Alt || len(groups[1].Advertise) != 0 {
 		t.Fatalf("groups %+v", groups)
+	}
+	if o, err := parse([]string{"-probe-ip", "0.0.0.0", "-auth-token", "t"}); err == nil {
+		if _, err := observerGroups(o); err == nil {
+			t.Error("a wildcard probe address without ADVERTISE accepted")
+		}
+	}
+	if o, err := parse([]string{"-probe-ip", "0.0.0.0=203.0.113.5,198.51.100.7", "-auth-token", "t"}); err != nil {
+		t.Fatal(err)
+	} else if g, err := observerGroups(o); err != nil || len(g) != 1 || len(g[0].Advertise) != 2 || g[0].Advertise[1].String() != "198.51.100.7" {
+		t.Fatalf("two addresses: %+v %v", g, err)
 	}
 	for _, args := range [][]string{
 		{},

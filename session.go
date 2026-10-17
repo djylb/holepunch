@@ -194,6 +194,14 @@ type Timing struct{ Probe, SummaryWait, GoWait, Punch, Handover, Total time.Dura
 // confirmed path: both sides send every Interval and declare the path dead
 // after Timeout without inbound traffic. Interval is within [5 s, 25 s] and
 // Timeout = 3 × Interval.
+//
+// The library sends nothing on a handed-over socket; the upper layer keeps
+// the path alive and notices when it dies — a NAT mapping that expired, a
+// network change. A QUIC connection takes Interval as its keep-alive period
+// and Timeout as its idle timeout. Another protocol sends a small datagram
+// whenever it has sent nothing for Interval, and gives up on the path after
+// Timeout without receiving anything; a write that succeeds says nothing
+// about the path, since UDP has no acknowledgement.
 type KeepaliveAdvice struct {
 	Interval            time.Duration
 	Timeout             time.Duration

@@ -35,7 +35,7 @@ func newBenchPath() *benchPath {
 	reg := NewRegistry(RegistryConfig{ProbeBudgetPerRole: 65535, SessionRate: Rate{PerSec: 1e9, Burst: 1e9}, ExtraQuotaPerRole: 255})
 	s := &Server{cfg: ServerConfig{Registry: reg}, reg: reg, src: newSourceLimiter(Rate{PerSec: 1e9, Burst: 1e9}, 4096)}
 	p := &pool{conns: []packetConn{discardConn{}}, ports: []uint16{40999}}
-	l := &listener{id: 0, fam: protocol.FamilyUDP4, conn: discardConn{}, pool: p, adv: netip.MustParseAddrPort("198.51.100.1:3478")}
+	l := &listener{id: 0, slots: 1, fam: protocol.FamilyUDP4, conn: discardConn{}, pool: p, port: 3478, advs: []netip.Addr{netip.MustParseAddr("198.51.100.1")}}
 	return &benchPath{reg: reg, rd: newReader(s, l, &readerStats{})}
 }
 
@@ -69,7 +69,7 @@ func (bp *benchPath) chunk(tb testing.TB, n int, extra, wrap bool) [][]byte {
 
 // handle is what the reader loop does per datagram.
 func (bp *benchPath) handle(pkt []byte, src netip.AddrPort) {
-	_ = life.Safe("natprobe/packet", func() { bp.rd.process(pkt, src) })
+	_ = life.Safe("natprobe/packet", func() { bp.rd.process(pkt, src, netip.Addr{}) })
 }
 
 // BenchmarkHandleProbe: the per-packet cost without system calls, route

@@ -10,30 +10,53 @@ import (
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // extraReadBuffer is the receive buffer of the extra-reply sockets, which are
 // never read: the kernel need not keep much for them.
 const extraReadBuffer = 1024
 
-// listener is one observer socket.
+// listener is one observer socket. It serves one observer per address slot
+// of its group: ids (og+k)*8 + pi for k < slots.
 type listener struct {
-	id    uint8 // observer id = group*8 + port index; checked against the probe's aux
-	group uint8
+	raw  net.PacketConn
+	conn packetConn
+	// msg is set on a wildcard socket that reports each datagram's
+	// destination: replies leave from it.
+	msg   msgConn
 	fam   protocol.Family
+	advs  []netip.Addr // the group's Advertise, by slot
+	pool  *pool        // the group's extra-reply pool
+	dead  atomic.Bool  // stopped after a reader-loop panic
+	port  uint16
+	id    uint8 // the observer id of its first slot, for names and logs
+	og    uint8 // the observer group of its first slot
+	slots uint8 // its group's address slots
+	pi    uint8 // its port index in the group
+	group uint8 // its config group
 	alt   bool
-	flags uint8 // slotAlt, slotPrivate
-	raw   net.PacketConn
-	conn  packetConn
-	adv   netip.AddrPort // advertised address
-	pool  *pool          // the group's extra-reply pool
-	dead  atomic.Bool    // stopped after a reader-loop panic
+	flags uint8 // slotAlt, slotPrivate, slotPublic
+}
+
+// serves reports whether aux, a probe's observer id, is one of l's.
+func (l *listener) serves(aux uint16) bool {
+	og := aux / portsPerGroup
+	return aux%portsPerGroup == uint16(l.pi) && og >= uint16(l.og) && og < uint16(l.og)+uint16(l.slots)
+}
+
+// msgConn is the control-data interface of *net.UDPConn: the destination of
+// a datagram read, the source of one written (udpsock).
+type msgConn interface {
+	ReadMsgUDPAddrPort(b, oob []byte) (n, oobn, flags int, addr netip.AddrPort, err error)
+	WriteMsgUDPAddrPort(b, oob []byte, addr netip.AddrPort) (n, oobn int, err error)
 }
 
 // pool is a fixed set of extra-reply sockets of one group. They are only
 // written to, and in turn, so the extra's source port varies.
 type pool struct {
 	conns []packetConn
+	msgs  []msgConn // the same sockets, when they can name their source; nil otherwise
 	ports []uint16
 	next  atomic.Uint32
 }
@@ -43,9 +66,13 @@ func (p *pool) usable() bool { return p != nil && len(p.conns) > 0 }
 // pick returns the next socket in turn. The index is reduced in uint32: an
 // int conversion first would turn negative on 32-bit platforms once the
 // counter passes 2^31.
-func (p *pool) pick() (packetConn, uint16) {
+func (p *pool) pick() (packetConn, msgConn, uint16) {
 	i := p.next.Add(1) % uint32(len(p.conns))
-	return p.conns[i], p.ports[i]
+	var m msgConn
+	if p.msgs != nil {
+		m = p.msgs[i]
+	}
+	return p.conns[i], m, p.ports[i]
 }
 
 // bind opens the listeners and the pools of every group and hands each
@@ -53,15 +80,21 @@ func (p *pool) pick() (packetConn, uint16) {
 func (s *Server) bind(g *life.Group) ([]*listener, [2]*pool, error) {
 	var ls []*listener
 	var alt [2]*pool
+	og := 0
 	for gi, grp := range s.cfg.Groups {
 		fam := protocol.FamilyOf(grp.Bind)
+		wildcard := grp.Bind.IsUnspecified()
 		n := s.cfg.PortCount
 		var flags uint8
 		if grp.Alt {
 			n, flags = 1, slotAlt
 		}
-		if grp.Scope == ScopePrivate || grp.Scope == ScopeAuto && nat.ScopeOf(grp.Advertise) == nat.ScopePrivate {
+		switch grp.Scope {
+		case ScopeAuto: // each announced address's own (handle.Announce)
+		case ScopePrivate:
 			flags |= slotPrivate
+		case ScopePublic:
+			flags |= slotPublic
 		}
 		var group []*listener
 		for pi := range n {
@@ -69,7 +102,7 @@ func (s *Server) bind(g *life.Group) ([]*listener, [2]*pool, error) {
 			if s.cfg.BasePort > 0 {
 				port = s.cfg.BasePort + pi
 			}
-			id := uint8(gi*portsPerGroup + pi)
+			id := uint8(og*portsPerGroup + pi)
 			pc, lp, err := s.open(g, fmt.Sprintf("natprobe/listener[%d]", id), string(fam), netip.AddrPortFrom(grp.Bind, uint16(port)), 0)
 			if err != nil {
 				return nil, alt, err
@@ -82,8 +115,12 @@ func (s *Server) bind(g *life.Group) ([]*listener, [2]*pool, error) {
 				}
 				lp = uint16(port)
 			}
-			group = append(group, &listener{id: id, group: uint8(gi), fam: fam, alt: grp.Alt, flags: flags,
-				raw: pc, conn: adaptConn(pc), adv: netip.AddrPortFrom(grp.Advertise, lp)})
+			l := &listener{id: id, og: uint8(og), slots: uint8(grp.Slots), pi: uint8(pi), group: uint8(gi), fam: fam,
+				alt: grp.Alt, flags: flags, raw: pc, conn: adaptConn(pc), port: lp, advs: grp.Advertise}
+			if wildcard {
+				l.msg = dstConn(pc)
+			}
+			group = append(group, l)
 		}
 		p := &pool{}
 		for k := range s.cfg.ExtraSockets {
@@ -94,7 +131,13 @@ func (s *Server) bind(g *life.Group) ([]*listener, [2]*pool, error) {
 			if port != 0 {
 				p.conns = append(p.conns, adaptConn(pc))
 				p.ports = append(p.ports, port)
+				if m, ok := pc.(msgConn); ok && wildcard {
+					p.msgs = append(p.msgs, m)
+				}
 			}
+		}
+		if len(p.msgs) != len(p.conns) {
+			p.msgs = nil
 		}
 		for _, l := range group {
 			l.pool = p
@@ -103,8 +146,25 @@ func (s *Server) bind(g *life.Group) ([]*listener, [2]*pool, error) {
 			alt[famIndex(fam)] = p
 		}
 		ls = append(ls, group...)
+		og += grp.Slots
 	}
 	return ls, alt, nil
+}
+
+// dstConn switches on the destination reports of a wildcard socket and
+// returns it as a msgConn, or nil when it cannot report them: an injected
+// conn without control data, or a system without the option. The conn's
+// methods are its Listen's code, called inside a recover boundary.
+func dstConn(pc net.PacketConn) msgConn {
+	m, ok := pc.(msgConn)
+	if !ok {
+		return nil
+	}
+	var err error
+	if life.Safe("natprobe/dstaddr", func() { err = udpsock.EnableDstAddr(pc) }) != nil || err != nil {
+		return nil
+	}
+	return m
 }
 
 // open binds one socket through Listen, hands it to g, sets its receive

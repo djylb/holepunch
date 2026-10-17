@@ -10,10 +10,12 @@
 //     needs no upkeep: a closed entry leaves at once, expired ones whenever
 //     a registration rewrites their shard, and all of them when the table
 //     is full.
-//   - Server: the observer listeners, bound per IP (ObserverGroup) so that
-//     replies leave from the probed address, with a fixed extra-reply socket
-//     pool per group and change-IP replies from the alt group. ProbeSpec
-//     describes them for coord.Config.
+//   - Server: the observer listeners of each ObserverGroup, which reply from
+//     the probed address — the bound one, or the probe's destination on a
+//     wildcard socket — with a fixed extra-reply socket pool per group and
+//     change-IP replies from the alt group. A group's sockets may be
+//     announced at several addresses, each an observer group of its own.
+//     ProbeSpec and ProbeSpecAt describe them for coord.
 //   - TraitsMemory: the cross-session traits memory, a 24 h LRU that only
 //     fills gaps or raises one confidence level and never overturns direct
 //     evidence; coord.Config.TraitsMemory takes it or an implementation of
