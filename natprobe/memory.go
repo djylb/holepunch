@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -20,10 +21,10 @@ type TraitsKey struct {
 	PublicIP  netip.Addr
 }
 
-// TraitsMemory is the cross-session traits memory. Handle.Merge
-// calls Apply; the coordinator calls Observe when a session ends, with the
-// session's direct measurements. A nil TraitsMemory turns the
-// memory off.
+// TraitsMemory is the cross-session traits memory. The coordinator calls
+// Apply when it merges a client's probe_report with natprobe's records, and
+// Observe when a session ends, with the session's direct measurements. A nil
+// TraitsMemory turns the memory off.
 // Callers may provide their own implementation, for example a persistent
 // one; it must be safe for concurrent use and must not block.
 type TraitsMemory interface {
@@ -36,7 +37,7 @@ type TraitsMemory interface {
 	// whether the session connected.
 	//
 	// final must be a direct measurement that the memory did not correct: the
-	// traits Handle.Merge produced without a memory (coord's raw views),
+	// traits the merge produced without a memory (coord's raw views),
 	// corrected by punch_result.traits. Apply's output never enters Observe. A
 	// conclusion Apply raised would otherwise come back as evidence and renew
 	// itself for ever, while a direct measurement that agrees with a remembered
@@ -47,9 +48,9 @@ type TraitsMemory interface {
 
 // TraitsMemoryConfig configures NewTraitsMemory; zero fields take the defaults.
 type TraitsMemoryConfig struct {
-	TTL        time.Duration    // default 24 h: how long a learned conclusion stays usable
-	MaxEntries int              // default 65536 (about 100 B each); a hard bound
-	Clock      func() time.Time // nil means time.Now
+	TTL        time.Duration // default 24 h: how long a learned conclusion stays usable
+	MaxEntries int           // default 65536 (about 100 B each); a hard bound
+	Clock      clock.Clock   // nil means the system clock
 }
 
 const (
@@ -77,13 +78,14 @@ func NewTraitsMemory(cfg TraitsMemoryConfig) TraitsMemory {
 	if cfg.MaxEntries <= 0 {
 		cfg.MaxEntries = defaultMemoryEntries
 	}
-	if cfg.Clock == nil {
-		cfg.Clock = time.Now
+	now := time.Now
+	if cfg.Clock != nil {
+		now = cfg.Clock.Now
 	}
 	// Fewer shards than entries, and per-shard bounds that add up to
 	// MaxEntries exactly, so that a small MaxEntries is still a bound.
 	n := min(memoryShards, cfg.MaxEntries)
-	m := &traitsMemory{ttl: cfg.TTL, now: cfg.Clock, seed: maphash.MakeSeed(), shards: make([]memShard, n)}
+	m := &traitsMemory{ttl: cfg.TTL, now: now, seed: maphash.MakeSeed(), shards: make([]memShard, n)}
 	m.epoch = m.now()
 	for i := range m.shards {
 		m.shards[i].idx = map[TraitsKey]*list.Element{}

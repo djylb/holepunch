@@ -31,7 +31,7 @@ func TestHappyPath(t *testing.T) {
 	p.succeed(0, 1)
 	p.succeed(1, 1)
 	res := r.wait(p.s)
-	if res.Outcome != OutcomeSucceeded || res.Code != "" || res.Confirmed != [2]bool{true, true} {
+	if res.Outcome != OutcomeSucceeded || res.Reason != "" || res.Confirmed != [2]bool{true, true} {
 		t.Fatalf("result %+v", res)
 	}
 	if res.Winner == nil || res.Winner.Round != 1 || res.Labels["k"] != "v" || res.Winner.Path[0] == nil {
@@ -49,8 +49,8 @@ func TestHappyPath(t *testing.T) {
 	if len(res.Rounds) != 1 || res.Rounds[0].Class != RoundConfirmed || res.Rounds[0].Granted[0] == 0 {
 		t.Fatalf("rounds %+v", res.Rounds)
 	}
-	if res.Clients[0] == nil || !res.Clients[0].OK || res.Timings.FirstGo.IsZero() || res.Timings.Summary.IsZero() {
-		t.Fatalf("clients %+v timings %+v", res.Clients, res.Timings)
+	if res.Clients[0] == nil || !res.Clients[0].OK || res.Timing.FirstGo.IsZero() || res.Timing.Summary.IsZero() {
+		t.Fatalf("clients %+v timings %+v", res.Clients, res.Timing)
 	}
 	if !errors.Is(context.Cause(p.s.Context()), ErrSessionDone) {
 		t.Fatalf("cause %v", context.Cause(p.s.Context()))
@@ -94,7 +94,7 @@ func TestAttachOrderIndependent(t *testing.T) {
 		}
 		p.state(StatePunching)
 		p.s.Abort(protocol.ReasonCanceled, "test")
-		if res := r.wait(s); res.Code != protocol.ReasonCanceled || res.Outcome != OutcomeAborted {
+		if res := r.wait(s); res.Reason != protocol.ReasonCanceled || res.Outcome != OutcomeAborted {
 			t.Fatalf("result %+v", res)
 		}
 	}
@@ -167,7 +167,7 @@ func TestAttachErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Abort("bogus", "")
-	if res := r.wait(s); res.Code != protocol.ReasonCanceled {
+	if res := r.wait(s); res.Reason != protocol.ReasonCanceled {
 		t.Fatalf("unknown code: %+v", res)
 	}
 }
@@ -189,7 +189,7 @@ func TestAttachAfterClose(t *testing.T) {
 	s := r.session(SessionOptions{})
 	r.clk.Advance(defBindTimeout)
 	res := r.wait(s)
-	if res.Code != protocol.ReasonPeerOffline || res.Detail != detailJoinTimeout || res.FailedRole != "" {
+	if res.Reason != protocol.ReasonPeerOffline || res.Detail != detailJoinTimeout || res.FailedRole != "" {
 		t.Fatalf("result %+v", res)
 	}
 	srv, cli := net.Pipe()
@@ -288,7 +288,7 @@ func TestConfirmLinger(t *testing.T) {
 		})
 		r.clk.Advance(3 * time.Second)
 		res := r.wait(p.s)
-		if res.Outcome != OutcomeSucceeded || res.Clients[0] == nil || res.Clients[0].Code != protocol.ReasonHandoverTimeout {
+		if res.Outcome != OutcomeSucceeded || res.Clients[0] == nil || res.Clients[0].Reason != protocol.ReasonHandoverTimeout {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -323,7 +323,7 @@ func TestConfirmLinger(t *testing.T) {
 	})
 }
 
-func contains(list []string, s string) bool {
+func contains[T comparable](list []T, s T) bool {
 	for _, x := range list {
 		if x == s {
 			return true
@@ -368,11 +368,11 @@ func TestControlLossDuringPunching(t *testing.T) {
 		})
 		r.clk.Advance(10 * time.Second)
 		a := expectAbort(t, p.cl[1])
-		if a.By != protocol.RoleInitiator || a.Code != protocol.ReasonPeerOffline || a.Detail != detailControlInterrupted {
+		if a.By != protocol.RoleInitiator || a.Reason != protocol.ReasonPeerOffline || a.Detail != detailControlInterrupted {
 			t.Fatalf("abort %+v", a)
 		}
 		res := r.wait(p.s)
-		if res.Code != protocol.ReasonControlInterrupted || res.Outcome != OutcomeAborted || res.FailedRole != protocol.RoleInitiator {
+		if res.Reason != protocol.ReasonControlInterrupted || res.Outcome != OutcomeAborted || res.FailedRole != protocol.RoleInitiator {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -382,7 +382,7 @@ func TestControlLossDuringPunching(t *testing.T) {
 		p.punching()
 		_ = p.cl[0].Close()
 		_ = p.cl[1].Close()
-		if res := r.wait(p.s); res.Code != protocol.ReasonControlInterrupted {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonControlInterrupted {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -411,12 +411,12 @@ func TestClientFailureAbortsPeer(t *testing.T) {
 			send(t, p.cl[1], simclient.Failure(s.ID(), protocol.RoleResponder, protocol.ReasonProbeTimeout, protocol.PhaseProbing))
 			if st != StateBinding {
 				a := expectAbort(t, p.cl[0])
-				if a.By != protocol.RoleResponder || a.Code != protocol.ReasonProbeTimeout {
+				if a.By != protocol.RoleResponder || a.Reason != protocol.ReasonProbeTimeout {
 					t.Fatalf("abort %+v", a)
 				}
 			}
 			res := r.wait(s)
-			if res.Code != protocol.ReasonProbeTimeout || res.FailedRole != protocol.RoleResponder || res.Outcome != OutcomeFailed {
+			if res.Reason != protocol.ReasonProbeTimeout || res.FailedRole != protocol.RoleResponder || res.Outcome != OutcomeFailed {
 				t.Fatalf("result %+v", res)
 			}
 		})
@@ -439,11 +439,11 @@ func TestEarlyReject(t *testing.T) {
 		p.report(1, v6)
 		for i := range 2 {
 			a := expectAbort(t, p.cl[i])
-			if a.By != protocol.RoleServer || a.Code != protocol.ReasonNoCommonFamily {
+			if a.By != protocol.RoleServer || a.Reason != protocol.ReasonNoCommonFamily {
 				t.Fatalf("abort %+v", a)
 			}
 		}
-		if res := r.wait(p.s); res.Code != protocol.ReasonNoCommonFamily || res.Outcome != OutcomeFailed {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonNoCommonFamily || res.Outcome != OutcomeFailed {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -453,7 +453,7 @@ func TestEarlyReject(t *testing.T) {
 		p.report(0)
 		send(t, p.cl[1], simclient.Report(*p.starts[1], 5, "kcp", fam(1, simclient.OpenTraits)))
 		for i := range 2 {
-			if a := expectAbort(t, p.cl[i]); a.Code != protocol.ReasonTransportMismatch {
+			if a := expectAbort(t, p.cl[i]); a.Reason != protocol.ReasonTransportMismatch {
 				t.Fatalf("abort %+v", a)
 			}
 		}
@@ -499,22 +499,22 @@ func TestCoordinatorClose(t *testing.T) {
 			}
 		}()
 	}
-	if a := expectAbort(t, cb); a.Code != protocol.ReasonServerShutdown || a.By != protocol.RoleServer {
+	if a := expectAbort(t, cb); a.Reason != protocol.ReasonServerShutdown || a.By != protocol.RoleServer {
 		t.Fatalf("abort %+v", a)
 	}
 	expectEOF(t, punching.cl[0])
 	expectEOF(t, punching.cl[1])
 	wg.Wait()
-	if res := r.wait(binding); res.Code != protocol.ReasonServerShutdown {
+	if res := r.wait(binding); res.Reason != protocol.ReasonServerShutdown {
 		t.Fatalf("binding %+v", res)
 	}
-	if res := r.wait(punching.s); res.Code != protocol.ReasonServerShutdown {
+	if res := r.wait(punching.s); res.Reason != protocol.ReasonServerShutdown {
 		t.Fatalf("punching %+v", res)
 	}
 	if res := r.wait(confirming.s); res.Outcome != OutcomeSucceeded {
 		t.Fatalf("confirming %+v", res)
 	}
-	if res := r.wait(idle); res.Code != protocol.ReasonServerShutdown {
+	if res := r.wait(idle); res.Reason != protocol.ReasonServerShutdown {
 		t.Fatalf("idle %+v", res)
 	}
 	if r.c.Len() != 0 {
@@ -568,12 +568,12 @@ func TestParentCancel(t *testing.T) {
 	p := r.pair(SessionOptions{Parent: parent})
 	cancel()
 	for i := range 2 {
-		if a := expectAbort(t, p.cl[i]); a.Code != protocol.ReasonCanceled {
+		if a := expectAbort(t, p.cl[i]); a.Reason != protocol.ReasonCanceled {
 			t.Fatalf("abort %+v", a)
 		}
 	}
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonCanceled || !res.Retry.Retryable {
+	if res.Reason != protocol.ReasonCanceled || !res.Retry.Retryable {
 		t.Fatalf("result %+v", res)
 	}
 	if reasonOf(context.Cause(p.s.Context())) != protocol.ReasonCanceled {
@@ -583,7 +583,7 @@ func TestParentCancel(t *testing.T) {
 	done, cancel2 := context.WithCancel(context.Background())
 	cancel2()
 	s := r.session(SessionOptions{Parent: done})
-	if res := r.wait(s); res.Code != protocol.ReasonCanceled {
+	if res := r.wait(s); res.Reason != protocol.ReasonCanceled {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -650,15 +650,15 @@ func TestProgressNeverDrivesState(t *testing.T) {
 func TestSessionStartAndLookup(t *testing.T) {
 	r := newRig(t)
 	s := r.session(SessionOptions{SessionID: "abc-DEF_1", ClientKeys: [2]string{"vis", "prov"}})
-	st := s.Start(protocol.RoleResponder)
+	st := s.PunchStart(protocol.RoleResponder)
 	if st.SessionID != "abc-DEF_1" || st.Role != protocol.RoleResponder || st.Token.IsZero() || st.Policy == nil {
 		t.Fatalf("start %+v", st)
 	}
 	st.Policy.Budget.MaxPackets = 1 // a copy
-	if s.Start(protocol.RoleResponder).Policy.Budget.MaxPackets == 1 {
+	if s.PunchStart(protocol.RoleResponder).Policy.Budget.MaxPackets == 1 {
 		t.Fatal("Start returned shared state")
 	}
-	if s.Start("x").SessionID != "" {
+	if s.PunchStart("x").SessionID != "" {
 		t.Fatal("invalid role")
 	}
 	if got, ok := r.c.Lookup("abc-DEF_1"); !ok || got != s {
@@ -676,10 +676,10 @@ func TestSessionStartAndLookup(t *testing.T) {
 	if _, err := r.c.NewSession(SessionOptions{Wire: protocol.WireSpec{PayloadMin: 10}}); !invalidArgument(err) {
 		t.Fatalf("bad wire: %v", err)
 	}
-	tok := s.Start(protocol.RoleInitiator).Token
+	tok := s.PunchStart(protocol.RoleInitiator).Token
 	text, _ := tok.MarshalText()
 	s2 := r.session(SessionOptions{Token: string(text)})
-	if s2.Start(protocol.RoleInitiator).Token != tok {
+	if s2.PunchStart(protocol.RoleInitiator).Token != tok {
 		t.Fatal("token option ignored")
 	}
 	if r.c.Len() != 2 || r.c.Stats().SessionsActive != 2 {

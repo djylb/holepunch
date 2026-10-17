@@ -10,14 +10,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
 
 type memClock struct {
-	mu  sync.Mutex
-	now time.Time
+	clock.System // timers; the memory reads only Now
+	mu           sync.Mutex
+	now          time.Time
 }
 
 func (c *memClock) Now() time.Time {
@@ -34,7 +36,7 @@ func (c *memClock) advance(d time.Duration) {
 
 func newMem(cfg StrategyMemoryConfig) (*memory, *memClock) {
 	clk := &memClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	cfg.Clock = clk.Now
+	cfg.Clock = clk
 	return NewStrategyMemory(cfg).(*memory), clk
 }
 
@@ -275,7 +277,7 @@ func TestMemoryPanicIgnored(t *testing.T) {
 func TestStrategySalt(t *testing.T) {
 	salt := []byte("one salt for every coordinator")
 	mk := func(cfg Config) *Coordinator {
-		cfg.AllowUnverifiedTargets = true // relay-only: no registry needed
+		cfg.NoObserver = true // relay-only: no registry needed
 		c, err := New(cfg)
 		if err != nil {
 			t.Fatal(err)

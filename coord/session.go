@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/ablation"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -33,8 +33,12 @@ type SessionOptions struct {
 	// ceiling.
 	Policy *protocol.Policy
 	// ClientKeys are the [initiator, responder] keys of the per-key limits
-	// and packet quotas (a visitor's key, a provider's ID, for example); an
-	// empty key is not limited.
+	// and packet quotas (Limits: sessions and session rate per initiator
+	// key, sessions per responder key, packets per minute); an empty key is
+	// not limited. A key is the unit those limits protect from each other:
+	// one per device or process keeps several devices that share an account
+	// from crowding each other out, and a caller that wants a total per
+	// account as well counts it itself before NewSession.
 	ClientKeys [2]string
 	// Parent, when set, aborts the session with canceled when it is done.
 	Parent context.Context
@@ -51,10 +55,18 @@ type SessionOptions struct {
 
 // AttachOptions configures one Attach.
 type AttachOptions struct {
-	// Security vouches for the control stream: the
-	// default accepts only a completed TLS connection; Declared trusts the
-	// caller's outer encryption; InsecureForTesting accepts anything and
-	// warns insecure_control_for_testing.
+	// Probe, when set, replaces this role's ProbeSpec — the one
+	// SessionOptions or Config.Probe gave NewSession — in the punch_start
+	// written on this stream: the observers' addresses the client is known
+	// to reach only now, such as the server address it reports when it
+	// joins (natprobe.Server.ProbeSpecAt builds one). Session.PunchStart
+	// reports it once Attach has returned.
+	Probe *protocol.ProbeSpec
+	// Security vouches for the control stream: the default,
+	// protocol.ControlSecurityAuto, accepts a TLS connection and completes
+	// its handshake if it has not run yet; Declared trusts the caller's
+	// outer encryption; InsecureForTesting accepts anything and warns
+	// insecure_control_for_testing.
 	Security protocol.ControlSecurity
 }
 
@@ -103,18 +115,19 @@ type Session struct {
 	budget protocol.Budget      // the session budget of each side
 	offer  protocol.SessionMode // SessionOptions.Mode, in punch_start
 	ablate ablation.Set
-	handle *natprobe.Handle // nil in relay-only mode
-	// regAt is the natprobe registration on session time (Handle.Registered,
+	handle nat.ProbeHandle // nil without natprobe (Config.NoObserver)
+	// regAt is the natprobe registration on session time (ProbeHandle.Registered,
 	// registeredAt): the origin of the planner's FireAt axis, the one
 	// Traits.PortAnchorMs is on. Relay-only sessions have no registration and
 	// use the session's creation.
 	regAt time.Duration
 	// unobserved are the families no natprobe observer of the probe specs
-	// covers: the server cannot verify them. Relay-only sessions leave
-	// it empty; every family of theirs is unverified.
+	// covers: the server cannot verify them. Sessions without natprobe leave
+	// it empty; every family of theirs is unverified. Guarded by mu: an
+	// Attach with its own ProbeSpec recomputes it.
 	unobserved []protocol.Family
 	group      *life.Group
-	timer      Timer
+	timer      clock.Timer
 	wake       chan struct{} // capacity 1: work for the session goroutine
 	quit       chan struct{} // closed when the session ends
 	done       chan struct{}
@@ -214,7 +227,7 @@ type sessionState struct {
 	rtt       [2]rttEstimator
 	offset    [2]time.Duration
 	offsetRTT [2]time.Duration // the sample behind offset (smallest wins)
-	warn      []string
+	warn      []protocol.Warning
 	ctr       Counters
 	timeline  [timelineCap]StageMark
 	tlN       int
@@ -262,15 +275,18 @@ const timelineCap = 32
 // ID returns the session id.
 func (s *Session) ID() string { return s.id }
 
-// Start returns a copy of the punch_start pre-generated for role, for
+// PunchStart returns a copy of the punch_start pre-generated for role, for
 // announcing the session out of band (a caller may signal the provider with
-// it); the same message is written on the stream at Attach. It returns the zero
-// value for an invalid role.
-func (s *Session) Start(role protocol.Role) protocol.PunchStart {
+// it); the same message is written on the stream at Attach, with the
+// AttachOptions.Probe given there. It returns the zero value for an invalid
+// role.
+func (s *Session) PunchStart(role protocol.Role) protocol.PunchStart {
 	i, ok := roleIndex(role)
 	if !ok {
 		return protocol.PunchStart{}
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return cloneStart(s.starts[i])
 }
 
@@ -291,6 +307,17 @@ func (s *Session) Result() (Result, bool) {
 		return *s.result.Load(), true
 	default:
 		return Result{}, false
+	}
+}
+
+// Wait blocks until the session has ended — Done is closed — and returns
+// its Result, or returns ctx's cause first if ctx ends.
+func (s *Session) Wait(ctx context.Context) (Result, error) {
+	select {
+	case <-s.done:
+		return *s.result.Load(), nil
+	case <-ctx.Done():
+		return Result{}, context.Cause(ctx)
 	}
 }
 
@@ -318,16 +345,16 @@ func (s *Session) Snapshot() Snapshot {
 	return snap
 }
 
-// Abort ends the session with code (an unknown code means canceled) and
+// Abort ends the session with reason (an unknown reason means canceled) and
 // detail: each client still connected and not yet confirmed gets
-// punch_abort{by: server, code}, within one shared 500 ms deadline, and the
+// punch_abort{by: server, code: reason}, within one shared 500 ms deadline, and the
 // links are closed. It is idempotent and returns when the session's own
 // cleanup is done.
-func (s *Session) Abort(code protocol.Reason, detail string) {
-	if !code.Known() {
-		code = protocol.ReasonCanceled
+func (s *Session) Abort(reason protocol.Reason, detail string) {
+	if !reason.Known() {
+		reason = protocol.ReasonCanceled
 	}
-	s.guard("coord.abort", func() { s.finish(terminal{code: code, detail: truncate(detail, maxDetail)}) })
+	s.guard("coord.abort", func() { s.finish(terminal{code: reason, detail: truncate(detail, maxDetail)}) })
 }
 
 // acquire takes a reference for work that must finish before Done closes;
@@ -356,7 +383,7 @@ func (s *Session) release() {
 	res := s.result.Load()
 	close(s.done)
 	defer s.c.sessionGone()
-	s.c.emit(Event{Kind: EvClosed, At: res.Timings.Closed, SessionID: s.id, Code: res.Code, Detail: res.Detail,
+	s.c.emit(Event{Kind: EvClosed, At: res.Timing.Closed, SessionID: s.id, Reason: res.Reason, Detail: res.Detail,
 		Labels: s.labels, Result: res})
 	if fn := s.c.cfg.OnResult; fn != nil {
 		if err := life.Safe("coord.on_result", func() {

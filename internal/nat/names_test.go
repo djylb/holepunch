@@ -153,7 +153,7 @@ func TestCorrection(t *testing.T) {
 	if !ok || *u.Filtering != protocol.FiltEIF || *u.FilteringConf != protocol.ConfMedium || *u.PortStep != 2 || *u.PortVelocity != 30 || u.Mapping != nil {
 		t.Fatalf("update %+v", u)
 	}
-	res := protocol.PunchResult{SessionID: "s1", Role: protocol.RoleInitiator, Code: protocol.ReasonCandidateTimeout,
+	res := protocol.PunchResult{SessionID: "s1", Role: protocol.RoleInitiator, Reason: protocol.ReasonCandidateTimeout,
 		Phase: protocol.PhaseFailed, Traits: []protocol.TraitsUpdate{u}}
 	if err := res.Validate(); err != nil {
 		t.Fatalf("punch_result with the update: %v", err)

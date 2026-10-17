@@ -4,10 +4,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
-	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -59,7 +59,7 @@ func (s *Session) apply(fx effects) {
 	}
 	if s.handle != nil {
 		if fx.sink {
-			nat.AttachSandwichSink(s.handle, s.onSandwich)
+			s.handle.AttachSandwichSink(s.onSandwich)
 		}
 		if fx.extend > 0 {
 			s.handle.Extend(fx.extend)
@@ -237,7 +237,7 @@ func (s *Session) handleFrame(r int, f controlwire.Frame) {
 		return
 	}
 	role := roleOf(r)
-	m, err := protocol.Decode(f)
+	m, err := msgframe.Decode(f)
 	if err == nil {
 		normalize(m)
 		err = protocol.CheckOrigin(m, s.id, role)
@@ -252,7 +252,7 @@ func (s *Session) handleFrame(r int, f controlwire.Frame) {
 			s.lostNow(r, err)
 			return
 		}
-		code, detail, ok := protocol.WireReason(err)
+		code, detail, ok := msgframe.Reason(err)
 		if !ok {
 			code, detail = protocol.ReasonProtocolViolation, detailUnexpected
 		}

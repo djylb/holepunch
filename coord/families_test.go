@@ -319,7 +319,7 @@ func TestUnverifiedFamily(t *testing.T) {
 		}
 	})
 	t.Run("disabled", func(t *testing.T) {
-		r := v4OnlyServer(t, func(c *Config) { c.DisableUnverifiedFamilies = true })
+		r := v4OnlyServer(t, func(c *Config) { c.Targets = TargetsVerifiedOnly })
 		p := r.pair(SessionOptions{})
 		for i := range 2 {
 			p.report(i, v6Host(i), fam(i, simclient.OpenTraits))
@@ -341,11 +341,11 @@ func TestUnverifiedFamily(t *testing.T) {
 		}
 	})
 	t.Run("disabled, v6 only", func(t *testing.T) {
-		r := v4OnlyServer(t, func(c *Config) { c.DisableUnverifiedFamilies = true })
+		r := v4OnlyServer(t, func(c *Config) { c.Targets = TargetsVerifiedOnly })
 		p := r.pair(SessionOptions{})
 		p.report(0, v6Host(0))
 		p.report(1, v6Host(1))
-		if res := r.wait(p.s); res.Code != protocol.ReasonNoCommonFamily {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonNoCommonFamily {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -359,11 +359,11 @@ func TestNoCommonFamily(t *testing.T) {
 	p.report(0)
 	p.report(1, v6Host(1))
 	for i := range 2 {
-		if a := expectAbort(t, p.cl[i]); a.Code != protocol.ReasonNoCommonFamily {
+		if a := expectAbort(t, p.cl[i]); a.Reason != protocol.ReasonNoCommonFamily {
 			t.Fatalf("abort %+v", a)
 		}
 	}
-	if res := r.wait(p.s); res.Code != protocol.ReasonNoCommonFamily || res.Outcome != OutcomeFailed {
+	if res := r.wait(p.s); res.Reason != protocol.ReasonNoCommonFamily || res.Outcome != OutcomeFailed {
 		t.Fatalf("result %+v", res)
 	}
 }

@@ -12,7 +12,7 @@
 //     registration links and hands each session's stream to the broker.
 //   - client: the client side — opening sessions as a dialer, serving
 //     incoming sessions as a registered host — on top of
-//     holepunch.AttachSession.
+//     holepunch.Punch.
 //   - quicforward: TCP forwarding over QUIC (quic-go) on the punched UDP path,
 //     with both QUIC certificates pinned through the coordinator.
 //   - cmd/holepunchd, cmd/holepunch, cmd/holepunch-diag: the server, the

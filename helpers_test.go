@@ -7,17 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 func errClosedForTest() error { return net.ErrClosed }
 
 // newTestRuntime is a runtime with the pieces a unit test of the send gate,
 // the sockets or the dispatcher needs, as if punch_start had been accepted.
-func newTestRuntime(t testing.TB, clk Clock, netw Network) *runtime {
+func newTestRuntime(t testing.TB, clk clock.Clock, netw Network) *runtime {
 	t.Helper()
 	rt := newRuntime(context.Background(), Options{Clock: clk, Network: netw, ControlSecurity: protocol.ControlSecurityDeclared})
 	token, route := protocol.NewToken(), protocol.NewRouteID()

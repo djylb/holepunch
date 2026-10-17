@@ -5,11 +5,13 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"slices"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -19,10 +21,19 @@ import (
 // right away and closed when the session ends, even if the session ends while
 // Attach runs, as it does with internal when the coordinator fails after taking
 // the stream over. On error it is still the caller's and nothing was read or
-// written: ErrSessionDone, ErrClosed, ErrAlreadyAttached, ErrInvalidRole,
-// ErrInvalidConn (nil, typed nil, or no deadline support), a recovered panic,
-// or a *protocol.ValidationError with Reason invalid_argument and Detail
-// insecure_control when the stream is not vouched for.
+// written but a TLS handshake: ErrSessionDone, ErrClosed, ErrAlreadyAttached,
+// ErrInvalidRole, ErrInvalidConn (nil, typed nil, or no deadline support:
+// the stream needs net.Conn's deadline semantics, a deadline in the past
+// interrupting a blocked Read or Write), a
+// recovered panic, or a *protocol.ValidationError with Reason
+// invalid_argument and Detail insecure_control when the stream is not
+// vouched for, or tls_handshake when its handshake failed.
+//
+// With protocol.ControlSecurityAuto a TLS conn whose handshake has not run
+// yet — a tls.Listener's fresh conn — is handshaken first, within 10 s of
+// wall-clock time and the session's life; that is the only time Attach
+// blocks. A failed handshake leaves the conn unusable but open, still the
+// caller's to close.
 func (s *Session) Attach(role protocol.Role, conn net.Conn, opts AttachOptions) (err error) {
 	if perr := life.Safe("coord.attach", func() { err = s.attach(role, conn, opts) }); perr != nil {
 		return fmt.Errorf("coord: attach: %w", perr)
@@ -33,6 +44,65 @@ func (s *Session) Attach(role protocol.Role, conn net.Conn, opts AttachOptions) 
 // connectionStater is what a TLS connection exposes.
 type connectionStater interface {
 	ConnectionState() tls.ConnectionState
+}
+
+// tlsHandshakeTimeout bounds the handshake Attach runs for a TLS conn that
+// has not completed one.
+const tlsHandshakeTimeout = 10 * time.Second
+
+// attachProbe normalizes AttachOptions.Probe as NewSession does a role's
+// ProbeSpec and checks that role r's punch_start stays valid with it. The
+// caller holds the role's claim, so nothing writes s.starts[r] meanwhile.
+func (s *Session) attachProbe(r int, p *protocol.ProbeSpec) (*protocol.ProbeSpec, error) {
+	if p == nil {
+		return nil, nil
+	}
+	spec := *p
+	spec.Observers = slices.Clone(spec.Observers)
+	spec.STUN = slices.Clone(spec.STUN)
+	if spec.V == 0 {
+		spec.V = protocol.ProbeSpecVersion
+	}
+	spec.RTTHintMs = 0
+	if s.ablate.SinglePortProbe {
+		spec = singlePortSpec(spec)
+	}
+	start := cloneStart(s.starts[r])
+	start.Probe = spec
+	if _, err := msgframe.Encode(start); err != nil {
+		return nil, fmt.Errorf("%w (%w)", argumentError("probe", "AttachOptions.Probe makes an invalid punch_start"), err)
+	}
+	return &spec, nil
+}
+
+// completeTLS completes the handshake of a ControlSecurityAuto stream that
+// has not run it yet and checks that it completed. It runs inside the
+// recover boundary of attach, which owns conn's errors.
+func (s *Session) completeTLS(conn net.Conn, sec protocol.ControlSecurity) error {
+	if sec != protocol.ControlSecurityAuto {
+		return nil
+	}
+	cs := conn.(connectionStater) // checkAttach checked it
+	if cs.ConnectionState().HandshakeComplete {
+		return nil
+	}
+	h, ok := conn.(life.TLSConn)
+	if !ok {
+		return argumentError(detailInsecureControl, "the TLS handshake of the control stream has not completed")
+	}
+	if err := life.Handshake(s.Context(), h, tlsHandshakeTimeout); err != nil {
+		if s.Context().Err() != nil {
+			if s.c.isClosed() {
+				return ErrClosed
+			}
+			return ErrSessionDone
+		}
+		return argumentError(detailTLSHandshake, "TLS handshake: %v", err)
+	}
+	if !cs.ConnectionState().HandshakeComplete {
+		return argumentError(detailInsecureControl, "the TLS handshake of the control stream has not completed")
+	}
+	return nil
 }
 
 // attach reserves the role, takes the stream over and settles the
@@ -54,7 +124,14 @@ func (s *Session) attach(role protocol.Role, conn net.Conn, opts AttachOptions) 
 	l := newLink(r, role)
 	l.insecure = insecure
 	var fx effects
-	perr := life.Safe("coord.attach", func() { fx, err = s.install(l, conn) })
+	perr := life.Safe("coord.attach", func() {
+		if l.probe, err = s.attachProbe(r, opts.Probe); err != nil {
+			return
+		}
+		if err = s.completeTLS(conn, opts.Security); err == nil {
+			fx, err = s.install(l, conn)
+		}
+	})
 	installed := s.settleRole(l)
 	switch {
 	case l.conn == nil:
@@ -86,9 +163,8 @@ func checkAttach(role protocol.Role, conn net.Conn, opts AttachOptions) (r int, 
 		return 0, false, ErrInvalidConn
 	}
 	switch opts.Security {
-	case protocol.ControlSecurityUnknown:
-		cs, ok := conn.(connectionStater)
-		if !ok || !cs.ConnectionState().HandshakeComplete {
+	case protocol.ControlSecurityAuto:
+		if _, ok := conn.(connectionStater); !ok {
 			return 0, false, argumentError(detailInsecureControl, "the control stream is not TLS and not vouched for")
 		}
 	case protocol.ControlSecurityDeclared:
@@ -174,6 +250,12 @@ func (s *Session) commitAttach(l *link, now time.Time) effects {
 
 	var fx effects
 	other := st.links[1-r]
+	if l.probe != nil {
+		s.starts[r].Probe = *l.probe
+		if s.handle != nil {
+			s.unobserved = unobservedFamilies([2]protocol.ProbeSpec{s.starts[0].Probe, s.starts[1].Probe})
+		}
+	}
 	start := cloneStart(s.starts[r])
 	if other != nil {
 		start.Timeouts.SummaryWaitMs = summaryWaitMs(0, s.to, s.ttl)

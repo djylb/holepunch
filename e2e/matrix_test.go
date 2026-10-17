@@ -86,7 +86,7 @@ func (cr *cellRun) checkResources() []string {
 	for i := range 2 {
 		h := cr.sides[i].host
 		if n := h.OpenSockets(); n != want[h] {
-			v = append(v, fmt.Sprintf("%s: %d sockets open after AttachSession returned, want %d", roles[i], n, want[h]))
+			v = append(v, fmt.Sprintf("%s: %d sockets open after Punch returned, want %d", roles[i], n, want[h]))
 		}
 	}
 	if r.out[0].ok() && r.out[1].ok() && !r.crashed[0] && !r.crashed[1] {

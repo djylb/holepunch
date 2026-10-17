@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // drive runs fn — Run or Hairpin — in a goroutine and, whenever that

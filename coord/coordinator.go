@@ -17,7 +17,7 @@ import (
 
 // Coordinator timings.
 const (
-	housekeepEvery = 10 * time.Second // quota table, memory TTL and Registry sweeps
+	housekeepEvery = 10 * time.Second // quota table and memory TTL sweeps
 	closeBound     = 3 * time.Second  // Close's internal bound
 	memorySweepMax = 1024             // memory entries scanned per housekeeping round
 )
@@ -166,7 +166,7 @@ func (c *Coordinator) Memory() StrategyMemory { return c.set.memory }
 // return ErrClosed afterwards.
 //
 // Close returns nil, or what went wrong, in the order of the shutdown's steps:
-// a panic as a *life.PanicError, and ErrShutdownTimeout when sessions or
+// a panic as a *holepunch.PanicError, and ErrShutdownTimeout when sessions or
 // goroutines stuck in user code were left behind (counted in Stats.Stuck). A
 // single failure is returned as it is, several are joined (errors.Join). A
 // panic never reaches the caller and skips no later step: it is also counted in
@@ -326,8 +326,5 @@ func (c *Coordinator) sweep() {
 	c.limiter.sweep(now)
 	if m, ok := c.set.memory.(sweeper); ok {
 		m.Sweep(now, memorySweepMax)
-	}
-	if reg := c.cfg.Registry; reg != nil && !c.cfg.DisableRegistrySweep {
-		reg.Sweep(now)
 	}
 }

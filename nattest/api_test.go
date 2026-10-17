@@ -23,7 +23,7 @@ var exportedAPI = []string{
 	"NoTimeout", "Open", "PerDestIP", "PerSourcePort", "Preserve", "PreserveThenRandom", "PreserveThenSequential",
 	"Random", "RoundRobin", "Sequential", "SingleExit",
 	// functions
-	"CGNAT", "FullCone", "IsSTUN", "NewNetwork", "Pool", "PortRestricted", "PublicFW", "PublicOpen",
+	"CGNAT", "FullCone", "NewNetwork", "Pool", "PortRestricted", "PublicFW", "PublicOpen",
 	"RestrictedCone", "SymmetricPreserveRandom", "SymmetricRandom", "SymmetricSeq",
 	"WithClock", "WithCoreHops", "WithCoreLink", "WithEventLog", "WithSeed",
 	// methods

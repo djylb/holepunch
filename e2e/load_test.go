@@ -17,9 +17,10 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/coord"
 	"github.com/djylb/holepunch/internal/ablation"
+	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
@@ -140,13 +141,13 @@ func (s *scripted) intercept(cw *controlwire.Conn, f controlwire.Frame) bool {
 	if f.Type != controlwire.TypePing {
 		return false
 	}
-	p, err := protocol.Unmarshal[protocol.Ping](f)
+	p, err := msgframe.Unmarshal[protocol.Ping](f)
 	if err != nil {
 		return true
 	}
 	at := f.At
 	_ = cw.SendFunc(controlwire.TypePong, func(now time.Time) ([]byte, error) {
-		fr, err := protocol.Marshal(protocol.PongFor(p, at, now))
+		fr, err := msgframe.Encode(protocol.PongFor(p, at, now))
 		return fr.Payload, err
 	})
 	return true
@@ -169,7 +170,7 @@ func (s *scripted) next(ctx context.Context, typ controlwire.Type) (controlwire.
 }
 
 func (s *scripted) send(ctx context.Context, m protocol.Message) error {
-	f, err := protocol.Marshal(m)
+	f, err := msgframe.Encode(m)
 	if err != nil {
 		return err
 	}
@@ -184,7 +185,7 @@ func (s *scripted) run(ctx context.Context, peer netip.AddrPort, park <-chan str
 	if err != nil {
 		return err
 	}
-	start, err := protocol.Unmarshal[protocol.PunchStart](f)
+	start, err := msgframe.Unmarshal[protocol.PunchStart](f)
 	if err != nil {
 		return err
 	}
@@ -206,7 +207,7 @@ func (s *scripted) run(ctx context.Context, peer netip.AddrPort, park <-chan str
 	if f, err = s.next(ctx, controlwire.TypeProbeSummary); err != nil {
 		return err
 	}
-	sum, err := protocol.Unmarshal[protocol.ProbeSummary](f)
+	sum, err := msgframe.Unmarshal[protocol.ProbeSummary](f)
 	if err != nil {
 		return err
 	}
@@ -225,7 +226,7 @@ func (s *scripted) run(ctx context.Context, peer netip.AddrPort, park <-chan str
 	if f, err = s.next(ctx, controlwire.TypePunchGo); err != nil {
 		return err
 	}
-	g, err := protocol.Unmarshal[protocol.PunchGo](f)
+	g, err := msgframe.Unmarshal[protocol.PunchGo](f)
 	if err != nil {
 		return err
 	}
@@ -268,7 +269,7 @@ const (
 )
 
 // TestLoadControlPlane drives 1000 sessions of scripted clients through the
-// coordinator (relay-only mode, so that no UDP is involved) over 2000 nattest
+// coordinator (NoObserver mode, so that no UDP is involved) over 2000 nattest
 // pipes, 100 new sessions a second: goroutines per session, resident memory,
 // dispatch latency of summary and go, NewSession throughput, zero wakeups
 // of idle sessions, and nothing left at the end.
@@ -276,7 +277,7 @@ func TestLoadControlPlane(t *testing.T) {
 	n := loadN(t)
 	net0 := nattest.NewNetwork(nattest.WithEventLog(0))
 	defer func() { _ = net0.Close() }()
-	co, err := coord.New(coord.Config{AllowUnverifiedTargets: true, Timeouts: e2eTimeouts(),
+	co, err := coord.New(coord.Config{NoObserver: true, Timeouts: e2eTimeouts(),
 		TTL:    coord.TTLConfig{BindTimeout: 30 * time.Second, ReadyTimeout: 15 * time.Second},
 		Limits: coord.Limits{NewSessions: coord.Rate{PerSec: 1000, Burst: 1000}, MaxPending: 4096}})
 	if err != nil {

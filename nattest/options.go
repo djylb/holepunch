@@ -1,6 +1,6 @@
 package nattest
 
-import "github.com/djylb/holepunch/internal/clock"
+import "github.com/djylb/holepunch/clock"
 
 // Option configures [NewNetwork].
 type Option func(*options)

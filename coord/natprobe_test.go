@@ -14,10 +14,10 @@ import (
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/internal/probe"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // udpClient is a client's UDP side for the natprobe tests: sockets on a
@@ -332,8 +332,8 @@ func ctxShort(t *testing.T) context.Context {
 func TestSandwichRegistrationOutlivesReadyWait(t *testing.T) {
 	var reg *natprobe.Registry
 	r := newRig(t, func(c *Config) {
-		reg = natprobe.NewRegistry(natprobe.RegistryConfig{Clock: c.Clock.Now})
-		c.Registry, c.AllowUnverifiedTargets = reg, false
+		reg = natprobe.NewRegistry(natprobe.RegistryConfig{Clock: c.Clock, MaxEntries: 1})
+		c.Registry, c.NoObserver = reg, false
 		c.TTL.ReadyTimeout = maxReady
 	})
 	s := r.session(SessionOptions{})
@@ -347,8 +347,11 @@ func TestSandwichRegistrationOutlivesReadyWait(t *testing.T) {
 	r.clk.Advance(4900 * time.Millisecond) // just inside the probing deadline
 	sums := p.summaries()
 	r.clk.Advance(5700 * time.Millisecond) // past the first expiry, inside the ready wait
-	if n := reg.Sweep(r.clk.Now()); n != 0 || reg.Len() != 1 {
-		t.Fatalf("registration expired: swept %d, %d left", n, reg.Len())
+	// A full Registry drops its expired entries before refusing: a live
+	// one keeps the only place.
+	other := nat.Registration{SessionID: "other", Route: protocol.RouteID{9}, Token: protocol.Token{9}}
+	if _, err := nat.RegisterProbe(reg, other); !errors.Is(err, natprobe.ErrRegistryFull) || reg.Len() != 1 {
+		t.Fatalf("registration expired: %v, %d left", err, reg.Len())
 	}
 	for i := range 2 {
 		send(t, p.cl[i], simclient.Ready(sums[i], roleOf(i), 1))
@@ -414,12 +417,12 @@ func TestEarlyVerdictOnMeasuredRandom(t *testing.T) {
 		send(t, p.cl[i], &reps[i])
 	}
 	for i := range 2 {
-		if a := expectAbort(t, p.cl[i]); a.Code != protocol.ReasonHardSymmetricRandom {
+		if a := expectAbort(t, p.cl[i]); a.Reason != protocol.ReasonHardSymmetricRandom {
 			t.Fatalf("%s: abort %+v", roleOf(i), a)
 		}
 	}
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonHardSymmetricRandom || len(res.Rounds) != 0 {
+	if res.Reason != protocol.ReasonHardSymmetricRandom || len(res.Rounds) != 0 {
 		t.Fatalf("result %+v", res)
 	}
 	in := cl.input(t)
@@ -495,12 +498,12 @@ func TestSeqRndVerdict(t *testing.T) {
 				p.windowEnd(i, 2, fired(30))
 			}
 			for i := range 2 {
-				if a := expectAbort(t, p.cl[i]); a.Code != c.want {
+				if a := expectAbort(t, p.cl[i]); a.Reason != c.want {
 					t.Fatalf("%s: abort %+v, want %s", roleOf(i), a, c.want)
 				}
 			}
-			if res := r.wait(p.s); res.Code != c.want || len(res.Rounds) != 2 {
-				t.Fatalf("result %s after %d rounds", res.Code, len(res.Rounds))
+			if res := r.wait(p.s); res.Reason != c.want || len(res.Rounds) != 2 {
+				t.Fatalf("result %s after %d rounds", res.Reason, len(res.Rounds))
 			}
 		})
 	}
@@ -691,7 +694,7 @@ func TestRemapPushedAfterEcho(t *testing.T) {
 	primary := nat.SocketID(u4, nat.IndexPrimary)
 	udp[1].host = n.PublicHost() // the same client, now at another address
 	udp[1].probeFrom(obs, primary, nil)
-	var slot natprobe.ServerObservation
+	var slot nat.Observation
 	eventually(t, "the moved mapping", func() bool {
 		for _, o := range p.s.handle.Observations(protocol.RoleResponder) {
 			if o.Socket == primary && o.Observer == obs.ID && o.Changes > 0 {

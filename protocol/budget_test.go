@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 )
 
 func TestBudgetConstants(t *testing.T) {
@@ -380,14 +380,19 @@ func TestTraitsPredicates(t *testing.T) {
 }
 
 // TestDependencyRules checks the import rules of this module's packages:
-// protocol → std + controlwire; controlwire → std + internal/life;
-// internal/life → std.
+// protocol → std + internal/controlwire; internal/controlwire → std +
+// internal/life; internal/life and the standalone tool packages (stun,
+// udpsock, hostaddr, clock) → std.
 func TestDependencyRules(t *testing.T) {
 	const module = "github.com/djylb/holepunch"
 	allowed := map[string][]string{
-		"protocol":      {module + "/controlwire"},
-		"controlwire":   {module + "/internal/life", module + "/internal/faultinject"},
-		"internal/life": nil,
+		"protocol":             {module + "/internal/controlwire"},
+		"internal/controlwire": {module + "/internal/life", module + "/internal/faultinject"},
+		"internal/life":        nil,
+		"stun":                 nil,
+		"udpsock":              nil,
+		"hostaddr":             nil,
+		"clock":                nil,
 	}
 	for dir, extra := range allowed {
 		files, err := filepath.Glob(filepath.Join("..", dir, "*.go"))

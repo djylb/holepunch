@@ -22,7 +22,7 @@ func TestRefreshAnchor(t *testing.T) {
 	so := newSoloOn(t, w, seq.Host(), nil)
 	var mu sync.Mutex
 	var got []nat.SandwichEvent
-	nat.AttachSandwichSink(so.s.h, func(ev nat.SandwichEvent) {
+	so.s.h.AttachSandwichSink(func(ev nat.SandwichEvent) {
 		mu.Lock()
 		got = append(got, ev)
 		mu.Unlock()

@@ -9,13 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/probe"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Probing constants.
@@ -329,7 +329,7 @@ func (rt *runtime) writeReport(bound, unprobed []*famState) error {
 		Families:  reports,
 		Clock:     clk,
 		Transport: protocol.Transport{Mode: rt.opts.TransportMode, Data: rt.opts.TransportData},
-		Mode:      acceptedMode(rt.start.Mode, rt.opts.Mode),
+		Mode:      acceptedMode(rt.start.Mode, rt.opts.AcceptBackground),
 	}
 	startAt := rt.startAt
 	if err := rt.ctl.sendBuilt(controlwire.TypeProbeReport, func(now time.Time) protocol.Message {
@@ -353,8 +353,8 @@ type famFailure struct {
 
 // acceptedMode is the mode a client accepts: background only when
 // the server offered it and the caller asked for it.
-func acceptedMode(offer, local protocol.SessionMode) protocol.SessionMode {
-	if offer == protocol.ModeBackground && local == protocol.ModeBackground {
+func acceptedMode(offer protocol.SessionMode, accept bool) protocol.SessionMode {
+	if offer == protocol.ModeBackground && accept {
 		return protocol.ModeBackground
 	}
 	return ""

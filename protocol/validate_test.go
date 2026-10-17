@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 )
 
 // sample returns a fresh copy of the sample message of type T.
@@ -189,8 +189,8 @@ func TestValidateProbeReport(t *testing.T) {
 		{"caps_families_3", with(func(m *ProbeReport) { m.Caps.Families = make([]FamilyCaps, 3) }), false, "", "caps.families"},
 		{"transport_mode_16", with(func(m *ProbeReport) { m.Transport.Mode = strings.Repeat("q", 16) }), true, "", ""},
 		{"transport_mode_17", with(func(m *ProbeReport) { m.Transport.Mode = strings.Repeat("q", 17) }), false, "", "transport.mode"},
-		{"transport_data_8k", with(func(m *ProbeReport) { m.Transport.Data = strings.Repeat("d", 8<<10) }), true, "", ""},
-		{"transport_data_8k1", with(func(m *ProbeReport) { m.Transport.Data = strings.Repeat("d", 8<<10+1) }), false, "", "transport"},
+		{"transport_data_8k", with(func(m *ProbeReport) { m.Transport.Data = make([]byte, 8<<10) }), true, "", ""},
+		{"transport_data_8k1", with(func(m *ProbeReport) { m.Transport.Data = make([]byte, 8<<10+1) }), false, "", "transport"},
 	})
 }
 
@@ -212,7 +212,7 @@ func TestValidateSummaryAndPlans(t *testing.T) {
 		{"shared_families_dup", with(func(m *ProbeSummary) { m.Pair.SharedFamilies = repeat(FamilyUDP4, 2) }), false, "", "pair.shared_families[1]"},
 		{"view_families_3", with(func(m *ProbeSummary) { m.Self.Families = repeat(m.Self.Families[0], 3) }), false, "", "self.families"},
 		{"shared_families_3", with(func(m *ProbeSummary) { m.Pair.SharedFamilies = repeat(FamilyUDP4, 3) }), false, "", "pair.shared_families"},
-		{"peer_data_8k1", with(func(m *ProbeSummary) { m.Transport.PeerData = strings.Repeat("d", 8<<10+1) }), false, "", "transport"},
+		{"peer_data_8k1", with(func(m *ProbeSummary) { m.Transport.PeerData = make([]byte, 8<<10+1) }), false, "", "transport"},
 		{"rounds_max_0", with(func(m *ProbeSummary) { m.Plan.RoundsMax = 0 }), false, "", "plan.rounds_max"},
 		{"rounds_max_9_clamped", with(func(m *ProbeSummary) { m.Plan.RoundsMax = 9 }), true, "", ""},
 		{"plan_id_65", with(func(m *ProbeSummary) { m.Plan.ID = strings.Repeat("p", 65) }), false, "", "plan.id"},
@@ -358,9 +358,9 @@ func TestValidateAssistAbort(t *testing.T) {
 			m.Kind, m.Targets, m.Source = AssistPeerTargets, []netip.AddrPort{{}}, "x"
 		}), true, "", ""},
 		{"abort_by", abort(func(m *Abort) { m.By = "" }), false, "", "by"},
-		{"abort_code_empty_ok", abort(func(m *Abort) { m.Code = "" }), true, "", ""},
-		{"abort_code_unknown_ok", abort(func(m *Abort) { m.Code = "future_code" }), true, "", ""},
-		{"abort_code_syntax", abort(func(m *Abort) { m.Code = "Server Busy" }), false, "", "code"},
+		{"abort_code_empty_ok", abort(func(m *Abort) { m.Reason = "" }), true, "", ""},
+		{"abort_code_unknown_ok", abort(func(m *Abort) { m.Reason = "future_code" }), true, "", ""},
+		{"abort_code_syntax", abort(func(m *Abort) { m.Reason = "Server Busy" }), false, "", "code"},
 		{"abort_detail_256", abort(func(m *Abort) { m.Detail = strings.Repeat("d", 256) }), true, "", ""},
 		{"abort_detail_257", abort(func(m *Abort) { m.Detail = strings.Repeat("d", 257) }), false, "", "detail"},
 	})
@@ -438,7 +438,7 @@ func TestAssistDirections(t *testing.T) {
 		t.Fatal("second StripServerFields reported fields")
 	}
 	// A forged frame reaches the peer without the forged fields.
-	f, err := Marshal(func() Assist {
+	f, err := marshalFrame(func() Assist {
 		m := seen
 		m.From, m.Targets = RoleServer, []netip.AddrPort{ap("203.0.113.66:1")}
 		return m
@@ -450,11 +450,11 @@ func TestAssistDirections(t *testing.T) {
 		t.Fatalf("forwarded frame carries forged or local fields: %s", f.Payload)
 	}
 	// Marshal refuses what the sender may not write.
-	if _, err := Marshal(withTargets(func(m *Assist) { m.Source = "" })); !isViolation(err) {
-		t.Fatalf("Marshal(invalid server assist) = %v", err)
+	if _, err := marshalFrame(withTargets(func(m *Assist) { m.Source = "" })); !isViolation(err) {
+		t.Fatalf("marshalFrame(invalid server assist) = %v", err)
 	}
-	if _, err := Marshal(func() Assist { m := seen; m.Source = TargetsInject; return m }()); !isViolation(err) {
-		t.Fatalf("Marshal(client assist with server fields) = %v", err)
+	if _, err := marshalFrame(func() Assist { m := seen; m.Source = TargetsInject; return m }()); !isViolation(err) {
+		t.Fatalf("marshalFrame(client assist with server fields) = %v", err)
 	}
 }
 
@@ -506,8 +506,8 @@ func TestValidateResults(t *testing.T) {
 	tu := sample[PunchResult]().Traits[0]
 	checkValidate(t, []vcase{
 		{"rr_status", rr(func(m *RoundResult) { m.Status = "done" }), false, "", "status"},
-		{"rr_fatal_without_code", rr(func(m *RoundResult) { m.Status = RoundFatal; m.Code = "" }), false, "", "code"},
-		{"rr_fatal", rr(func(m *RoundResult) { m.Status = RoundFatal; m.Code = ReasonUDPBlocked; m.Path = nil }), true, "", ""},
+		{"rr_fatal_without_code", rr(func(m *RoundResult) { m.Status = RoundFatal; m.Reason = "" }), false, "", "code"},
+		{"rr_fatal", rr(func(m *RoundResult) { m.Status = RoundFatal; m.Reason = ReasonUDPBlocked; m.Path = nil }), true, "", ""},
 		{"rr_confirmed_without_path", rr(func(m *RoundResult) { m.Path = nil }), false, "", "path"},
 		{"rr_window_end", rr(func(m *RoundResult) { m.Status = RoundWindowEnd; m.Path = nil }), true, "", ""},
 		{"rr_families_3", rr(func(m *RoundResult) { m.Families = repeat(m.Families[0], 3) }), false, "", "families"},
@@ -526,11 +526,11 @@ func TestValidateResults(t *testing.T) {
 		{"pr_ok_without_evidence", pr(func(m *PunchResult) { m.Path = samplePath("") }), false, "", "path.confirmed_by"},
 		{"pr_evidence_unknown", pr(func(m *PunchResult) { m.Path = samplePath("magic") }), false, "", "path.confirmed_by"},
 		{"pr_path_kind_portmap", pr(func(m *PunchResult) { m.Path = samplePath(ConfirmedByAck); m.Path.CandKind = "portmap" }), false, "", "path.cand_kind"}, // a confirmed path is never a portmap kind
-		{"pr_fail_without_code", pr(func(m *PunchResult) { m.OK = false; m.Code = "" }), false, "", "code"},
+		{"pr_fail_without_code", pr(func(m *PunchResult) { m.OK = false; m.Reason = "" }), false, "", "code"},
 		{"pr_extra_paths", pr(func(m *PunchResult) { m.ExtraPaths = repeat(*samplePath(ConfirmedByAck), MaxPaths-1) }), true, "", ""}, // the most extra paths
 		{"pr_extra_paths_8", pr(func(m *PunchResult) { m.ExtraPaths = repeat(*samplePath(ConfirmedByAck), MaxPaths) }), false, "", "extra_paths"},
 		{"pr_extra_paths_failed", pr(func(m *PunchResult) {
-			m.OK, m.Code, m.Path, m.Phase = false, ReasonProbeTimeout, nil, PhaseFailed
+			m.OK, m.Reason, m.Path, m.Phase = false, ReasonProbeTimeout, nil, PhaseFailed
 			m.ExtraPaths = []PathInfo{*samplePath(ConfirmedByAck)}
 		}), false, "", "extra_paths"},
 		{"pr_extra_path_without_evidence", pr(func(m *PunchResult) { m.ExtraPaths = []PathInfo{*samplePath("")} }), false, "", "extra_paths[0].confirmed_by"},
@@ -539,20 +539,20 @@ func TestValidateResults(t *testing.T) {
 			p.Kind = "tunnel"
 			m.ExtraPaths = []PathInfo{p}
 		}), false, "", "extra_paths[0].kind"},
-		{"pr_fail", pr(func(m *PunchResult) { m.OK, m.Code, m.Path, m.Phase = false, ReasonProbeTimeout, nil, PhaseFailed }), true, "", ""},
+		{"pr_fail", pr(func(m *PunchResult) { m.OK, m.Reason, m.Path, m.Phase = false, ReasonProbeTimeout, nil, PhaseFailed }), true, "", ""},
 		{"pr_phase", pr(func(m *PunchResult) { m.Phase = "finished" }), false, "", "phase"},
 		{"pr_detail_257", pr(func(m *PunchResult) { m.Detail = strings.Repeat("d", 257) }), false, "", "detail"},
 		{"pr_traits_2", pr(func(m *PunchResult) { v6 := tu; v6.Family = FamilyUDP6; m.Traits = []TraitsUpdate{tu, v6} }), true, "", ""},
 		{"pr_traits_dup", pr(func(m *PunchResult) { m.Traits = repeat(tu, 2) }), false, "", "traits[1].family"},
-		{"pr_code_unknown", pr(func(m *PunchResult) { m.OK, m.Code, m.Phase = false, "probe_failed", PhaseFailed }), false, "", "code"},
+		{"pr_code_unknown", pr(func(m *PunchResult) { m.OK, m.Reason, m.Phase = false, "probe_failed", PhaseFailed }), false, "", "code"},
 		{"pr_velocity_nan", pr(func(m *PunchResult) { u := tu; u.PortVelocity = ptr(float32(math.NaN())); m.Traits = []TraitsUpdate{u} }), false, "", "traits[0].port_velocity"},
 		{"pr_traits_3", pr(func(m *PunchResult) { m.Traits = repeat(tu, 3) }), false, "", "traits"},
 		{"pr_traits_source", pr(func(m *PunchResult) { u := tu; u.Source = "guess"; m.Traits = []TraitsUpdate{u} }), false, "", "traits[0].source"},
 		{"pr_traits_enum", pr(func(m *PunchResult) { u := tu; u.Hairpin = ptr(Tri(5)); m.Traits = []TraitsUpdate{u} }), false, "", "traits[0]"},
 		{"pr_warn_8", pr(func(m *PunchResult) { m.Warn = repeat(WarnClockSkew, 8) }), true, "", ""},
 		{"pr_warn_9", pr(func(m *PunchResult) { m.Warn = repeat(WarnClockSkew, 9) }), false, "", "warn"},
-		{"pr_warn_unknown_ok", pr(func(m *PunchResult) { m.Warn = []string{"future_warning"} }), true, "", ""},
-		{"pr_warn_syntax", pr(func(m *PunchResult) { m.Warn = []string{"Clock Skew"} }), false, "", "warn[0]"},
+		{"pr_warn_unknown_ok", pr(func(m *PunchResult) { m.Warn = []Warning{"future_warning"} }), true, "", ""},
+		{"pr_warn_syntax", pr(func(m *PunchResult) { m.Warn = []Warning{"Clock Skew"} }), false, "", "warn[0]"},
 	})
 }
 

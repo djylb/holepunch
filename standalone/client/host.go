@@ -27,7 +27,8 @@ type Registration struct {
 	Metadata map[string]string // shown to the dialers
 	// TransportMode and TransportData are this side's transport offer for
 	// every incoming session (holepunch.Options).
-	TransportMode, TransportData string
+	TransportMode string
+	TransportData []byte
 }
 
 // Handler serves one incoming session. ctx ends when Serve stops or the

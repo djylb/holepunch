@@ -10,7 +10,7 @@ import (
 type Stats struct {
 	SessionsActive, SessionsTotal int64
 	ByOutcome                     [3]int64                  // succeeded, failed, aborted
-	ByCode                        map[protocol.Reason]int64 // failures by reason
+	ByReason                      map[protocol.Reason]int64 // failures by reason
 	HalfConfirmed                 int64                     // successes with only one confirmation
 	RoundsByClass                 [6]int64                  // indexed by RoundClass
 	ConfirmAtRound                [9]int64                  // 0: never confirmed; 1..8: the confirming round
@@ -42,7 +42,7 @@ type Stats struct {
 type counters struct {
 	sessionsTotal   atomic.Int64
 	byOutcome       [3]atomic.Int64
-	byCode          [26]atomic.Int64 // in protocol.Reasons() order
+	byReason        [26]atomic.Int64 // in protocol.Reasons() order
 	halfConfirmed   atomic.Int64
 	roundsByClass   [6]atomic.Int64
 	confirmAtRound  [9]atomic.Int64
@@ -90,8 +90,8 @@ func (c *counters) record(res *Result) {
 	if o := int(res.Outcome) - 1; o >= 0 && o < len(c.byOutcome) {
 		c.byOutcome[o].Add(1)
 	}
-	if i := reasonIndex(res.Code); i >= 0 {
-		c.byCode[i].Add(1)
+	if i := reasonIndex(res.Reason); i >= 0 {
+		c.byReason[i].Add(1)
 	}
 	if res.Outcome == OutcomeSucceeded && res.Confirmed[0] != res.Confirmed[1] {
 		c.halfConfirmed.Add(1)
@@ -111,8 +111,8 @@ func (c *counters) record(res *Result) {
 			c.rttHist[histIndex(float64(d.Milliseconds()), []float64{20, 50, 100, 200, 400, 800, 1600})].Add(1)
 		}
 	}
-	if !res.Timings.FirstConfirm.IsZero() {
-		d := res.Timings.FirstConfirm.Sub(res.Timings.Created)
+	if !res.Timing.FirstConfirm.IsZero() {
+		d := res.Timing.FirstConfirm.Sub(res.Timing.Created)
 		c.timeToConfirm[histIndex(d.Seconds(), []float64{0.5, 1, 2, 4, 8, 12, 16})].Add(1)
 	}
 	if res.MemoryHit {
@@ -136,7 +136,7 @@ func (c *counters) record(res *Result) {
 func (c *counters) snapshot() Stats {
 	s := Stats{
 		SessionsTotal:   c.sessionsTotal.Load(),
-		ByCode:          map[protocol.Reason]int64{},
+		ByReason:        map[protocol.Reason]int64{},
 		HalfConfirmed:   c.halfConfirmed.Load(),
 		MemoryHits:      c.memoryHits.Load(),
 		AssistForwarded: c.assistForwarded.Load(),
@@ -159,8 +159,8 @@ func (c *counters) snapshot() Stats {
 		s.ByOutcome[i] = c.byOutcome[i].Load()
 	}
 	for i, r := range protocol.Reasons() {
-		if n := c.byCode[i].Load(); n > 0 {
-			s.ByCode[r] = n
+		if n := c.byReason[i].Load(); n > 0 {
+			s.ByReason[r] = n
 		}
 	}
 	for i := range c.roundsByClass {

@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/leak"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 var lo4 = netip.MustParseAddr("127.0.0.1")
@@ -251,7 +251,6 @@ func TestNewServerValidation(t *testing.T) {
 		"negative port":    {Registry: reg, Groups: loGroup(), BasePort: -1},
 		"extra sockets":    {Registry: reg, Groups: loGroup(), ExtraSockets: 17},
 		"readers":          {Registry: reg, Groups: loGroup(), ReadersPerListener: 9},
-		"sweep":            {Registry: reg, Groups: loGroup(), SweepInterval: -1},
 		"table":            {Registry: reg, Groups: loGroup(), SourceTableSize: 3},
 		"table too large":  {Registry: reg, Groups: loGroup(), SourceTableSize: math.MaxInt}, // validated, never preallocated
 		"invalid bind":     {Registry: reg, Groups: []ObserverGroup{{}}},
@@ -702,25 +701,6 @@ func (c *failingConn) ReadFrom([]byte) (int, net.Addr, error) {
 func (c *failingConn) Close() error {
 	c.closed.Store(true)
 	return c.PacketConn.Close()
-}
-
-// The standalone sweeper removes expired entries and stops with Close.
-func TestServerSweeper(t *testing.T) {
-	reg := NewRegistry(RegistryConfig{})
-	s := startServer(t, ServerConfig{Registry: reg, SweepInterval: 10 * time.Millisecond})
-	if _, err := reg.Register(Registration{SessionID: "s", Route: rt(1), Token: tok(1), TTL: 20 * time.Millisecond}); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(waitBound(t))
-	for reg.Len() != 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if reg.Len() != 0 {
-		t.Fatal("not swept")
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // Concurrent Close returns one result and leaves nothing behind.

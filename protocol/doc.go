@@ -6,9 +6,9 @@
 //
 // # Encoding and checking
 //
-// Marshal, Unmarshal and Decode convert between controlwire frames and
-// messages; the frame-type table itself (numbers, caps, directions) lives in
-// controlwire. Decoding enforces the JSON rules of a control payload — a
+// Marshal, Unmarshal and Decode convert between messages and the JSON
+// payloads of their frames; MessageType names a frame's type and its payload
+// cap. Decoding enforces the JSON rules of a control payload — a
 // UTF-8 object nested at most 8 levels — and then Validate, the structural
 // check: required fields, enumeration values, string and list limits. The
 // list limits of the messages a client sends are checked before decoding as
@@ -33,5 +33,6 @@
 // and ProbeSummary log without key material or transport data. Only the JSON
 // encoding carries them.
 //
-// protocol depends only on the standard library and controlwire.
+// protocol depends only on the standard library and the module's frame
+// table.
 package protocol

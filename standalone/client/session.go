@@ -2,13 +2,11 @@ package client
 
 import (
 	"maps"
-	"net"
 	"strings"
 
 	"github.com/djylb/holepunch"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone/proto"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Session is a punched session: the UDP path to the peer and what the server
@@ -17,17 +15,16 @@ type Session struct {
 	info   proto.SessionInfo
 	role   protocol.Role
 	hp     *holepunch.Session
-	pc     net.PacketConn
+	pc     holepunch.FilteredConn
 	report func(proto.Transport) error // nil for sessions opened as a dialer
 }
 
 func newSession(info proto.SessionInfo, role protocol.Role, hp *holepunch.Session, report func(proto.Transport) error) *Session {
-	rf := hp.ResidualFilter()
 	return &Session{
 		info:   info,
 		role:   role,
 		hp:     hp,
-		pc:     udpwire.DropResidual(hp.PacketConn(), rf.Codec, rf.Window),
+		pc:     hp.FilterResidual(hp.PacketConn()),
 		report: report,
 	}
 }
@@ -61,11 +58,11 @@ func (s *Session) Diagnostics() holepunch.Diagnostics { return s.hp.Diagnostics(
 // raw winning socket, which a QUIC upper layer takes.
 func (s *Session) Holepunch() *holepunch.Session { return s.hp }
 
-// PacketConn returns the winning socket wrapped in udpwire.DropResidual, so
-// that a non-QUIC upper layer never sees the late handshake packets of the
-// punch (holepunch Session.ResidualFilter). Closing it closes the socket;
+// PacketConn returns the winning socket wrapped by holepunch's
+// Session.FilterResidual, so that a non-QUIC upper layer never sees the late
+// handshake packets of the punch. Closing it closes the socket;
 // close the Session instead, which also releases a port mapping.
-func (s *Session) PacketConn() net.PacketConn { return s.pc }
+func (s *Session) PacketConn() holepunch.FilteredConn { return s.pc }
 
 // ReportTransport tells the server, over the host's registration link,
 // whether the upper-layer transport came up on the punched path. It is

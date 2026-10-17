@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // TestOpenerProbe checks the flow opener on the server: a probe that comes as

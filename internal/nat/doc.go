@@ -1,5 +1,5 @@
 // Package nat is the NAT observation model that the client prober
-// (internal/probe) and natprobe's authoritative merge (natprobe.Handle.Merge)
+// (internal/probe) and natprobe's authoritative merge (nat.ProbeHandle.Merge)
 // share.
 //
 // It has four parts:
@@ -20,9 +20,10 @@
 //     hand to the peer, verified by the return-path cookie or allowed by
 //     the self-reported endpoint constraints (anti-reflection).
 //   - DisplayName, Fingerprint and ClassBits for people, logs and
-//     coord.StrategyKey; Correction for punch_result.traits; and
-//     SandwichEvent with AttachSandwichSink, the natprobe → coord bridge of
-//     sandwich probes.
+//     coord.StrategyKey; Correction for punch_result.traits.
+//   - The natprobe → coord bridge: RegisterProbe, ProbeHandle and their
+//     types (Registration, Observation, MergeDiag, SandwichEvent), so that
+//     a session's registration stays out of natprobe's public API.
 //
 // # Concurrency
 //
@@ -35,7 +36,7 @@
 //
 // The package does no I/O and starts no goroutine. Tables are plain memory
 // owned by whoever created them. The only package-level variable is
-// AttachSandwichSink, which natprobe assigns once in its init.
+// RegisterProbe, which natprobe assigns once in its init.
 //
 // The package depends on protocol and the standard library only.
 package nat

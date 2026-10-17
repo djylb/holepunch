@@ -1,7 +1,6 @@
 package probe
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -14,10 +13,11 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/stun"
 )
 
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
@@ -503,17 +503,15 @@ func (s *sim) settle() {
 // stunReply answers a Binding Request with the request's mapped address,
 // or with an IPv6 address when stunWrongV6 is set.
 func (s *sim) stunReply(req []byte, ext netip.AddrPort) {
-	if len(req) < stunHeaderSize {
+	txid, ok := stun.ParseBindingRequest(req)
+	if !ok {
 		return
 	}
-	var txid [12]byte
-	copy(txid[:], req[8:20])
 	mapped := ext
 	if s.stunWrongV6 {
 		mapped = netip.MustParseAddrPort("[2001:db8::5]:40000")
 	}
-	resp := stunMsg(stunBindingSuccess, txid, stunAttr(attrXORMapped, addrValue(mapped, true, txid)))
-	s.sendToClient(resp, stunAddr, ext)
+	s.sendToClient(stun.AppendBindingResponse(nil, txid, mapped), stunAddr, ext)
 }
 
 // nextEvent returns the earliest pending event time, or -1.
@@ -657,56 +655,4 @@ func abs(v int) int {
 		return -v
 	}
 	return v
-}
-
-// STUN message builders shared by the sim and the codec tests.
-
-func stunMsg(typ uint16, txid [12]byte, attrs ...[]byte) []byte {
-	var body []byte
-	for _, a := range attrs {
-		body = append(body, a...)
-	}
-	m := make([]byte, stunHeaderSize, stunHeaderSize+len(body))
-	binary.BigEndian.PutUint16(m[0:], typ)
-	binary.BigEndian.PutUint16(m[2:], uint16(len(body)))
-	binary.BigEndian.PutUint32(m[4:], stunMagic)
-	copy(m[8:], txid[:])
-	return append(m, body...)
-}
-
-func stunAttr(typ uint16, v []byte) []byte {
-	a := make([]byte, 4, 4+len(v)+3)
-	binary.BigEndian.PutUint16(a[0:], typ)
-	binary.BigEndian.PutUint16(a[2:], uint16(len(v)))
-	a = append(a, v...)
-	for len(a)%4 != 0 {
-		a = append(a, 0)
-	}
-	return a
-}
-
-func addrValue(a netip.AddrPort, xor bool, txid [12]byte) []byte {
-	var key [16]byte
-	binary.BigEndian.PutUint32(key[:], stunMagic)
-	copy(key[4:], txid[:])
-	port := a.Port()
-	if xor {
-		port ^= uint16(stunMagic >> 16)
-	}
-	var ip []byte
-	fam := byte(stunFamilyV4)
-	if a.Addr().Is4() {
-		b := a.Addr().As4()
-		ip = b[:]
-	} else {
-		b := a.Addr().As16()
-		ip, fam = b[:], stunFamilyV6
-	}
-	if xor {
-		for i := range ip {
-			ip[i] ^= key[i]
-		}
-	}
-	v := []byte{0, fam, byte(port >> 8), byte(port)}
-	return append(v, ip...)
 }

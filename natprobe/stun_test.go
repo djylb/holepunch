@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/stun"
 )
 
 func TestResolveSTUN(t *testing.T) {
@@ -72,7 +74,7 @@ func TestResolveSTUN(t *testing.T) {
 	if got, err := ResolveSTUN(context.Background(), lookup, many); err != nil || len(got) != maxSTUNPerFamily || got[0].Addr() != netip.MustParseAddr("198.51.100.10") {
 		t.Fatalf("%v, %v", got, err)
 	}
-	if n := len(DefaultSTUNServers()); n < maxSTUNPerFamily {
+	if n := len(stun.DefaultServers()); n < maxSTUNPerFamily {
 		t.Fatalf("%d default servers", n)
 	}
 }

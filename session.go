@@ -9,58 +9,74 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Session is a successful hole punch: the caller owns the sockets of the
 // confirmed paths — the primary path's and, with Options.MaxPaths above 1,
-// those of the extra paths. When AttachSession
+// those of the extra paths. When Punch
 // returns it, the library has stopped reading and writing these sockets for
 // good, cleared their deadlines and restored their TTL; it never touches
 // them again. The methods are safe for concurrent use.
 type Session struct {
 	result   Result
 	diag     Diagnostics
-	conn     net.PacketConn   // the primary path's socket
-	extra    []net.PacketConn // the extra paths' sockets, in the order of Result.ExtraPaths
-	residual ResidualFilter
-	releases []func() error // the handed-over sockets' port-mapping releases
+	conns    []net.PacketConn // every distinct socket of the paths, the primary path's first
+	codec    *udpwire.Codec   // the session codec, every confirmed remote bound: recognises residual packets
+	releases []func() error   // the handed-over sockets' port-mapping releases
 
 	closeOnce sync.Once
 	closeErr  error
 }
 
-// PacketConn returns the primary path's socket, exactly as
-// Network.ListenPacket returned it (no wrapper, so optional capabilities such
-// as *net.UDPConn's stay available). Close the Session rather than the conn
-// directly, so that a port mapping on it is released too.
-func (s *Session) PacketConn() net.PacketConn { return s.conn }
+// PacketConn returns the primary path's socket (Result.Path.Conn), exactly
+// as Network.ListenPacket returned it: no wrapper, so optional capabilities
+// such as *net.UDPConn's stay available. Close the Session rather than the
+// conn directly, so that a port mapping on it is released too.
+func (s *Session) PacketConn() net.PacketConn { return s.conns[0] }
 
-// ExtraPacketConns returns the sockets of Result.ExtraPaths, in the same
-// order and as Network.ListenPacket returned them; empty with one path. Two
-// paths of different kinds of network — a LAN and a public path — can run
-// through one socket: the conn then appears for both (and may be
-// PacketConn's), and the caller tells their datagrams apart by the remote
-// address. Close the Session rather than these conns directly.
-func (s *Session) ExtraPacketConns() []net.PacketConn { return slices.Clone(s.extra) }
+// PacketConns returns every socket of the session's paths once, the primary
+// path's first: what an upper layer reads from. Two paths of different kinds
+// of network — a LAN and a public path — can run through one socket, which
+// then appears once here and in both paths' Path.Conn; their datagrams differ
+// by the remote address. Close the Session rather than these conns directly.
+func (s *Session) PacketConns() []net.PacketConn { return slices.Clone(s.conns) }
 
 // Result returns what the session achieved (a copy).
-func (s *Session) Result() Result { return s.result }
+func (s *Session) Result() Result { return s.result.clone() }
 
 // Diagnostics returns the session's diagnostics (a deep copy).
 func (s *Session) Diagnostics() Diagnostics { return s.diag.clone() }
 
-// ResidualFilter returns the residual-packet filter of the handover. A
-// listener whose upper layer is not QUIC — a provider serving KCP, for
-// example — must wrap each handed-over socket, so that late
-// holepunch handshake packets never reach it:
+// FilterResidual wraps pc, one of the session's sockets, so that the late
+// holepunch handshake packets still arriving after the handover — the
+// peer's retransmissions — never reach the upper layer, which might take
+// them for a new connection. An upper layer other than QUIC — KCP, a custom
+// protocol — reads through it:
 //
-//	rf := sess.ResidualFilter()
-//	pc := udpwire.DropResidual(sess.PacketConn(), rf.Codec, rf.Window)
+//	pc := sess.FilterResidual(sess.PacketConn())
 //
 // QUIC needs no wrapper: it drops these packets by their first byte.
-func (s *Session) ResidualFilter() ResidualFilter { return s.residual }
+//
+// For 10 s after the call, a datagram from a confirmed remote that
+// authenticates as a session packet is dropped and the next one read; every
+// other datagram is returned unchanged, and an upper-layer packet is dropped
+// only if it forges a GCM tag. Afterwards a read costs one atomic load more
+// than pc's. The wrapper starts no goroutine and never touches deadlines;
+// closing it closes pc. It returns nil for a nil pc.
+func (s *Session) FilterResidual(pc net.PacketConn) FilteredConn {
+	fc, _ := udpwire.DropResidual(pc, s.codec, udpwire.DefaultResidualWindow).(FilteredConn)
+	return fc
+}
+
+// FilteredConn is a socket read through Session.FilterResidual.
+type FilteredConn interface {
+	net.PacketConn
+	// Dropped returns how many residual handshake packets the filter has
+	// dropped so far.
+	Dropped() uint64
+}
 
 // Close releases the port mappings of the handed-over sockets, if any, and
 // then closes every socket of the session's paths, each once. It is
@@ -78,7 +94,7 @@ func (s *Session) Close() error {
 			errs = append(errs, rerr)
 		}
 		var closed []net.PacketConn
-		for _, c := range append([]net.PacketConn{s.conn}, s.extra...) {
+		for _, c := range s.conns {
 			if slices.ContainsFunc(closed, func(x net.PacketConn) bool { return sameConn(x, c) }) {
 				continue
 			}
@@ -118,29 +134,41 @@ func sameConn(a, b net.PacketConn) (same bool) {
 	return a == b
 }
 
-// ResidualFilter carries the parameters of udpwire.DropResidual for the
-// handed-over sockets. The remotes of every confirmed path are bound in the
-// codec (Codec.Peers()), so one filter serves them all.
-type ResidualFilter struct {
-	Codec  *udpwire.Codec // the session codec, peers bound at handover: only recognises residual packets, never answers them
-	Window time.Duration  // how long after the handover to filter (udpwire.DefaultResidualWindow)
-}
-
 // Result describes a successful session.
 type Result struct {
 	SessionID string
 	Role      protocol.Role
 	Path      Path // the primary path, on Session.PacketConn
-	// ExtraPaths are the other confirmed paths, on Session.ExtraPacketConns in
-	// the same order: at most Options.MaxPaths-1, empty with one path. The peer
-	// holds the same paths.
-	ExtraPaths       []Path
-	TransportMode    string        // the server's transport decision (probe_summary.transport.mode), equal on both sides
-	TransportData    string        // the peer's TransportData (probe_summary.transport.peer_data)
-	TransportTimeout time.Duration // timeouts.transport_timeout_ms, for the upper layer
-	Variant          string        // the winning round's RoundPlan.variant (always the server's)
-	Rounds           int           // rounds run
-	Timing           Timing
+	// ExtraPaths are the other confirmed paths: at most Options.MaxPaths-1,
+	// empty with one path. The peer holds the same paths.
+	ExtraPaths        []Path
+	TransportMode     string        // the server's transport decision, equal on both sides
+	PeerTransportData []byte        // the peer's Options.TransportData
+	TransportTimeout  time.Duration // timeouts.transport_timeout_ms, for the upper layer
+	Variant           string        // the winning round's RoundPlan.variant (always the server's)
+	Rounds            int           // rounds run
+	Timing            Timing
+}
+
+// Paths returns every confirmed path, the primary one first.
+func (r Result) Paths() []Path { return append([]Path{r.Path}, r.ExtraPaths...) }
+
+func (r Result) clone() Result {
+	r.Path = r.Path.clone()
+	r.ExtraPaths = slices.Clone(r.ExtraPaths)
+	for i := range r.ExtraPaths {
+		r.ExtraPaths[i] = r.ExtraPaths[i].clone()
+	}
+	r.PeerTransportData = slices.Clone(r.PeerTransportData)
+	return r
+}
+
+func (p Path) clone() Path {
+	if p.PortMapping != nil {
+		pm := *p.PortMapping
+		p.PortMapping = &pm
+	}
+	return p
 }
 
 // Path is one confirmed path of a session: its socket's address, the
@@ -149,6 +177,7 @@ type Result struct {
 // alive. A caller that must not run over a tunnel checks Kind, or excludes
 // overlay paths up front (Options.ExcludeOverlay).
 type Path struct {
+	Conn        net.PacketConn // the path's socket, owned by the Session
 	Family      protocol.Family
 	Kind        protocol.PathKind         // public, lan, overlay or portmap
 	LocalAddr   netip.AddrPort            // concrete local address; wildcards replaced by the interface address
@@ -163,23 +192,26 @@ type Timing struct{ Probe, SummaryWait, GoWait, Punch, Handover, Total time.Dura
 
 // KeepaliveAdvice is the keepalive the upper layer should run on a
 // confirmed path: both sides send every Interval and declare the path dead
-// after Timeout without inbound traffic. Interval is within [5 s, 30 s] and
+// after Timeout without inbound traffic. Interval is within [5 s, 25 s] and
 // Timeout = 3 × Interval.
 type KeepaliveAdvice struct {
 	Interval            time.Duration
 	Timeout             time.Duration
-	MappingLifetimeHint time.Duration // the estimated NAT mapping idle timeout; 0 without NAT evidence
-	Reason              string        // no_nat | eim_known | restricted_or_edm | cgnat | portmapped | unknown
+	MappingLifetimeHint time.Duration   // the estimated NAT mapping idle timeout; 0 without NAT evidence
+	Reason              KeepaliveReason // what set the interval
 }
+
+// KeepaliveReason is the evidence a KeepaliveAdvice rests on.
+type KeepaliveReason string
 
 // Keepalive reasons.
 const (
-	keepNoNAT      = "no_nat"
-	keepEIMKnown   = "eim_known"
-	keepRestricted = "restricted_or_edm"
-	keepCGNAT      = "cgnat"
-	keepPortmapped = "portmapped"
-	keepUnknown    = "unknown"
+	KeepaliveNoNAT      KeepaliveReason = "no_nat"            // no NAT on the path, at most a stateful firewall
+	KeepaliveEIMKnown   KeepaliveReason = "eim_known"         // endpoint-independent NATs measured with confidence
+	KeepaliveRestricted KeepaliveReason = "restricted_or_edm" // restricted filtering or endpoint-dependent mapping
+	KeepaliveCGNAT      KeepaliveReason = "cgnat"             // carrier-grade NAT, several exits or a drifting mapping
+	KeepalivePortmapped KeepaliveReason = "portmapped"        // a port-mapping lease caps the interval
+	KeepaliveUnknown    KeepaliveReason = "unknown"           // too little evidence
 )
 
 // keepaliveFor derives the advice from the winning path: the most conservative
@@ -189,8 +221,8 @@ const (
 // UDP state outlives the NAT rows; a port-mapping lease caps the interval at a
 // third of the lease.
 func keepaliveFor(fam protocol.Family, kind protocol.PathKind, self, peer protocol.Traits, pm *protocol.PortMappingInfo) KeepaliveAdvice {
-	interval, hint, reason := 30*time.Second, time.Duration(0), keepNoNAT
-	consider := func(iv, h time.Duration, r string) {
+	interval, hint, reason := 25*time.Second, time.Duration(0), KeepaliveNoNAT
+	consider := func(iv, h time.Duration, r KeepaliveReason) {
 		if iv < interval {
 			interval, hint, reason = iv, h, r
 		}
@@ -198,31 +230,31 @@ func keepaliveFor(fam protocol.Family, kind protocol.PathKind, self, peer protoc
 	switch {
 	case kind == protocol.PathLAN || kind == protocol.PathOverlay:
 	case self.Samples == 0 || peer.Samples == 0:
-		interval, reason = 15*time.Second, keepUnknown
+		interval, reason = 15*time.Second, KeepaliveUnknown
 	default:
 		for _, t := range [2]protocol.Traits{self, peer} {
 			if t.NoNAT == protocol.TriTrue {
 				if fam == protocol.FamilyUDP6 || t.Filtering != protocol.FiltEIF {
-					consider(25*time.Second, 30*time.Second, keepNoNAT)
+					consider(25*time.Second, 30*time.Second, KeepaliveNoNAT)
 				}
 				continue
 			}
 			known := t.Mapping == protocol.MapEIM && t.MappingConf >= protocol.ConfMedium &&
 				t.FilteringConf >= protocol.ConfMedium && t.Filtering != protocol.FiltPDF && t.Filtering != protocol.FiltUnknown
 			if known {
-				consider(20*time.Second, 30*time.Second, keepEIMKnown)
+				consider(20*time.Second, 30*time.Second, KeepaliveEIMKnown)
 			} else {
-				consider(15*time.Second, 30*time.Second, keepRestricted)
+				consider(15*time.Second, 30*time.Second, KeepaliveRestricted)
 			}
 			if t.CGNAT == protocol.TriTrue || t.MultiExit || t.Drifted {
-				consider(10*time.Second, 20*time.Second, keepCGNAT)
+				consider(10*time.Second, 20*time.Second, KeepaliveCGNAT)
 			}
 		}
 	}
 	if pm != nil && pm.Lease > 0 {
 		interval = min(interval, pm.Lease/3)
-		hint, reason = pm.Lease, keepPortmapped
+		hint, reason = pm.Lease, KeepalivePortmapped
 	}
-	iv := min(max(interval, 5*time.Second), 30*time.Second)
+	iv := min(max(interval, 5*time.Second), 25*time.Second)
 	return KeepaliveAdvice{Interval: iv, Timeout: 3 * iv, MappingLifetimeHint: hint, Reason: reason}
 }

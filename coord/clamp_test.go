@@ -122,11 +122,11 @@ func TestPlannerWithoutTargets(t *testing.T) {
 	p.report(0)
 	p.report(1)
 	for i := range 2 {
-		if a := expectAbort(t, p.cl[i]); a.Code != protocol.ReasonNoProbeEndpoint {
+		if a := expectAbort(t, p.cl[i]); a.Reason != protocol.ReasonNoProbeEndpoint {
 			t.Fatalf("abort %+v", a)
 		}
 	}
-	if res := r.wait(p.s); res.Code != protocol.ReasonNoProbeEndpoint {
+	if res := r.wait(p.s); res.Reason != protocol.ReasonNoProbeEndpoint {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -148,7 +148,7 @@ func TestPlannerStop(t *testing.T) {
 		p := r.pair(SessionOptions{})
 		p.report(0)
 		p.report(1)
-		if res := r.wait(p.s); res.Code != c.code || res.Outcome != OutcomeFailed || res.Retry != c.retry {
+		if res := r.wait(p.s); res.Reason != c.code || res.Outcome != OutcomeFailed || res.Retry != c.retry {
 			t.Fatalf("result %+v", res)
 		}
 	}
@@ -162,25 +162,25 @@ func TestPlannerUnknownReason(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	p.report(0)
 	p.report(1)
-	if res := r.wait(p.s); res.Code != protocol.ReasonInternal {
+	if res := r.wait(p.s); res.Reason != protocol.ReasonInternal {
 		t.Fatalf("result %+v", res)
 	}
 }
 
-// TestUnverifiedModeDirectOnly: the relay-only mode needs its switch, marks
+// TestUnverifiedModeDirectOnly: the NoObserver mode needs its switch, marks
 // the summary unverified and warns.
 func TestUnverifiedModeDirectOnly(t *testing.T) {
 	if _, err := New(Config{}); err == nil {
-		t.Fatal("nil Registry without AllowUnverifiedTargets accepted")
+		t.Fatal("nil Registry without NoObserver accepted")
 	}
-	if _, err := New(Config{Registry: natprobe.NewRegistry(natprobe.RegistryConfig{}), AllowUnverifiedTargets: true}); err == nil {
-		t.Fatal("AllowUnverifiedTargets with a Registry accepted")
+	if _, err := New(Config{Registry: natprobe.NewRegistry(natprobe.RegistryConfig{}), NoObserver: true}); err == nil {
+		t.Fatal("NoObserver with a Registry accepted")
 	}
-	if _, err := New(Config{AllowUnverifiedTargets: true, TransportFallback: "a-very-long-transport-name"}); err == nil {
+	if _, err := New(Config{NoObserver: true, TransportFallback: "a-very-long-transport-name"}); err == nil {
 		t.Fatal("long fallback accepted")
 	}
 	bad := &protocol.Policy{Budget: protocol.Budget{Birthday: "huge"}}
-	if _, err := New(Config{AllowUnverifiedTargets: true, Policy: bad}); err == nil {
+	if _, err := New(Config{NoObserver: true, Policy: bad}); err == nil {
 		t.Fatal("bad policy accepted")
 	}
 	r := newRig(t)
@@ -516,7 +516,7 @@ func TestClampNeedNotKeepEquality(t *testing.T) {
 				t.Fatal("no round 2 after both sides sent their whole grant")
 			}
 			p.s.Abort(protocol.ReasonCanceled, "")
-			if res := r.wait(p.s); res.Code != protocol.ReasonCanceled || res.Counters.PlanClamped == 0 {
+			if res := r.wait(p.s); res.Reason != protocol.ReasonCanceled || res.Counters.PlanClamped == 0 {
 				t.Fatalf("result %+v", res)
 			}
 		})
@@ -572,12 +572,12 @@ func TestPlannerOutputSanitized(t *testing.T) {
 		p.windowEnd(i, 1, fired(3))
 	}
 	for i := range 2 {
-		if a := expectAbort(t, p.cl[i]); a.Code != protocol.ReasonCandidateTimeout || a.Detail != long[:maxDetail] {
-			t.Fatalf("side %d: abort %s with a detail of %d bytes", i, a.Code, len(a.Detail))
+		if a := expectAbort(t, p.cl[i]); a.Reason != protocol.ReasonCandidateTimeout || a.Detail != long[:maxDetail] {
+			t.Fatalf("side %d: abort %s with a detail of %d bytes", i, a.Reason, len(a.Detail))
 		}
 	}
-	if res := r.wait(p.s); res.Code != protocol.ReasonCandidateTimeout || len(res.Detail) != maxDetail || res.Retry.Advice != "" {
-		t.Fatalf("result %s, detail of %d bytes, advice %q", res.Code, len(res.Detail), res.Retry.Advice)
+	if res := r.wait(p.s); res.Reason != protocol.ReasonCandidateTimeout || len(res.Detail) != maxDetail || res.Retry.Advice != "" {
+		t.Fatalf("result %s, detail of %d bytes, advice %q", res.Reason, len(res.Detail), res.Retry.Advice)
 	}
 }
 

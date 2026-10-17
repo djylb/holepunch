@@ -343,7 +343,7 @@ func (s *Session) addEvidenceLocked(r int, m *protocol.RoundResult) {
 		}
 	}
 	if m.Status == protocol.RoundFatal {
-		ev.Fatal[r] = m.Code
+		ev.Fatal[r] = m.Reason
 	}
 	if m.Status != protocol.RoundFatal || sentOf(m) > 0 {
 		ev.Fired[r] = true
@@ -407,7 +407,7 @@ func roundClass(res [2]*protocol.RoundResult) RoundClass {
 				}
 			}
 		}
-		blocked = blocked || m.Status == protocol.RoundFatal && m.Code == protocol.ReasonUDPBlocked
+		blocked = blocked || m.Status == protocol.RoundFatal && m.Reason == protocol.ReasonUDPBlocked
 	}
 	switch {
 	case hitBoth || seen[0] && seen[1]:

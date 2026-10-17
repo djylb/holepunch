@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/internal/udpwire"
 )
 
 // jitterLabel separates the runtime's jitter stream from the codec's pacer

@@ -16,7 +16,7 @@ func TestBackgroundOffer(t *testing.T) {
 	r := newRig(t)
 	s := r.session(SessionOptions{Mode: protocol.ModeBackground})
 	for i := range 2 {
-		st := s.Start(roleOf(i))
+		st := s.PunchStart(roleOf(i))
 		b := st.Policy.Budget
 		if st.Mode != protocol.ModeBackground || b.MaxSockets != 128 || b.MaxDistinctTargets != 2048 || st.Timeouts.HandshakeTimeoutMs != 60000 {
 			t.Fatalf("start %d: mode %q, budget %+v, handshake %d", i, st.Mode, b, st.Timeouts.HandshakeTimeoutMs)
@@ -25,11 +25,11 @@ func TestBackgroundOffer(t *testing.T) {
 	to := protocol.DefaultTimeouts()
 	s = r.session(SessionOptions{Mode: protocol.ModeBackground, Timeouts: &to,
 		Policy: &protocol.Policy{Budget: protocol.Budget{MaxSockets: 16}}})
-	if st := s.Start(protocol.RoleInitiator); st.Policy.Budget.MaxSockets != 16 || st.Timeouts.HandshakeTimeoutMs != to.HandshakeTimeoutMs ||
+	if st := s.PunchStart(protocol.RoleInitiator); st.Policy.Budget.MaxSockets != 16 || st.Timeouts.HandshakeTimeoutMs != to.HandshakeTimeoutMs ||
 		st.Policy.Budget.MaxDistinctTargets != 2048 {
 		t.Fatalf("explicit policy and timeouts: %+v %+v", st.Policy.Budget, st.Timeouts)
 	}
-	if st := r.session(SessionOptions{}).Start(protocol.RoleInitiator); st.Mode != "" || st.Policy.Budget.MaxSockets != protocol.DefaultBudget().MaxSockets {
+	if st := r.session(SessionOptions{}).PunchStart(protocol.RoleInitiator); st.Mode != "" || st.Policy.Budget.MaxSockets != protocol.DefaultBudget().MaxSockets {
 		t.Fatalf("interactive start: %q %+v", st.Mode, st.Policy.Budget)
 	}
 	if _, err := r.c.NewSession(SessionOptions{Mode: "lazy"}); !invalidArgument(err) {

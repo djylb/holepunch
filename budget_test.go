@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // gateRig is a runtime with one public socket, a fake clock and a round

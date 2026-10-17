@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // portRun.then follows the definition the limit is measured with: a repeat

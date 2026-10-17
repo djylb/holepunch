@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/faultinject"
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/internal/udpwire"
 )
 
 // A panic injected while handling packet k is contained: counted
@@ -59,37 +59,5 @@ func TestPacketErrorInjected(t *testing.T) {
 	}
 	if out := r.deliver(0, c.probe(probeOpts{}), srcA); len(out) != 1 {
 		t.Fatalf("%d replies after the fault", len(out))
-	}
-}
-
-// A panic in the sweeper is contained and the sweeper keeps running; an
-// injected error skips one sweep.
-func TestSweepFaultsInjected(t *testing.T) {
-	defer faultinject.Reset()
-	disarm := faultinject.Arm(pointSweep, faultinject.Panic(), 1)
-	defer disarm()
-	reg := NewRegistry(RegistryConfig{})
-	s := startServer(t, ServerConfig{Registry: reg, SweepInterval: 5 * time.Millisecond})
-	if _, err := reg.Register(Registration{SessionID: "s", Route: rt(1), Token: tok(1), TTL: time.Millisecond}); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(waitBound(t))
-	for (reg.Len() != 0 || s.Stats().Panics != 1) && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-	}
-	if reg.Len() != 0 || s.Stats().Panics != 1 {
-		t.Fatalf("len %d stats %+v", reg.Len(), s.Stats())
-	}
-	disarm2 := faultinject.Arm(pointSweep, faultinject.Error(nil), 1)
-	defer disarm2()
-	if _, err := reg.Register(Registration{SessionID: "s2", Route: rt(2), Token: tok(1), TTL: time.Millisecond}); err != nil {
-		t.Fatal(err)
-	}
-	deadline = time.Now().Add(waitBound(t))
-	for reg.Len() != 0 && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-	}
-	if reg.Len() != 0 || faultinject.Fired(pointSweep) < 2 {
-		t.Fatalf("len %d fired %d", reg.Len(), faultinject.Fired(pointSweep))
 	}
 }

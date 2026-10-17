@@ -10,9 +10,9 @@ import (
 
 	"github.com/djylb/holepunch"
 	"github.com/djylb/holepunch/coord"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // cellRun is one run of a cell: the finished session and what was measured.
@@ -43,7 +43,7 @@ type runMetrics struct {
 	RoundClasses  []string             `json:"round_classes,omitempty"`
 	Variants      []string             `json:"variants,omitempty"`
 	Violations    []string             `json:"violations,omitempty"`
-	ConfirmMs     [2]float64           `json:"confirm_ms"`   // AttachSession call to return
+	ConfirmMs     [2]float64           `json:"confirm_ms"`   // Punch call to return
 	FromGoMs      [2]float64           `json:"from_go_ms"`   // first punch_go to return; -1 without a go
 	Packets       [2]int               `json:"packets"`      // initiated packets (Counters.TxPackets)
 	HostPackets   [2]uint64            `json:"host_packets"` // every UDP packet the host sent
@@ -93,7 +93,7 @@ func (cr *cellRun) measure() {
 		m.Reasons[i] = o.reason()
 		m.ConfirmMs[i] = ms(o.end.Sub(joined))
 		m.FromGoMs[i] = -1
-		if fg := r.res.Timings.FirstGo; !fg.IsZero() {
+		if fg := r.res.Timing.FirstGo; !fg.IsZero() {
 			m.FromGoMs[i] = ms(o.end.Sub(fg))
 		}
 		m.Packets[i] = o.diag.Counters.TxPackets
@@ -113,7 +113,7 @@ func (cr *cellRun) measure() {
 	}
 	if r.resOK {
 		m.Outcome = r.res.Outcome.String()
-		m.Code = r.res.Code
+		m.Code = r.res.Reason
 		m.HalfConfirmed = m.OK && slices.Contains(r.res.Warn, protocol.WarnPeerResultMissing)
 		m.Rounds = len(r.res.Rounds)
 		for _, rr := range r.res.Rounds {
@@ -437,7 +437,7 @@ const (
 // checkEarlyFail bounds a failure before any punch (no common family, a
 // blackholed probe, UDP blocked, and the hopeless SYMRND × SYMRND pair decided
 // at summary time): back within probe_timeout + failBound
-// of AttachSession, plus the control link's one-way delay that punch_start
+// of Punch, plus the control link's one-way delay that punch_start
 // travels; no punch packet of any stage.
 func (cr *cellRun) checkEarlyFail(add func(string, ...any)) {
 	to := cr.w.cfg.timeouts
@@ -461,7 +461,7 @@ func (cr *cellRun) checkEarlyFail(add func(string, ...any)) {
 // session budget.
 func (cr *cellRun) checkLadderFail(add func(string, ...any)) {
 	to := cr.w.cfg.timeouts
-	fg := cr.r.res.Timings.FirstGo
+	fg := cr.r.res.Timing.FirstGo
 	if fg.IsZero() {
 		add("no punch_go; the ladder did not run")
 		return
@@ -493,13 +493,13 @@ func (cr *cellRun) checkVerdict(add func(string, ...any)) {
 	}
 	res := cr.r.res
 	if randomHigh(measured[0]) && randomHigh(measured[1]) {
-		if !res.Timings.FirstGo.IsZero() {
+		if !res.Timing.FirstGo.IsZero() {
 			add("natprobe measured %q and %q, yet the ladder ran (%d rounds)", cr.m.Measured[0], cr.m.Measured[1], len(res.Rounds))
 		}
 		cr.checkEarlyFail(add)
 		return
 	}
-	fg := res.Timings.FirstGo
+	fg := res.Timing.FirstGo
 	if fg.IsZero() {
 		add("ended at summary time, but natprobe measured %q and %q (the summary-time verdict needs High Random on both sides)", cr.m.Measured[0], cr.m.Measured[1])
 		return
@@ -542,7 +542,7 @@ func (cr *cellRun) checkModelTime(add func(string, ...any)) {
 		default:
 			add("%s: model failure reason %q (%v)", roles[i], o.reason(), o.err)
 		}
-		if fg := cr.r.res.Timings.FirstGo; !fg.IsZero() {
+		if fg := cr.r.res.Timing.FirstGo; !fg.IsZero() {
 			bound := scaled(time.Duration(to.HandshakeTimeoutMs)*time.Millisecond + time.Second + cr.r.delay[i])
 			if d := o.end.Sub(fg); d > bound {
 				add("%s: returned %v after the first go, bound %v", roles[i], d, bound)

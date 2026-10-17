@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"reflect"
 	"unicode/utf8"
-
-	"github.com/djylb/holepunch/controlwire"
 )
 
 // ErrUnexpectedMessage is returned when the frame's type is not the one
@@ -41,15 +39,15 @@ func violation(detail, format string, args ...any) error {
 // (probe_summary.plan.round1.sides[].stages[].targets[] is 8 levels).
 const maxJSONDepth = 8
 
-// Marshal validates m (a message value or pointer) and encodes it as a frame
-// of its type. JSON is written without HTML escaping. A payload above the
-// type's cap is refused with controlwire.ErrFrameTooLarge: an oversized or
-// invalid outbound message is an implementation bug,
-// and a relayed message whose re-encoding grew past the cap is dropped by
-// the relay rather than sent.
-func Marshal(m Message) (controlwire.Frame, error) {
+// Marshal validates m (a message value or pointer) and encodes it as the
+// JSON payload of a frame of type m.MessageType(). JSON is written without
+// HTML escaping. A payload above the type's cap (MessageType.MaxPayload) is
+// refused with a *ValidationError, detail frame_too_large: an oversized or invalid outbound message is an implementation
+// bug, and a relayed message whose re-encoding grew past the cap is dropped
+// by the relay rather than sent.
+func Marshal(m Message) ([]byte, error) {
 	if m == nil || reflect.ValueOf(m).Kind() == reflect.Pointer && reflect.ValueOf(m).IsNil() {
-		return controlwire.Frame{}, fmt.Errorf("%w: nil message", ErrUnexpectedMessage)
+		return nil, fmt.Errorf("%w: nil message", ErrUnexpectedMessage)
 	}
 	t := m.MessageType()
 	var err error
@@ -59,84 +57,86 @@ func Marshal(m Message) (controlwire.Frame, error) {
 		err = m.Validate()
 	}
 	if err != nil {
-		return controlwire.Frame{}, err
+		return nil, err
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(m); err != nil {
-		return controlwire.Frame{}, fmt.Errorf("protocol: encode %s: %w", t, err)
+		return nil, fmt.Errorf("protocol: encode %s: %w", t, err)
 	}
 	payload := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 	if limit := t.MaxPayload(); len(payload) > limit {
-		return controlwire.Frame{}, fmt.Errorf("%w: %s payload %d > %d", controlwire.ErrFrameTooLarge, t, len(payload), limit)
+		return nil, &ValidationError{Reason: ReasonProtocolViolation, Detail: "frame_too_large",
+			Msg: fmt.Sprintf("%s payload %d > %d", t, len(payload), limit)}
 	}
-	return controlwire.Frame{Type: controlwire.Type(t), Payload: payload}, nil
+	return payload, nil
 }
 
-// Unmarshal decodes a frame into the message type T (a value type such as
-// PunchGo) and validates it. A frame of another type returns
+// Unmarshal decodes the payload of a frame of type t into the message type T
+// (a value type such as PunchGo) and validates it. Another type t returns
 // ErrUnexpectedMessage. A payload above the type's cap, or that is not a
-// UTF-8 JSON object nested at most 8 levels, or that fails Validate, returns a
-// *ValidationError. Unknown fields are ignored. Unmarshal does not clamp:
+// UTF-8 JSON object nested at most 8 levels, or that fails Validate, returns
+// a *ValidationError. Unknown fields are ignored. Unmarshal does not clamp:
 // the caller runs Normalize and reports whether a clamp happened.
 func Unmarshal[T any, P interface {
 	*T
 	Message
-}](f controlwire.Frame) (T, error) {
+}](t MessageType, payload []byte) (T, error) {
 	var v T
 	want := P(&v).MessageType()
-	if MessageType(f.Type) != want {
-		return v, fmt.Errorf("%w: got %s, want %s", ErrUnexpectedMessage, MessageType(f.Type), want)
+	if t != want {
+		return v, fmt.Errorf("%w: got %s, want %s", ErrUnexpectedMessage, t, want)
 	}
-	if limit := want.MaxPayload(); len(f.Payload) > limit {
+	if limit := want.MaxPayload(); len(payload) > limit {
 		return v, &ValidationError{Reason: ReasonProtocolViolation, Detail: "frame_too_large",
-			Msg: fmt.Sprintf("%s payload %d > %d", want, len(f.Payload), limit)}
+			Msg: fmt.Sprintf("%s payload %d > %d", want, len(payload), limit)}
 	}
-	if err := decodePayload(want, f.Payload, &v); err != nil {
+	if err := decodePayload(want, payload, &v); err != nil {
 		return v, err
 	}
 	return v, P(&v).Validate()
 }
 
-// Decode decodes and validates a frame of any of the twelve message types and
-// returns a pointer to the message (*PunchStart, *ProbeReport, ...), ready
-// for Normalize. Type 0 and the reserved types return ErrUnexpectedMessage.
-func Decode(f controlwire.Frame) (Message, error) {
-	switch MessageType(f.Type) {
+// Decode decodes and validates the payload of a frame of type t, any of the
+// twelve message types, and returns a pointer to the message (*PunchStart,
+// *ProbeReport, ...), ready for Normalize. Type 0 and the reserved types
+// return ErrUnexpectedMessage.
+func Decode(t MessageType, payload []byte) (Message, error) {
+	switch t {
 	case MsgPunchStart:
-		return decodeAs[PunchStart](f)
+		return decodeAs[PunchStart](t, payload)
 	case MsgProbeReport:
-		return decodeAs[ProbeReport](f)
+		return decodeAs[ProbeReport](t, payload)
 	case MsgProbeSummary:
-		return decodeAs[ProbeSummary](f)
+		return decodeAs[ProbeSummary](t, payload)
 	case MsgPunchReady:
-		return decodeAs[PunchReady](f)
+		return decodeAs[PunchReady](t, payload)
 	case MsgPunchGo:
-		return decodeAs[PunchGo](f)
+		return decodeAs[PunchGo](t, payload)
 	case MsgProgress:
-		return decodeAs[Progress](f)
+		return decodeAs[Progress](t, payload)
 	case MsgAssist:
-		return decodeAs[Assist](f)
+		return decodeAs[Assist](t, payload)
 	case MsgAbort:
-		return decodeAs[Abort](f)
+		return decodeAs[Abort](t, payload)
 	case MsgPing:
-		return decodeAs[Ping](f)
+		return decodeAs[Ping](t, payload)
 	case MsgPong:
-		return decodeAs[Pong](f)
+		return decodeAs[Pong](t, payload)
 	case MsgRoundResult:
-		return decodeAs[RoundResult](f)
+		return decodeAs[RoundResult](t, payload)
 	case MsgPunchResult:
-		return decodeAs[PunchResult](f)
+		return decodeAs[PunchResult](t, payload)
 	}
-	return nil, fmt.Errorf("%w: %s", ErrUnexpectedMessage, MessageType(f.Type))
+	return nil, fmt.Errorf("%w: %s", ErrUnexpectedMessage, t)
 }
 
 func decodeAs[T any, P interface {
 	*T
 	Message
-}](f controlwire.Frame) (Message, error) {
-	v, err := Unmarshal[T, P](f)
+}](t MessageType, payload []byte) (Message, error) {
+	v, err := Unmarshal[T, P](t, payload)
 	if err != nil {
 		return nil, err
 	}

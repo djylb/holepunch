@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/faultinject"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -14,7 +15,7 @@ import (
 // (stalled), any other error means the write side already stopped, which the
 // link's Done reports.
 func (s *Session) sendMarkedLocked(r int, m protocol.Message, mark *atomic.Int64) effects {
-	f, err := protocol.Marshal(m)
+	f, err := msgframe.Encode(m)
 	if err != nil {
 		return effects{term: &terminal{code: protocol.ReasonInternal, detail: truncate("encode: "+err.Error(), maxDetail)}}
 	}

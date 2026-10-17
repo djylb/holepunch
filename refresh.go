@@ -7,8 +7,8 @@ import (
 
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Anchor refresh. Before the go of a round that

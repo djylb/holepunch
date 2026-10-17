@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // open decodes a reply as the client and checks it against the client's
@@ -61,7 +61,7 @@ func TestProbeReplies(t *testing.T) {
 	if xh.Type != udpwire.TProbeExtra || xh.EchoSeq != ph.Seq || xt.Observed != srcA || xh.Seq == ah.Seq {
 		t.Fatalf("extra %+v %+v", xh, xt)
 	}
-	h := &Handle{r: r.reg, e: r.reg.lookup(rt(1))}
+	h := &handle{r: r.reg, e: r.reg.lookup(rt(1))}
 	so := h.Observations(protocol.RoleInitiator)
 	if len(so) != 1 || so[0].Socket != sock || so[0].Observer != 1 || so[0].Observed != srcA || so[0].First != srcA ||
 		so[0].Cookie != at.Cookie || so[0].ExtraSent != 1 || so[0].Count != 1 || so[0].FirstSeq != ph.Seq || so[0].Alt || so[0].LAN ||
@@ -138,7 +138,7 @@ func TestReplyCaps(t *testing.T) {
 	r := newRig(t, rigOpts{alt: true, reg: RegistryConfig{SessionRate: Rate{PerSec: 1e6, Burst: 1e6}}})
 	h := register(t, r.reg, "s1", tok(1), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	if h.ProbesLeft(protocol.RoleInitiator) != 96 || h.ProbesLeft(protocol.RoleServer) != 0 || (*Handle)(nil).ProbesLeft(protocol.RoleInitiator) != 0 {
+	if h.ProbesLeft(protocol.RoleInitiator) != 96 || h.ProbesLeft(protocol.RoleServer) != 0 || (*handle)(nil).ProbesLeft(protocol.RoleInitiator) != 0 {
 		t.Fatal("ProbesLeft before any probe")
 	}
 	extras, alts, acks, quotaSeen := 0, 0, 0, false
@@ -198,7 +198,7 @@ func TestNoSecondReplyCases(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("%d replies on the alt listener", len(out))
 	}
-	if so := (&Handle{r: r.reg, e: r.reg.lookup(rt(1))}).Observations(protocol.RoleInitiator); len(so) != 2 || !so[1].Alt {
+	if so := (&handle{r: r.reg, e: r.reg.lookup(rt(1))}).Observations(protocol.RoleInitiator); len(so) != 2 || !so[1].Alt {
 		t.Fatalf("observations %+v", so)
 	}
 	// no alt group at all
@@ -398,7 +398,7 @@ func TestCookiesAndSlots(t *testing.T) {
 	if c1 == 0 || c1 != c2 || c3 == c2 {
 		t.Fatalf("cookies %d %d %d", c1, c2, c3)
 	}
-	so := (&Handle{r: r.reg, e: r.reg.lookup(rt(1))}).Observations(protocol.RoleInitiator)
+	so := (&handle{r: r.reg, e: r.reg.lookup(rt(1))}).Observations(protocol.RoleInitiator)
 	if len(so) != 1 || so[0].First != srcA || so[0].Observed != other || so[0].Changes != 1 || so[0].Count != 3 || so[0].Cookie != c3 {
 		t.Fatalf("slot %+v", so)
 	}
@@ -414,7 +414,7 @@ func TestCookiesAndSlots(t *testing.T) {
 			r2.deliver(o, c.probe(probeOpts{sock: sock, obs: uint8(o)}), srcA)
 		}
 	}
-	if n := len((&Handle{r: r2.reg, e: r2.reg.lookup(rt(1))}).Observations(protocol.RoleInitiator)); n != 18 {
+	if n := len((&handle{r: r2.reg, e: r2.reg.lookup(rt(1))}).Observations(protocol.RoleInitiator)); n != 18 {
 		t.Fatalf("%d slots", n)
 	}
 }
@@ -431,7 +431,7 @@ func TestForgedSourceNeverVerified(t *testing.T) {
 	}
 	rep := reportFor("s1", protocol.RoleResponder, protocol.FamilyUDP4, "10.0.0.2:5000",
 		[]protocol.RowReport{{Observer: 0, Observed: victim, RTTMs: 10}, {Observer: 1}, {Observer: 2}})
-	view, diag, err := h.Merge(protocol.RoleResponder, rep, nil, TraitsKey{})
+	view, diag, err := h.mergeTest(protocol.RoleResponder, rep, nil, TraitsKey{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +473,7 @@ func TestSandwichQueue(t *testing.T) {
 	entered := make(chan struct{}, 1)
 	var mu sync.Mutex
 	var got []nat.SandwichEvent
-	h.setEventFunc(func(ev nat.SandwichEvent) {
+	h.AttachSandwichSink(func(ev nat.SandwichEvent) {
 		mu.Lock()
 		got = append(got, ev)
 		n := len(got)
@@ -512,21 +512,21 @@ func TestSandwichQueue(t *testing.T) {
 		t.Fatalf("delivered %d, events %d", n, r.stats.sandwichEvents.Load())
 	}
 	// a panicking sink is contained and counted
-	h.setEventFunc(func(nat.SandwichEvent) { panic("sink") })
+	h.AttachSandwichSink(func(nat.SandwichEvent) { panic("sink") })
 	r.deliver(0, c.probe(probeOpts{sandwich: sw}), srcA)
 	if r.stats.panics.Load() != 1 {
 		t.Fatalf("panics %d", r.stats.panics.Load())
 	}
 	// after Close: nothing is delivered or queued
 	h.Close()
-	h.setEventFunc(func(nat.SandwichEvent) { t.Error("sink after close") })
+	h.AttachSandwichSink(func(nat.SandwichEvent) { t.Error("sink after close") })
 	var q sandwichQueue
 	q.close()
 	if ok, _ := q.offer(nat.SandwichEvent{}, 8); ok {
 		t.Fatal("offer after close")
 	}
-	var nilH *Handle
-	nilH.setEventFunc(nil)
+	var nilH *handle
+	nilH.AttachSandwichSink(nil)
 }
 
 // A GCRA state saturated at T is not reset by an event
@@ -621,7 +621,7 @@ func TestSourceLimiterConcurrentReaders(t *testing.T) {
 func TestSessionRateConcurrentReaders(t *testing.T) {
 	for _, n := range []int{1, 6} {
 		reg, rds, st := realClockPath(RegistryConfig{ProbeBudgetPerRole: 60000}, Rate{PerSec: -1}, n)
-		if _, err := reg.Register(Registration{SessionID: "s1", Route: rt(1), Token: tok(1), TTL: time.Minute}); err != nil {
+		if _, err := reg.register(nat.Registration{SessionID: "s1", Route: rt(1), Token: tok(1), TTL: time.Minute}); err != nil {
 			t.Fatal(err)
 		}
 		c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
@@ -659,7 +659,7 @@ func TestSandwichNoDeliveryAfterClose(t *testing.T) {
 		}
 	}
 	done := make(chan struct{})
-	go func() { defer close(done); h.setEventFunc(sink) }() // coord's attach delivers the queue
+	go func() { defer close(done); h.AttachSandwichSink(sink) }() // coord's attach delivers the queue
 	<-entered
 	h.Close()
 	closed.Store(true)
@@ -689,7 +689,7 @@ func TestSandwichQueueBoundCountsInFlight(t *testing.T) {
 		}
 	}
 	done := make(chan struct{})
-	go func() { defer close(done); h.setEventFunc(sink) }()
+	go func() { defer close(done); h.AttachSandwichSink(sink) }()
 	<-entered
 	for range 8 {
 		r.deliver(1, c.probe(probeOpts{obs: 1, sandwich: sw}), srcA)
@@ -713,7 +713,7 @@ func TestAttachSinkPanicCounted(t *testing.T) {
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 	r.deliver(0, c.probe(probeOpts{sandwich: &[2]uint8{1, nat.SandwichBefore}}), srcA)
 	calls := 0
-	nat.AttachSandwichSink(h, func(nat.SandwichEvent) { calls++; panic("sink") })
+	h.AttachSandwichSink(func(nat.SandwichEvent) { calls++; panic("sink") })
 	if calls != 1 {
 		t.Fatalf("sink calls %d", calls)
 	}
@@ -730,12 +730,12 @@ func TestAttachSinkPanicCounted(t *testing.T) {
 func TestSandwichZeroAlloc(t *testing.T) {
 	bp := newBenchPath()
 	token, route := protocol.NewToken(), protocol.NewRouteID()
-	h, err := bp.reg.Register(Registration{SessionID: "sw", Route: route, Token: token, TTL: time.Hour})
+	h, err := bp.reg.register(nat.Registration{SessionID: "sw", Route: route, Token: token, TTL: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
 	delivered := 0
-	nat.AttachSandwichSink(h, func(nat.SandwichEvent) { delivered++ })
+	h.AttachSandwichSink(func(nat.SandwichEvent) { delivered++ })
 	c := newClient(t, token, route, udpwire.RoleInitiator)
 	pkts := make([][]byte, 2000)
 	for i := range pkts {

@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
@@ -41,8 +42,8 @@ func TestFinishSurvivesResultPanic(t *testing.T) {
 		t.Fatal("quit is open after finish")
 	}
 	res := r.wait(s)
-	if res.SessionID != s.ID() || res.Code != protocol.ReasonCanceled || res.Detail != "stop" ||
-		res.Outcome != OutcomeAborted || res.Timings.Closed.IsZero() {
+	if res.SessionID != s.ID() || res.Reason != protocol.ReasonCanceled || res.Detail != "stop" ||
+		res.Outcome != OutcomeAborted || res.Timing.Closed.IsZero() {
 		t.Fatalf("result %+v", res)
 	}
 	expectEOFOrAbort(t, c)
@@ -52,7 +53,7 @@ func TestFinishSurvivesResultPanic(t *testing.T) {
 	if reasonOf(context.Cause(s.Context())) != protocol.ReasonCanceled {
 		t.Fatalf("session context: %v", context.Cause(s.Context()))
 	}
-	if got := expectOneResult(t, r); got.Code != protocol.ReasonCanceled {
+	if got := expectOneResult(t, r); got.Reason != protocol.ReasonCanceled {
 		t.Fatalf("OnResult %+v", got)
 	}
 	if st := r.c.Stats(); st.Panics != 1 {
@@ -71,7 +72,7 @@ func TestFinishSurvivesResultPanic(t *testing.T) {
 }
 
 // resetPanics is a session timer whose Reset panics.
-type resetPanics struct{ Timer }
+type resetPanics struct{ clock.Timer }
 
 func (resetPanics) Reset(time.Duration) bool { panic("reset") }
 
@@ -94,10 +95,10 @@ func TestAttachPanicAfterTakeover(t *testing.T) {
 		t.Fatalf("attach: %v", err)
 	}
 	res := r.wait(s)
-	if res.Code != protocol.ReasonInternal || !strings.HasPrefix(res.Detail, "panic:coord.attach: reset") {
+	if res.Reason != protocol.ReasonInternal || !strings.HasPrefix(res.Detail, "panic:coord.attach: reset") {
 		t.Fatalf("result %+v", res)
 	}
-	if a := expectAbort(t, c); a.Code != protocol.ReasonInternal {
+	if a := expectAbort(t, c); a.Reason != protocol.ReasonInternal {
 		t.Fatalf("abort %+v", a)
 	}
 	expectEOF(t, c)
@@ -122,7 +123,7 @@ func TestAttachWithoutSessionGoroutine(t *testing.T) {
 	c := r.attach(s, protocol.RoleInitiator)
 	expect[protocol.PunchStart](t, c)
 	s.Abort(protocol.ReasonCanceled, "")
-	if res := r.wait(s); res.Code != protocol.ReasonCanceled {
+	if res := r.wait(s); res.Reason != protocol.ReasonCanceled {
 		t.Fatalf("result %+v", res)
 	}
 	expectEOFOrAbort(t, c)
@@ -177,7 +178,7 @@ func TestNewSessionPanicAfterAdmission(t *testing.T) {
 	if !errors.As(err, &pe) || pe.Where() != "coord.new_session" {
 		t.Fatalf("new session: %v", err)
 	}
-	if res := expectOneResult(t, r); res.Code != protocol.ReasonInternal || !strings.HasPrefix(res.Detail, "panic:coord.new_session: done") {
+	if res := expectOneResult(t, r); res.Reason != protocol.ReasonInternal || !strings.HasPrefix(res.Detail, "panic:coord.new_session: done") {
 		t.Fatalf("result %+v", res)
 	}
 	if n, keys, entries := r.c.Len(), r.c.Stats().ActiveByKey, reg.Len(); n != 0 || keys != 0 || entries != 0 {
@@ -221,7 +222,7 @@ func (randPanics) Read([]byte) (int, error) { panic("rand") }
 // TestNewPanic: a panic in New is returned as an error, not handed to the
 // caller, and starts nothing.
 func TestNewPanic(t *testing.T) {
-	c, err := New(Config{AllowUnverifiedTargets: true, Memory: NoMemory{}, Rand: randPanics{}})
+	c, err := New(Config{NoObserver: true, Memory: NoMemory{}, Rand: randPanics{}})
 	var pe *life.PanicError
 	if c != nil || !errors.As(err, &pe) || pe.Where() != "coord.new" {
 		t.Fatalf("new: %v, %v", c, err)
@@ -251,7 +252,7 @@ func TestGuard(t *testing.T) {
 	r := newRig(t)
 	s := r.session(SessionOptions{})
 	s.guard("coord.test", func() { panic("boom") })
-	if res := r.wait(s); res.Code != protocol.ReasonInternal || res.Detail != "panic:coord.test: boom" {
+	if res := r.wait(s); res.Reason != protocol.ReasonInternal || res.Detail != "panic:coord.test: boom" {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -279,7 +280,7 @@ func TestClosePanicIsReturned(t *testing.T) {
 	if !errors.As(err, &pe) || pe.Where() != fiClose || !strings.HasSuffix(pe.Error(), ": cancel") {
 		t.Fatalf("close: %v (%T)", err, err)
 	}
-	if res := r.wait(p.s); res.Code != protocol.ReasonServerShutdown {
+	if res := r.wait(p.s); res.Reason != protocol.ReasonServerShutdown {
 		t.Fatalf("result %+v", res)
 	}
 	for i := range 2 {

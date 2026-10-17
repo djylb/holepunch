@@ -6,18 +6,18 @@
 //
 // Every request is a fresh TLS stream to the server (Config.Dial, Config.TLS).
 // Open sends proto.Open, reads the SessionInfo and runs
-// holepunch.AttachSession on the same stream as the initiator. Serve keeps a
+// holepunch.Punch on the same stream as the initiator. Serve keeps a
 // registration link: it registers the host ID, answers and sends heartbeats,
 // and for every Incoming opens a new stream, joins the session with the
-// ticket it carried and runs AttachSession as the responder before passing
+// ticket it carried and runs Punch as the responder before passing
 // the Session to the Handler. A lost link is re-established with a backoff
 // (1 s doubling to 30 s), presenting the previous registration's credential
 // so that the host takes its ID over at once.
 //
-// After AttachSession the server is no longer needed: the control stream is
+// After Punch the server is no longer needed: the control stream is
 // closed and the Session holds the punched UDP socket.
-// Session.PacketConn wraps it in udpwire.DropResidual for upper layers that are
-// not QUIC; a QUIC layer takes Session.Holepunch().PacketConn(), the raw
+// Session.PacketConn wraps it with holepunch's Session.FilterResidual for
+// upper layers that are not QUIC; a QUIC layer takes Session.Holepunch().PacketConn(), the raw
 // socket, since quic-go drops the residual handshake packets by itself.
 //
 // # Concurrency

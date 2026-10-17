@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 )
 
 // answerPings is a client's controlwire.ConnOptions.Intercept: ping is
@@ -17,12 +17,12 @@ func answerPings(c *controlwire.Conn, f controlwire.Frame) bool {
 	if MessageType(f.Type) != MsgPing {
 		return false
 	}
-	ping, err := Unmarshal[Ping](f)
+	ping, err := unmarshalFrame[Ping](f)
 	if err != nil {
 		return false // delivered; the dispatcher fails the session with protocol_violation
 	}
 	_ = c.SendFunc(controlwire.TypePong, func(now time.Time) ([]byte, error) {
-		fr, err := Marshal(PongFor(ping, f.At, now))
+		fr, err := marshalFrame(PongFor(ping, f.At, now))
 		return fr.Payload, err
 	})
 	return true
@@ -48,7 +48,7 @@ func TestControlLinkEndToEnd(t *testing.T) {
 
 	start := sampleMessages()[0].(PunchStart)
 	for _, m := range []Message{start, Ping{Seq: 1}} {
-		f, err := Marshal(m)
+		f, err := marshalFrame(m)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestControlLinkEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := Unmarshal[PunchStart](f)
+	got, err := unmarshalFrame[PunchStart](f)
 	if err != nil || got.SessionID != start.SessionID || got.Token != start.Token || got.Wire.RouteID != start.Wire.RouteID {
 		t.Fatalf("client got %v, %v", got, err)
 	}
@@ -68,14 +68,14 @@ func TestControlLinkEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pong, err := Unmarshal[Pong](f)
+	pong, err := unmarshalFrame[Pong](f)
 	if err != nil || pong.Seq != 1 || pong.HoldUs > uint32(time.Second.Microseconds()) || pong.ClientUnixMs == 0 {
 		t.Fatalf("server got pong %+v, %v", pong, err)
 	}
 
 	report := sampleMessages()[3].(ProbeReport)
 	report.Control.Features = AcceptFeatures(start.Control.Features, SupportedFeatures())
-	rf, err := Marshal(report)
+	rf, err := marshalFrame(report)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestControlLinkEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := Decode(f)
+	m, err := decodeFrame(f)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestControlLinkEndToEnd(t *testing.T) {
 	}
 
 	// A client never sends S→C types (no punch_abort from clients).
-	af, _ := Marshal(Abort{SessionID: start.SessionID, By: RoleServer, Code: ReasonInternal})
+	af, _ := marshalFrame(Abort{SessionID: start.SessionID, By: RoleServer, Reason: ReasonInternal})
 	if err := client.Send(af); !errors.Is(err, controlwire.ErrWrongDirection) {
 		t.Fatalf("client sending punch_abort: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestControlLinkEndToEnd(t *testing.T) {
 	if err := server.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, ok := WireReason(client.Err()); ok {
-		t.Fatalf("a clean Release maps to a wire reason: %v", client.Err())
+	if err := client.Err(); err != nil && !errors.Is(err, controlwire.ErrReleased) {
+		t.Fatalf("a clean Release ends with %v", err)
 	}
 }

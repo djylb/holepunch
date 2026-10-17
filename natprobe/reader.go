@@ -14,9 +14,9 @@ import (
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/internal/udpicmp"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // Fault injection points of the packet path.
@@ -77,7 +77,7 @@ func (rd *reader) loop(ctx context.Context) {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) || rd.l.dead.Load() {
 				return
 			}
-			if udpicmp.IsReport(err) {
+			if udpsock.IsICMPReport(err) {
 				continue
 			}
 			if n > 0 {

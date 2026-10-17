@@ -60,7 +60,7 @@ func (s *Server) bind(g *life.Group) ([]*listener, [2]*pool, error) {
 		if grp.Alt {
 			n, flags = 1, slotAlt
 		}
-		if nat.ScopeOf(grp.Advertise) == nat.ScopePrivate {
+		if grp.Scope == ScopePrivate || grp.Scope == ScopeAuto && nat.ScopeOf(grp.Advertise) == nat.ScopePrivate {
 			flags |= slotPrivate
 		}
 		var group []*listener

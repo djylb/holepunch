@@ -8,11 +8,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
-// Error is the failure of AttachSession. Reason is one of the 26
+// Error is the failure of Punch. Reason is one of the 26
 // protocol.Reason values; match the error with errors.As and compare Reason.
 type Error struct {
 	Reason     protocol.Reason
@@ -47,14 +48,16 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Err }
 
 // ErrClosed is the Err of a canceled session whose control connection the
-// caller closed while AttachSession was running: the library never closes that
+// caller closed while Punch was running: the library never closes that
 // connection, so its closing is the caller's way to stop the session.
 var ErrClosed = errors.New("holepunch: session closed")
 
-// PanicError is a panic the library recovered, reachable through Error.Err
-// (Reason internal, Detail "panic:<goroutine>"). Its textual forms never
-// contain the stack, which only Stack returns, for local logs. It is the
-// internal/life type, aliased like Clock.
+// PanicError is a panic the library recovered: reachable through Error.Err
+// (Reason internal, Detail "panic:<goroutine>"), and returned by
+// coord.Coordinator.Close and portmapper.Mapper.Map. Its methods are
+// Error, Where (where it was recovered), Stack (for local logs only; the
+// textual forms never contain it) and Unwrap (the panic value when it was an
+// error). Match it with errors.As.
 type PanicError = life.PanicError
 
 // maxDetail bounds Error.Detail and punch_result.detail.
@@ -107,7 +110,7 @@ func classify(callerCtx context.Context, cause error) *failure {
 	if errors.As(cause, &f) {
 		return f
 	}
-	if r, d, ok := protocol.WireReason(cause); ok {
+	if r, d, ok := msgframe.Reason(cause); ok {
 		return fail(r, d, cause)
 	}
 	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {

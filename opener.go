@@ -4,7 +4,7 @@ import (
 	"net/netip"
 	"sync/atomic"
 
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/internal/udpwire"
 )
 
 // The flow opener. Some

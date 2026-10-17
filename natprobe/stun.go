@@ -20,35 +20,6 @@ const stunLookupTimeout = 3 * time.Second
 // maxSTUNPerFamily is what a client asks of one family's STUN servers.
 const maxSTUNPerFamily = protocol.MaxProbeSTUN / 2
 
-// DefaultSTUNServers returns public STUN servers, as host:port, for
-// ProbeSpec.STUN through ResolveSTUN: operators on several continents and
-// networks, so that a client anywhere reaches some of them — the first ones
-// are global anycast services, then servers reachable from mainland China,
-// where the global ones may be blocked, and servers in Europe, Africa and
-// North America. A client asks all of its family's servers at once and a
-// silent one costs it nothing (see protocol.ProbeSpec), so a server that is
-// blocked or far away from some clients does no harm. Each call returns a
-// new slice.
-//
-// STUN answers are hints the server checks against its own observations;
-// they matter most for a client the server sees only at a private address
-// (protocol.Traits.LANObserved), whose STUN answers are the only public
-// addresses it can be reached at.
-func DefaultSTUNServers() []string {
-	return []string{
-		"stun.cloudflare.com:3478",      // global anycast
-		"stun.miwifi.com:3478",          // mainland China
-		"stun.l.google.com:19302",       // global
-		"stun.hitv.com:3478",            // mainland China
-		"stun.nextcloud.com:3478",       // Europe
-		"stun.syrex.co.za:3478",         // South Africa
-		"stun.fbsbx.com:3478",           // global
-		"stun.voip.blackberry.com:3478", // North America
-		"stun1.l.google.com:19302",      // global
-		"stun.t-online.de:3478",         // Europe
-	}
-}
-
 // LookupFunc resolves host to its addresses, as net.Resolver.LookupNetIP
 // does for network "ip".
 type LookupFunc func(ctx context.Context, network, host string) ([]netip.Addr, error)

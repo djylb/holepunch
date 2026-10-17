@@ -10,15 +10,14 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
-	"github.com/djylb/holepunch/internal/udpicmp"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // Socket limits.
@@ -85,38 +84,31 @@ type udpSock struct {
 }
 
 // hopCtl sets the unicast TTL of one socket: through HopLimiter when the conn
-// implements it, else through syscall.Conn. orig is the value found at
-// creation, restored before the handover.
+// implements it, else through udpsock (syscall.Conn). orig is the value
+// found at creation, restored before the handover.
 type hopCtl struct {
 	hl     HopLimiter
-	rc     syscall.RawConn
-	panics *atomic.Int64 // the session's callback panics, which a panicking HopLimiter adds to
+	conn   net.PacketConn // the socket, set without a HopLimiter
+	panics *atomic.Int64  // the session's callback panics, which a panicking conn method adds to
 	orig   int
-	v6     bool
 	ok     bool
 }
 
-func newHopCtl(conn net.PacketConn, v6 bool, panics *atomic.Int64) hopCtl {
-	h := hopCtl{v6: v6, panics: panics}
+func newHopCtl(conn net.PacketConn, panics *atomic.Int64) hopCtl {
+	h := hopCtl{panics: panics}
 	if hl, ok := conn.(HopLimiter); ok {
 		h.hl, h.ok = hl, true
 		return h
 	}
-	sc, ok := conn.(syscall.Conn)
-	if !ok {
-		return h
-	}
+	// The conn's SyscallConn and LocalAddr are the Network's code.
 	var err error
-	if p := life.Safe("syscallconn", func() { h.rc, err = sc.SyscallConn() }); p != nil || err != nil {
+	if p := life.Safe("hoplimit", func() { h.orig, err = udpsock.HopLimit(conn) }); p != nil || err != nil {
 		if p != nil {
 			panics.Add(1)
 		}
-		return hopCtl{v6: v6, panics: panics}
+		return hopCtl{panics: panics}
 	}
-	if h.orig, err = rawHopLimit(h.rc, v6); err != nil {
-		return hopCtl{v6: v6, panics: panics}
-	}
-	h.ok = true
+	h.conn, h.ok = conn, true
 	return h
 }
 
@@ -138,7 +130,12 @@ func (h *hopCtl) set(hops int) error {
 	if hops == 0 {
 		v = h.orig
 	}
-	return setRawHopLimit(h.rc, h.v6, v)
+	var err error
+	if p := life.Safe("hoplimit", func() { err = udpsock.SetHopLimit(h.conn, v) }); p != nil {
+		h.panics.Add(1)
+		return p
+	}
+	return err
 }
 
 var errLowTTLUnavailable = errors.New("holepunch: low TTL unavailable")
@@ -259,10 +256,10 @@ func (s *udpSock) readLoop(rt *runtime) {
 				continue
 			case errors.Is(err, net.ErrClosed):
 				return
-			case udpicmp.IsReport(err):
+			case udpsock.IsICMPReport(err):
 				rt.noteICMP(s)
 				continue
-			case oversized(err):
+			case udpsock.IsTruncated(err):
 				rt.fam(s.fam).cnt.drop(dropForeign)
 				continue
 			}
@@ -401,7 +398,7 @@ func (p *socketPool) open(ctx context.Context, fam protocol.Family, laddr netip.
 		conn: conn, owner: owner, fam: fam, id: nat.SocketID(fam, index), local: local,
 		turn: make(chan struct{}, 1), readDone: make(chan struct{}), op: rt.opener,
 	}
-	s.hop = newHopCtl(conn, fam == protocol.FamilyUDP6, &rt.cnt.callbackPanics)
+	s.hop = newHopCtl(conn, &rt.cnt.callbackPanics)
 	p.commit(s)
 	rt.fam(fam).cnt.sockets.Add(1)
 	if !rt.g.Go("udp-read:"+name, func(context.Context) { s.readLoop(rt) }) {

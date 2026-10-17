@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
-	"github.com/djylb/holepunch/internal/udpicmp"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // A request socket gets the Windows ICMP reports switched off, whatever the
@@ -61,7 +61,7 @@ func (n *reportsOnNetwork) ListenPacket(_ context.Context, network string, laddr
 	if err != nil {
 		return nil, err
 	}
-	if err := udpicmp.EnableReports(c); err != nil {
+	if err := udpsock.EnableICMPReports(c); err != nil {
 		_ = c.Close()
 		return nil, err
 	}

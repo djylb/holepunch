@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -110,7 +110,7 @@ func New(cfg Config) *Mapper {
 // call it before closing conn.
 //
 // Map never panics: a panic inside it is returned as an error that is or
-// wraps a *life.PanicError. After Close, Map returns an error wrapping
+// wraps a *holepunch.PanicError. After Close, Map returns an error wrapping
 // net.ErrClosed.
 func (m *Mapper) Map(ctx context.Context, conn net.PacketConn, policy protocol.PortMappingPolicy) (info protocol.PortMappingInfo, release func() error, err error) {
 	if ctx == nil {

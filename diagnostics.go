@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Diagnostics is the full account of a session: how it went and why it ended.
@@ -32,8 +32,8 @@ type Diagnostics struct {
 	Families   []FamilyDiagnostics
 	Counters   Counters
 	Timing     Timing
-	RTT        time.Duration // the server's estimate of this control link's RTT (punch_go.rtt_ms)
-	Warn       []string      // at most 8: clock_skew, goroutine_join_timeout, low_ttl_unsupported, unverified_targets, insecure_control_for_testing, interface_list_unavailable, control_unreturnable, abort_after_confirm, control_lost_after_confirm
+	RTT        time.Duration      // the server's estimate of this control link's RTT (punch_go.rtt_ms)
+	Warn       []protocol.Warning // at most 8, the protocol.Warn* values this side recorded
 }
 
 // FamilyDiagnostics is one address family of a session.
@@ -46,10 +46,13 @@ type FamilyDiagnostics struct {
 	// Hints are likely causes of what the traits show, for people; no
 	// decision depends on them: HintHostFirewall, HintPeerHostFirewall,
 	// HintServerSeesLAN, HintPeerServerSeesLAN.
-	Hints []string
+	Hints []Hint
 }
 
-// Hints of FamilyDiagnostics.Hints.
+// Hint is a likely cause of what a family's traits show (FamilyDiagnostics.Hints).
+type Hint string
+
+// Hints.
 const (
 	// HintHostFirewall means this side's mapping is endpoint independent — or
 	// there is no NAT — but its filtering is port dependent, which is what
@@ -58,9 +61,9 @@ const (
 	// sent to. The library plans by the filtering it measured and never
 	// counts on the host letting packets in; allowing inbound UDP for the
 	// program may connect more peers directly.
-	HintHostFirewall = "host_firewall"
+	HintHostFirewall Hint = "host_firewall"
 	// HintPeerHostFirewall is HintHostFirewall for the peer.
-	HintPeerHostFirewall = "peer_host_firewall"
+	HintPeerHostFirewall Hint = "peer_host_firewall"
 	// HintServerSeesLAN means the server's public observers saw this side
 	// only at a private address (protocol.Traits.LANObserved): it reaches
 	// the server over a LAN route, or through a router hairpin that keeps
@@ -70,9 +73,9 @@ const (
 	// allows them. Letting the server see the client through its public
 	// address — a hairpin with source NAT, or no LAN route to the server's
 	// public IP — removes the restriction.
-	HintServerSeesLAN = "server_sees_lan"
+	HintServerSeesLAN Hint = "server_sees_lan"
 	// HintPeerServerSeesLAN is HintServerSeesLAN for the peer.
-	HintPeerServerSeesLAN = "peer_server_sees_lan"
+	HintPeerServerSeesLAN Hint = "peer_server_sees_lan"
 )
 
 // hostFirewallLikely reports whether traits show port-dependent filtering
@@ -84,8 +87,8 @@ func hostFirewallLikely(t protocol.Traits) bool {
 }
 
 // familyHints are the hints of one family from both sides' traits.
-func familyHints(self, peer protocol.Traits) []string {
-	var out []string
+func familyHints(self, peer protocol.Traits) []Hint {
+	var out []Hint
 	if hostFirewallLikely(self) {
 		out = append(out, HintHostFirewall)
 	}
@@ -292,14 +295,14 @@ func (d Diagnostics) clone() Diagnostics {
 	for i, f := range d.Families {
 		f.Candidates = maps.Clone(f.Candidates)
 		f.Counters = f.Counters.clone()
-		f.Hints = append([]string(nil), f.Hints...)
+		f.Hints = slices.Clone(f.Hints)
 		out.Families[i] = f
 	}
 	if d.Families == nil {
 		out.Families = nil
 	}
 	out.Counters = d.Counters.clone()
-	out.Warn = append([]string(nil), d.Warn...)
+	out.Warn = slices.Clone(d.Warn)
 	return out
 }
 

@@ -48,7 +48,7 @@ type Config struct {
 	// coordinator then accepts only what Security vouches for.
 	TLS *tls.Config
 	// Security is passed to every Attach (coord.AttachOptions.Security): the
-	// default accepts only completed TLS connections.
+	// default, protocol.ControlSecurityAuto, accepts TLS connections.
 	Security protocol.ControlSecurity
 	// AuthToken is the shared token required on Register and Open; empty
 	// disables the check. Surrounding white space is ignored and the

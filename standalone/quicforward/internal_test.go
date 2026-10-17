@@ -83,7 +83,7 @@ func TestPeerPin(t *testing.T) {
 		t.Fatalf("%q %v", pin, err)
 	}
 	for _, bad := range []string{"", id.pin, "sha256:", "sha256:zz", "md5:" + id.pin} {
-		if _, err := peerPin(bad); !errors.Is(err, ErrTransport) {
+		if _, err := peerPin([]byte(bad)); !errors.Is(err, ErrTransport) {
 			t.Errorf("%q: %v", bad, err)
 		}
 	}

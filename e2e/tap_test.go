@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -210,7 +211,7 @@ func (t *tap) decode(raw []byte) (controlwire.Type, protocol.Message) {
 // yields nil.
 func decodeFrame(raw []byte) (controlwire.Type, protocol.Message) {
 	typ := controlwire.Type(raw[3])
-	m, err := protocol.Decode(controlwire.Frame{Type: typ, Payload: raw[controlwire.HeaderSize:]})
+	m, err := msgframe.Decode(controlwire.Frame{Type: typ, Payload: raw[controlwire.HeaderSize:]})
 	if err != nil {
 		return typ, nil
 	}
@@ -424,7 +425,7 @@ func (t *tap) SetWriteDeadline(d time.Time) error {
 
 // ctlSpy is the client's end of a control link: it forwards everything to
 // the pipe and records what the library leaves behind, for the ownership
-// check: no read in flight and both deadlines cleared once AttachSession has
+// check: no read in flight and both deadlines cleared once Punch has
 // returned.
 type ctlSpy struct {
 	*nattest.PipeConn

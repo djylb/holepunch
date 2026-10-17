@@ -82,7 +82,7 @@ type inboundEvidence struct {
 
 // ObsTable is the observation table of one family. The prober fills
 // it while probing, the client runtime keeps adding peer evidence while
-// punching, and natprobe builds one per reported family in Handle.Merge. It
+// punching, and natprobe builds one per reported family in its merge. It
 // is safe for concurrent use.
 type ObsTable struct {
 	family    protocol.Family

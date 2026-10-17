@@ -5,7 +5,7 @@ import "errors"
 // Errors of the registry and the server.
 var (
 	// ErrRegistryFull is returned when MaxEntries sessions are live, even
-	// after dropping the target shard's expired entries.
+	// after dropping the expired entries.
 	ErrRegistryFull = errors.New("natprobe: registry full")
 	// ErrRouteInUse is returned when another live session holds the route;
 	// the coordinator draws a new route.

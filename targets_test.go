@@ -9,8 +9,8 @@ import (
 
 	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // silentPeer is the verified endpoint of a peer that never answers.

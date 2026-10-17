@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
-	"time"
 
 	"github.com/djylb/holepunch/protocol"
 )
@@ -34,10 +33,30 @@ const (
 // explicitly so that replies leave from the probed address (no
 // IP_PKTINFO, hence no golang.org/x/net).
 type ObserverGroup struct {
-	Bind      netip.Addr // local bind address; unspecified (0.0.0.0, ::) only on single-IP hosts
-	Advertise netip.Addr // the address announced to clients (≠ Bind behind a 1:1 NAT); zero means Bind, which a wildcard Bind does not allow
-	Alt       bool       // a second public IP: one listener on BasePort that serves change-IP replies
+	Bind netip.Addr // local bind address; unspecified (0.0.0.0, ::) only on single-IP hosts
+	// Advertise is the address announced to clients in Server.ProbeSpec
+	// (≠ Bind behind a 1:1 NAT); zero means Bind. A wildcard Bind may leave
+	// it zero when every session gets the address from coord.Config.Probe
+	// or coord.AttachOptions.Probe instead — a host whose public address
+	// changes, say; Scope must then say what kind of address that is.
+	Advertise netip.Addr
+	// Scope is the kind of address the clients reach this group at: what
+	// natprobe counts an observation through it as (public evidence, or LAN
+	// evidence only). ScopeAuto takes it from Advertise.
+	Scope Scope
+	Alt   bool // a second public IP: one listener on BasePort that serves change-IP replies
 }
+
+// Scope is the kind of address an observer group is reached at
+// (ObserverGroup.Scope).
+type Scope uint8
+
+// Scopes.
+const (
+	ScopeAuto    Scope = iota // from ObserverGroup.Advertise (or Bind)
+	ScopePublic               // a public address: observations are evidence of the clients' public mappings
+	ScopePrivate              // a private (LAN) address: observations are LAN evidence only
+)
 
 // ServerConfig configures a Server.
 type ServerConfig struct {
@@ -50,7 +69,6 @@ type ServerConfig struct {
 	ReadersPerListener int             // default 2, 1..8
 	SourceRate         Rate            // per source prefix (v4 /32, v6 /64), default {512, 1024}; PerSec < 0 disables it
 	SourceTableSize    int             // source limiter LRU size, default 4096, 16..1<<20
-	SweepInterval      time.Duration   // 0: never, the coordinator sweeps the Registry; 10 s for a natprobe on its own
 
 	// Listen opens one UDP socket; nil means net.ListenUDP. Its signature is
 	// that of nattest.Host.Listen. An injected Listen also
@@ -98,8 +116,6 @@ func normalize(cfg ServerConfig) (ServerConfig, error) {
 		return cfg, errors.New("natprobe: config: SourceRate.PerSec is 0")
 	case cfg.SourceTableSize < srcShards || cfg.SourceTableSize > maxSourceTable:
 		return cfg, fmt.Errorf("natprobe: config: SourceTableSize %d not in [%d, %d]", cfg.SourceTableSize, srcShards, maxSourceTable)
-	case cfg.SweepInterval < 0:
-		return cfg, errors.New("natprobe: config: negative SweepInterval")
 	case len(cfg.Groups) == 0 || len(cfg.Groups) > maxGroups:
 		return cfg, fmt.Errorf("natprobe: config: %d groups, want 1..%d", len(cfg.Groups), maxGroups)
 	}
@@ -108,7 +124,8 @@ func normalize(cfg ServerConfig) (ServerConfig, error) {
 	return cfg, err
 }
 
-// normalizeGroups checks every group and fills Advertise from Bind; the
+// normalizeGroups checks every group and fills Advertise from a specific
+// Bind; the
 // result is a copy, so the caller's slice is never shared.
 func normalizeGroups(in []ObserverGroup, portCount int) ([]ObserverGroup, error) {
 	groups := append([]ObserverGroup(nil), in...)
@@ -119,16 +136,21 @@ func normalizeGroups(in []ObserverGroup, portCount int) ([]ObserverGroup, error)
 		if !g.Bind.IsValid() || g.Bind.Is4In6() || g.Bind.Zone() != "" || g.Bind.IsMulticast() {
 			return nil, fmt.Errorf("natprobe: config: group %d: bad Bind %v", i, g.Bind)
 		}
-		if !g.Advertise.IsValid() {
-			if g.Bind.IsUnspecified() {
-				return nil, fmt.Errorf("natprobe: config: group %d: a wildcard Bind needs Advertise", i)
-			}
+		if g.Scope > ScopePrivate {
+			return nil, fmt.Errorf("natprobe: config: group %d: unknown Scope %d", i, g.Scope)
+		}
+		if !g.Advertise.IsValid() && !g.Bind.IsUnspecified() {
 			g.Advertise = g.Bind
 		}
-		g.Advertise = g.Advertise.Unmap()
 		fam := protocol.FamilyOf(g.Bind)
-		if protocol.FamilyOf(g.Advertise) != fam || g.Advertise.IsUnspecified() || g.Advertise.IsMulticast() || g.Advertise.Zone() != "" {
-			return nil, fmt.Errorf("natprobe: config: group %d: Advertise %v does not fit Bind %v", i, g.Advertise, g.Bind)
+		switch {
+		case g.Advertise.IsValid():
+			g.Advertise = g.Advertise.Unmap()
+			if protocol.FamilyOf(g.Advertise) != fam || g.Advertise.IsUnspecified() || g.Advertise.IsMulticast() || g.Advertise.Zone() != "" {
+				return nil, fmt.Errorf("natprobe: config: group %d: Advertise %v does not fit Bind %v", i, g.Advertise, g.Bind)
+			}
+		case g.Scope == ScopeAuto:
+			return nil, fmt.Errorf("natprobe: config: group %d: a wildcard Bind without Advertise needs a Scope", i)
 		}
 		f := famIndex(fam)
 		if g.Alt {

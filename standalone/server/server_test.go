@@ -14,7 +14,6 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/coord"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/nattest"
@@ -38,7 +37,7 @@ type rig struct {
 
 func newRig(t *testing.T, mutate func(*Config)) *rig {
 	t.Helper()
-	b, err := broker.New(broker.Config{Coord: coord.Config{AllowUnverifiedTargets: true}})
+	b, err := broker.New(broker.Config{Coord: coord.Config{NoObserver: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +137,7 @@ func punchStart(t *testing.T, c net.Conn) {
 	if _, err := io.ReadFull(c, hdr[:]); err != nil {
 		t.Fatal(err)
 	}
-	if hdr[0] != 'h' || hdr[1] != 'p' || controlwire.Type(hdr[3]) != controlwire.TypePunchStart {
+	if hdr[0] != 'h' || hdr[1] != 'p' || hdr[3] != 1 /* punch_start */ {
 		t.Fatalf("header % x", hdr)
 	}
 	go func() { _, _ = io.Copy(io.Discard, c) }()
@@ -460,7 +459,7 @@ func TestMaxConns(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	b, err := broker.New(broker.Config{Coord: coord.Config{AllowUnverifiedTargets: true}})
+	b, err := broker.New(broker.Config{Coord: coord.Config{NoObserver: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

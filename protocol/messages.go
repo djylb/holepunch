@@ -4,30 +4,28 @@ import (
 	"math"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 )
 
 // MessageType is the type byte of a control frame. The twelve types are
-// numbered contiguously from 1;
-// 13–255 are reserved. The numbers, caps, directions and write priorities are
-// defined once, in controlwire's frame-type table; MessageType names them for
-// the message layer.
+// numbered contiguously from 1; 13–255 are reserved. MaxPayload gives each
+// type's payload cap.
 type MessageType uint8
 
 // The twelve message types.
 const (
-	MsgPunchStart   = MessageType(controlwire.TypePunchStart)   // S→C
-	MsgProbeReport  = MessageType(controlwire.TypeProbeReport)  // C→S
-	MsgProbeSummary = MessageType(controlwire.TypeProbeSummary) // S→C
-	MsgPunchReady   = MessageType(controlwire.TypePunchReady)   // C→S
-	MsgPunchGo      = MessageType(controlwire.TypePunchGo)      // S→C
-	MsgProgress     = MessageType(controlwire.TypeProgress)     // C→S, telemetry only
-	MsgAssist       = MessageType(controlwire.TypeAssist)       // C→S→C and S→C
-	MsgAbort        = MessageType(controlwire.TypeAbort)        // S→C only
-	MsgPing         = MessageType(controlwire.TypePing)         // S→C
-	MsgPong         = MessageType(controlwire.TypePong)         // C→S
-	MsgRoundResult  = MessageType(controlwire.TypeRoundResult)  // C→S
-	MsgPunchResult  = MessageType(controlwire.TypePunchResult)  // C→S
+	MsgPunchStart   = MessageType(1)  // S→C
+	MsgProbeReport  = MessageType(2)  // C→S
+	MsgProbeSummary = MessageType(3)  // S→C
+	MsgPunchReady   = MessageType(4)  // C→S
+	MsgPunchGo      = MessageType(5)  // S→C
+	MsgProgress     = MessageType(6)  // C→S, telemetry only
+	MsgAssist       = MessageType(7)  // C→S→C and S→C
+	MsgAbort        = MessageType(8)  // S→C only
+	MsgPing         = MessageType(9)  // S→C
+	MsgPong         = MessageType(10) // C→S
+	MsgRoundResult  = MessageType(11) // C→S
+	MsgPunchResult  = MessageType(12) // C→S
 )
 
 // String is the wire name of the type ("punch_go"), or "type(N)".
@@ -180,11 +178,11 @@ const (
 // Abort ends a session from the server. The server never forwards a client's
 // frame; it always writes a new one. A client never sends it: a client's
 // terminal report is punch_result, and a punch_abort arriving at the server is
-// a wrong-direction frame (controlwire discards and counts it).
+// a wrong-direction frame, discarded and counted.
 type Abort struct {
 	SessionID    string `json:"session_id"`
 	By           Role   `json:"by"`                       // initiator | responder | server: where the failure came from
-	Code         Reason `json:"code"`                     // empty or unknown: AbortReason maps to aborted_by_*
+	Reason       Reason `json:"code"`                     // empty or unknown: the client fails with aborted_by_<by>
 	Detail       string `json:"detail,omitempty"`         // <= 256 B
 	RetryAfterMs uint32 `json:"retry_after_ms,omitempty"` // suggested retry delay (server_busy, ...)
 }
@@ -200,7 +198,7 @@ type RoundResult struct {
 	SessionID  string          `json:"session_id"`
 	Role       Role            `json:"role"`
 	Status     RoundStatus     `json:"status"`
-	Code       Reason          `json:"code,omitempty"` // status fatal: udp_blocked | local_port_bind_failed | ...
+	Reason     Reason          `json:"code,omitempty"` // status fatal: udp_blocked | local_port_bind_failed | ...
 	Families   []FamilyOutcome `json:"families"`       // <= 2
 	ElapsedMs  uint32          `json:"elapsed_ms"`     // the round's punch_go read → this frame written (sample Sk)
 	FireSkewMs int16           `json:"fire_skew_ms"`   // actual fire − (t_recv + delay_ms)
@@ -226,7 +224,7 @@ type PunchResult struct {
 	SessionID  string         `json:"session_id"`
 	Role       Role           `json:"role"`
 	OK         bool           `json:"ok"`
-	Code       Reason         `json:"code,omitempty"`        // required when !ok
+	Reason     Reason         `json:"code,omitempty"`        // required when !ok
 	Phase      Phase          `json:"phase"`                 // the client phase at the end
 	Detail     string         `json:"detail,omitempty"`      // <= 256 B, human readable, no key material
 	Path       *PathInfo      `json:"path,omitempty"`        // required when ok, with confirmed_by
@@ -234,7 +232,7 @@ type PunchResult struct {
 	Stats      Stats          `json:"stats"`
 	Timing     Timing         `json:"timing"`
 	Traits     []TraitsUpdate `json:"traits,omitempty"` // <= 2: corrections of this side's traits
-	Warn       []string       `json:"warn,omitempty"`   // <= 8
+	Warn       []Warning      `json:"warn,omitempty"`   // <= 8
 }
 
 // MessageType implements Message.

@@ -13,7 +13,7 @@ import (
 func withRegistry(reg *natprobe.Registry) rigOpt {
 	return func(c *Config) {
 		c.Registry = reg
-		c.AllowUnverifiedTargets = false
+		c.NoObserver = false
 	}
 }
 
@@ -69,12 +69,12 @@ func TestDeadlines(t *testing.T) {
 			r.clk.Advance(time.Millisecond)
 			for i, w := range c.aborts {
 				a := expectAbort(t, p.cl[i])
-				if a.By != w.by || a.Code != w.code {
+				if a.By != w.by || a.Reason != w.code {
 					t.Fatalf("abort to %d: %+v, want %+v", i, a, w)
 				}
 			}
 			res := r.wait(s)
-			if res.Code != c.code || res.Detail != c.detail || res.FailedRole != c.failed {
+			if res.Reason != c.code || res.Detail != c.detail || res.FailedRole != c.failed {
 				t.Fatalf("result %+v", res)
 			}
 			if reg.Len() != 0 || r.c.Len() != 0 {
@@ -93,14 +93,14 @@ func TestSummarizedDeadline(t *testing.T) {
 	send(t, p.cl[0], simclient.Ready(sums[0], protocol.RoleInitiator, 1))
 	eventually(t, "ready", func() bool { return p.s.Snapshot().Ready[0] })
 	r.clk.Advance(5 * time.Second)
-	if a := expectAbort(t, p.cl[0]); a.By != protocol.RoleResponder || a.Code != protocol.ReasonNotSynchronized {
+	if a := expectAbort(t, p.cl[0]); a.By != protocol.RoleResponder || a.Reason != protocol.ReasonNotSynchronized {
 		t.Fatalf("abort %+v", a)
 	}
 	if a := expectAbort(t, p.cl[1]); a.By != protocol.RoleServer {
 		t.Fatalf("abort %+v", a)
 	}
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonNotSynchronized || res.FailedRole != protocol.RoleResponder || res.Outcome != OutcomeFailed {
+	if res.Reason != protocol.ReasonNotSynchronized || res.FailedRole != protocol.RoleResponder || res.Outcome != OutcomeFailed {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -156,10 +156,10 @@ func TestPunchDeadline(t *testing.T) {
 		})
 	}
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonNotSynchronized || res.Outcome != OutcomeFailed {
+	if res.Reason != protocol.ReasonNotSynchronized || res.Outcome != OutcomeFailed {
 		t.Fatalf("result %+v", res)
 	}
-	if got := r.clk.Now().Sub(res.Timings.FirstGo); got > 3*time.Second {
+	if got := r.clk.Now().Sub(res.Timing.FirstGo); got > 3*time.Second {
 		t.Fatalf("ended %v after the first go", got)
 	}
 }
@@ -176,10 +176,10 @@ func TestSessionExpired(t *testing.T) {
 	p.s.rearmLocked(p.s.since(now))
 	p.s.mu.Unlock()
 	r.clk.Advance(time.Second)
-	if a := expectAbort(t, p.cl[0]); a.Code != protocol.ReasonSessionExpired {
+	if a := expectAbort(t, p.cl[0]); a.Reason != protocol.ReasonSessionExpired {
 		t.Fatalf("abort %+v", a)
 	}
-	if res := r.wait(p.s); res.Code != protocol.ReasonSessionExpired || res.Outcome != OutcomeAborted {
+	if res := r.wait(p.s); res.Reason != protocol.ReasonSessionExpired || res.Outcome != OutcomeAborted {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -212,7 +212,7 @@ func TestPlannerBlockedDoesNotLeakResources(t *testing.T) {
 	<-bp.entered
 	r.clk.Advance(5 * time.Second)
 	for i := range 2 {
-		if a := expectAbort(t, p.cl[i]); a.Code != protocol.ReasonInternal || a.Detail != detailPlannerTimeout {
+		if a := expectAbort(t, p.cl[i]); a.Reason != protocol.ReasonInternal || a.Detail != detailPlannerTimeout {
 			t.Fatalf("abort %+v", a)
 		}
 	}
@@ -224,7 +224,7 @@ func TestPlannerBlockedDoesNotLeakResources(t *testing.T) {
 	}
 	close(bp.release)
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonInternal || res.Detail != detailPlannerTimeout {
+	if res.Reason != protocol.ReasonInternal || res.Detail != detailPlannerTimeout {
 		t.Fatalf("result %+v", res)
 	}
 }

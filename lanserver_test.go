@@ -2,7 +2,6 @@ package holepunch_test
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"net"
 	"net/netip"
@@ -17,6 +16,7 @@ import (
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/holepunch/stun"
 )
 
 // lanServerAddr is the server's public address. The server also sits in the
@@ -92,44 +92,17 @@ func (d *dualConn) SetDeadline(time.Time) error      { return nil }
 func (d *dualConn) SetReadDeadline(time.Time) error  { return nil }
 func (d *dualConn) SetWriteDeadline(time.Time) error { return nil }
 
-// runSTUN answers STUN Binding Requests on pc until it is closed.
-func runSTUN(pc net.PacketConn) {
-	buf := make([]byte, 2048)
-	for {
-		n, from, err := pc.ReadFrom(buf)
-		if err != nil {
-			return
-		}
-		ua, ok := from.(*net.UDPAddr)
-		if !ok || n < 20 || binary.BigEndian.Uint16(buf) != 0x0001 || binary.BigEndian.Uint32(buf[4:]) != 0x2112A442 {
-			continue
-		}
-		src := ua.AddrPort()
-		resp := make([]byte, 32)
-		binary.BigEndian.PutUint16(resp, 0x0101)
-		binary.BigEndian.PutUint16(resp[2:], 12)
-		copy(resp[4:20], buf[4:20])
-		binary.BigEndian.PutUint16(resp[20:], 0x0020) // XOR-MAPPED-ADDRESS
-		binary.BigEndian.PutUint16(resp[22:], 8)
-		resp[25] = 1
-		binary.BigEndian.PutUint16(resp[26:], src.Port()^0x2112)
-		ip := src.Addr().Unmap().As4()
-		binary.BigEndian.PutUint32(resp[28:], binary.BigEndian.Uint32(ip[:])^0x2112A442)
-		_, _ = pc.WriteTo(resp, from)
-	}
-}
-
 // lanServerCase is a pair of clients around a server that sits in a
 // router's LAN as well as on the Internet.
 type lanServerCase struct {
 	name string
 	// clients returns the initiator's and the responder's hosts.
-	clients      func(n *nattest.Network, router *nattest.NAT) [2]*nattest.Host
-	verifiedOnly bool
-	lanPrefix    string
-	wantKind     protocol.PathKind // "" expects a failure
-	wantDetail   string            // the failure's detail, when it matters
-	wantHint     string            // a hint the LAN client's diagnostics carry
+	clients    func(n *nattest.Network, router *nattest.NAT) [2]*nattest.Host
+	targets    coord.TargetPolicy
+	lanPrefix  string
+	wantKind   protocol.PathKind // "" expects a failure
+	wantDetail string            // the failure's detail, when it matters
+	wantHint   holepunch.Hint    // a hint the LAN client's diagnostics carry
 }
 
 func TestServerInClientLAN(t *testing.T) {
@@ -148,10 +121,10 @@ func TestServerInClientLAN(t *testing.T) {
 	for _, c := range []lanServerCase{
 		{name: "both clients in the server's LAN", clients: inLAN(), wantKind: protocol.PathLAN, wantHint: holepunch.HintServerSeesLAN},
 		{name: "LAN client and an outside peer", clients: lanAndOutside, wantKind: protocol.PathPublic, wantHint: holepunch.HintServerSeesLAN},
-		{name: "LAN client and an outside peer, verified targets only", clients: lanAndOutside, verifiedOnly: true,
+		{name: "LAN client and an outside peer, verified targets only", clients: lanAndOutside, targets: coord.TargetsVerifiedOnly,
 			wantHint: holepunch.HintServerSeesLAN},
 		{name: "LAN clients on two subnets, verified targets only", clients: inLAN("192.168.1.10", "192.168.2.10"),
-			verifiedOnly: true, lanPrefix: "192.168.0.0/16", wantDetail: plan.DetailNoTarget},
+			targets: coord.TargetsVerifiedOnly, lanPrefix: "192.168.0.0/16", wantDetail: plan.DetailNoTarget},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -190,7 +163,7 @@ func runLANServerCase(t *testing.T, c lanServerCase) {
 	var helpers sync.WaitGroup
 	defer helpers.Wait()
 	defer func() { _ = stunConn.Close() }()
-	helpers.Go(func() { runSTUN(stunConn) })
+	helpers.Go(func() { _ = stun.Serve(stunConn) })
 
 	reg := natprobe.NewRegistry(natprobe.RegistryConfig{})
 	probe, err := natprobe.NewServer(natprobe.ServerConfig{Registry: reg, Groups: []natprobe.ObserverGroup{{Bind: lanServerAddr}},
@@ -206,7 +179,7 @@ func runLANServerCase(t *testing.T, c lanServerCase) {
 	spec.STUN = []netip.AddrPort{stunAddr}
 	res := make(chan coord.Result, 1)
 	co, err := coord.New(coord.Config{
-		Registry: reg, DefaultProbe: spec, VerifiedTargetsOnly: c.verifiedOnly,
+		Registry: reg, DefaultProbe: spec, Targets: c.targets,
 		Timeouts: protocol.Timeouts{HandshakeTimeoutMs: 4000, MaxRounds: 2},
 		OnResult: func(r coord.Result) { res <- r },
 	})
@@ -243,7 +216,7 @@ func runLANServerCase(t *testing.T, c lanServerCase) {
 			t.Fatal(err)
 		}
 		wg.Go(func() {
-			out[i], errs[i] = holepunch.AttachSession(context.Background(), ce, holepunch.Options{
+			out[i], errs[i] = holepunch.Punch(context.Background(), ce, holepunch.Options{
 				ControlSecurity: protocol.ControlSecurityInsecureForTesting, Network: hosts[i],
 			})
 		})
@@ -258,7 +231,7 @@ func runLANServerCase(t *testing.T, c lanServerCase) {
 	if c.wantKind != "" {
 		for i := range 2 {
 			if errs[i] != nil {
-				t.Fatalf("client %d: %v (coordinator: %s %s %s)", i, errs[i], r.Outcome, r.Code, r.Detail)
+				t.Fatalf("client %d: %v (coordinator: %s %s %s)", i, errs[i], r.Outcome, r.Reason, r.Detail)
 			}
 			if kind := out[i].Result().Path.Kind; kind != c.wantKind {
 				t.Fatalf("client %d: %s path, want %s", i, kind, c.wantKind)

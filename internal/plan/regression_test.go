@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -121,7 +122,7 @@ func TestReplyOnlyMarshals(t *testing.T) {
 	for r := 0; r < 2; r++ {
 		rp := protocol.RoundPlan{Round: 2, Variant: dec.VariantName, Budget: dec.Budget, WindowMs: uint16(dec.Window / time.Millisecond), Seed: 1, Sides: dec.Sides[r]}
 		pg := protocol.PunchGo{SessionID: "s1", Round: 2, WindowMs: rp.WindowMs, Plan: &rp}
-		if _, err := protocol.Marshal(pg); err != nil {
+		if _, err := msgframe.Encode(pg); err != nil {
 			t.Errorf("role %d (%s): punch_go does not marshal: %v", r, dec.Sides[r][0].Role, err)
 		}
 	}
@@ -606,7 +607,7 @@ func TestSweepMarshal(t *testing.T) {
 				for r := 0; r < 2; r++ {
 					rp := protocol.RoundPlan{Round: uint8(round), Variant: dec.VariantName, Budget: dec.Budget, WindowMs: uint16(dec.Window / time.Millisecond), Seed: 1, Sides: dec.Sides[r]}
 					msg, clamped := carrier(rp)
-					if _, err := protocol.Marshal(msg); err != nil {
+					if _, err := msgframe.Encode(msg); err != nil {
 						t.Errorf("%s ext=%v r%d role %d: %v", name, ext, round, r, err)
 					}
 					if clamped {
@@ -1056,7 +1057,7 @@ func TestRescueInEvidenceFamily(t *testing.T) {
 	}
 	for r := range 2 {
 		rp := protocol.RoundPlan{Round: 2, Variant: dec.VariantName, Budget: dec.Budget, WindowMs: uint16(dec.Window / time.Millisecond), Seed: 1, Rescue: true, Sides: dec.Sides[r]}
-		if _, err := protocol.Marshal(protocol.PunchGo{SessionID: "s1", Round: 2, WindowMs: rp.WindowMs, Plan: &rp}); err != nil {
+		if _, err := msgframe.Encode(protocol.PunchGo{SessionID: "s1", Round: 2, WindowMs: rp.WindowMs, Plan: &rp}); err != nil {
 			t.Fatalf("role %d: rescue plan does not encode: %v", r, err)
 		}
 		if dec.Sides[r][0].Family != v6 || dec.Sides[r][0].Role != protocol.SideReplyOnly {

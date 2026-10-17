@@ -2,18 +2,19 @@ package holepunch
 
 import (
 	"errors"
+	"net"
 	"net/netip"
 	"slices"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/internal/candidate"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Cleanup bounds.
@@ -27,19 +28,6 @@ const (
 const (
 	fiFinalizeDisown = "finalize.disown"
 	fiResultWrite    = "result.write"
-)
-
-// Warnings beyond the protocol's list (warn is an open enumeration).
-const (
-	// warnControlUnreturnable: controlwire could not hand the control
-	// connection back at a frame boundary; the caller must close it.
-	warnControlUnreturnable = "control_unreturnable"
-	// warnAbortAfterConfirm: a punch_abort arrived after the local Confirm
-	// and was ignored.
-	warnAbortAfterConfirm = "abort_after_confirm"
-	// warnControlLostAfterConfirm: the control link ended after the local
-	// Confirm; the handover went on over UDP.
-	warnControlLostAfterConfirm = "control_lost_after_confirm"
 )
 
 var errFinishing = errors.New("holepunch: session finishing")
@@ -177,7 +165,7 @@ func (rt *runtime) sentTotal() int {
 	return n
 }
 
-// finish is the single exit of AttachSession, for success and failure alike.
+// finish is the single exit of Punch, for success and failure alike.
 // Every step runs in a recover boundary so a panic in one never skips the next.
 // On success it hands over the sockets of every confirmed path: the primary
 // path's and those of the extra paths, each once.
@@ -262,7 +250,7 @@ func (rt *runtime) finish(win *candidate.Action, cause error) (*Session, error) 
 		rt.step("finish.result", func() { rt.writeResult(win, f, failPhase) }, &f)
 		rt.step("finish.release", func() {
 			if err := rt.ctl.conn.Release(); errors.Is(err, controlwire.ErrUnreturnable) {
-				rt.addWarn(warnControlUnreturnable)
+				rt.addWarn(protocol.WarnControlUnreturnable)
 			}
 		}, &f)
 	} else {
@@ -291,17 +279,19 @@ func (rt *runtime) finish(win *candidate.Action, cause error) (*Session, error) 
 	return rt.session(win, ho, rt.diagnostics(win, nil, failPhase)), nil
 }
 
-// session builds the Session of a successful handover: the primary path's
-// socket, the extra paths' in the order of Result.ExtraPaths, the port
-// mappings to release first on Close, and the residual filter bound to
-// every confirmed remote.
+// session builds the Session of a successful handover: the paths' distinct
+// sockets, the primary path's first, the port mappings to release first on
+// Close, and the codec of the residual filter, bound to every confirmed
+// remote.
 func (rt *runtime) session(win *candidate.Action, ho *handoff, diag Diagnostics) *Session {
 	primary := ho.socks[0]
-	s := &Session{diag: diag, conn: primary.sock.conn, residual: ResidualFilter{Codec: rt.codec, Window: udpwire.DefaultResidualWindow}}
+	s := &Session{diag: diag, conns: []net.PacketConn{primary.sock.conn}, codec: rt.codec}
 	peers := []netip.AddrPort{win.Remote}
 	res := rt.result(win, primary)
 	for _, p := range ho.paths() {
-		s.extra = append(s.extra, p.s.sock.conn)
+		if !slices.ContainsFunc(s.conns, func(c net.PacketConn) bool { return sameConn(c, p.s.sock.conn) }) {
+			s.conns = append(s.conns, p.s.sock.conn)
+		}
 		peers = append(peers, p.c.Remote)
 		res.ExtraPaths = append(res.ExtraPaths, rt.path(p.c, p.s))
 	}
@@ -340,7 +330,7 @@ func (rt *runtime) writeResult(win *candidate.Action, f *failure, failPhase Phas
 		Stats: rt.wireStats(), Timing: rt.wireTiming(), Traits: rt.corrections(), Warn: rt.warnings(),
 	}
 	if f != nil {
-		pr.Code, pr.Phase, pr.Detail = f.reason, failPhase, truncDetail(f.detail)
+		pr.Reason, pr.Phase, pr.Detail = f.reason, failPhase, truncDetail(f.detail)
 	} else {
 		p := rt.punch.path()
 		p.ConfirmedBy = win.ConfirmedBy
@@ -538,8 +528,8 @@ func (rt *runtime) result(win *candidate.Action, primary *handSock) Result {
 	path := rt.punch.path()
 	r := Result{
 		SessionID: rt.start.SessionID, Role: rt.role,
-		Path:          rt.newPath(win.Family, path.Kind, primary.sock.local, win.Remote, time.Duration(path.RTTMs)*time.Millisecond, primary.info),
-		TransportMode: rt.transport.Mode, TransportData: rt.transport.PeerData,
+		Path:          rt.newPath(win.Family, path.Kind, primary.sock.conn, primary.sock.local, win.Remote, time.Duration(path.RTTMs)*time.Millisecond, primary.info),
+		TransportMode: rt.transport.Mode, PeerTransportData: rt.transport.PeerData,
 		TransportTimeout: time.Duration(rt.timeouts.TransportTimeoutMs) * time.Millisecond,
 		Rounds:           len(rt.roundsRun), Timing: rt.publicTiming(),
 	}
@@ -553,17 +543,17 @@ func (rt *runtime) result(win *candidate.Action, primary *handSock) Result {
 
 // path describes the extra path c on hs for Result.ExtraPaths.
 func (rt *runtime) path(c candidate.Candidate, hs *handSock) Path {
-	return rt.newPath(c.Family, rt.pathKind(c.Family, c.Remote, c.Kind), hs.sock.local, c.Remote, c.MinRTT, hs.info)
+	return rt.newPath(c.Family, rt.pathKind(c.Family, c.Remote, c.Kind), hs.sock.conn, hs.sock.local, c.Remote, c.MinRTT, hs.info)
 }
 
 // newPath is a Path with the keepalive its kind of network, the traits of
 // its family and its socket's port mapping call for.
-func (rt *runtime) newPath(fam protocol.Family, kind protocol.PathKind, local, remote netip.AddrPort, rtt time.Duration, pm *protocol.PortMappingInfo) Path {
+func (rt *runtime) newPath(fam protocol.Family, kind protocol.PathKind, conn net.PacketConn, local, remote netip.AddrPort, rtt time.Duration, pm *protocol.PortMappingInfo) Path {
 	var self, peer protocol.Traits
 	if w := rt.fam(fam).worker; w != nil {
 		self, peer = w.selfTraits, w.peerTraits
 	}
-	return Path{Family: fam, Kind: kind, LocalAddr: local, RemoteAddr: remote, RTT: rtt,
+	return Path{Conn: conn, Family: fam, Kind: kind, LocalAddr: local, RemoteAddr: remote, RTT: rtt,
 		Keepalive: keepaliveFor(fam, kind, self, peer, pm), PortMapping: pm}
 }
 
@@ -587,7 +577,7 @@ func (f *famState) table() *nat.ObsTable {
 }
 
 // addWarn records a warning once (at most eight are kept).
-func (rt *runtime) addWarn(w string) {
+func (rt *runtime) addWarn(w protocol.Warning) {
 	rt.warnMu.Lock()
 	defer rt.warnMu.Unlock()
 	for _, x := range rt.warn {
@@ -600,8 +590,8 @@ func (rt *runtime) addWarn(w string) {
 	}
 }
 
-func (rt *runtime) warnings() []string {
+func (rt *runtime) warnings() []protocol.Warning {
 	rt.warnMu.Lock()
 	defer rt.warnMu.Unlock()
-	return append([]string(nil), rt.warn...)
+	return slices.Clone(rt.warn)
 }

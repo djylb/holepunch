@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -29,7 +30,7 @@ type StrategyKey [16]byte
 func (k StrategyKey) String() string { return hex.EncodeToString(k[:]) }
 
 // StrategySide is one canonical side of a StrategyKey: the verified public IP
-// prefix (IPv4 /32, IPv6 /64) and internal/nat.ClassBits of its traits.
+// prefix (IPv4 /32, IPv6 /64) and the class bits of its traits.
 type StrategySide struct {
 	IPPrefix  netip.Prefix
 	ClassBits uint32
@@ -114,8 +115,9 @@ type StrategyMemoryConfig struct {
 	ScoreMin       int8          // -10
 	ScoreMax       int8          // +10
 	ReportsPerMin  int           // 6 reports per key and minute; more are ignored
-	// Clock is the time source of TTLs and report rates; nil means time.Now.
-	Clock func() time.Time
+	// Clock is the time source of TTLs and report rates; nil means the
+	// system clock.
+	Clock clock.Clock
 }
 
 // Memory defaults.
@@ -181,7 +183,7 @@ func NewStrategyMemory(cfg StrategyMemoryConfig) StrategyMemory {
 		m.cfg.ReportsPerMin = memDefReports
 	}
 	if m.cfg.Clock == nil {
-		m.cfg.Clock = time.Now
+		m.cfg.Clock = clock.System{}
 	}
 	m.salt = slices.Clone(m.cfg.Salt)
 	if len(m.salt) == 0 {
@@ -238,7 +240,7 @@ func (m *memory) Recommend(key StrategyKey, ladder []VariantID) []VariantID {
 	if len(out) == 0 {
 		return out
 	}
-	now := m.cfg.Clock().Unix()
+	now := m.cfg.Clock.Now().Unix()
 	sh := m.shard(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -254,7 +256,7 @@ func (m *memory) Report(key StrategyKey, v VariantID, r MemoryResult) {
 	if r != MemSuccess && r != MemFailure {
 		return
 	}
-	now := m.cfg.Clock().Unix()
+	now := m.cfg.Clock.Now().Unix()
 	sh := m.shard(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -277,7 +279,7 @@ func (m *memory) Report(key StrategyKey, v VariantID, r MemoryResult) {
 // coordinator reads it for the escalation guard (only proven variants, score
 // >= +1, may lift the first-round class cap).
 func (m *memory) score(key StrategyKey, v VariantID) int8 {
-	now := m.cfg.Clock().Unix()
+	now := m.cfg.Clock.Now().Unix()
 	sh := m.shard(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -321,7 +323,7 @@ func (m *memory) Sweep(now time.Time, max int) int {
 func (m *memory) Export(w io.Writer) error {
 	bw := bufio.NewWriter(w)
 	var recs [][memRecordSize]byte
-	now := m.cfg.Clock().Unix()
+	now := m.cfg.Clock.Now().Unix()
 	for i := range m.shards {
 		sh := &m.shards[i]
 		sh.mu.Lock()
@@ -390,7 +392,7 @@ func (m *memory) Import(r io.Reader) error {
 	}
 	// Oldest first, so that the lists stay ordered by last use.
 	slices.SortStableFunc(recs, func(a, b rec) int { return cmp.Compare(a.last, b.last) })
-	now := m.cfg.Clock().Unix()
+	now := m.cfg.Clock.Now().Unix()
 	for _, x := range recs {
 		e := &memEntry{key: x.key, scores: x.scores, lastUsed: x.last}
 		if m.expired(e, now) {

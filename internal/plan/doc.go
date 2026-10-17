@@ -70,7 +70,7 @@
 //     the client admits: a verified IP of the peer; in a family the
 //     server could not verify (pair.unverified) Direct stages only, to at
 //     most four of the global addresses the peer reported — sixteen when no
-//     family is verified, the relay-only mode — eight packets each, in
+//     family is verified, the NoObserver mode — eight packets each, in
 //     a light round; on a shared LAN (pair.same_lan) a Direct stage of its
 //     own toward the peer's LAN endpoints, four targets of two packets each
 //     at most, before the public ones. Upstream-LAN candidates are not plan

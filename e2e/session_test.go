@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch"
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord"
 	"github.com/djylb/holepunch/internal/ablation"
 	"github.com/djylb/holepunch/nattest"
@@ -40,7 +41,7 @@ type sessionSpec struct {
 	timeouts     *protocol.Timeouts
 	clientPolicy [2]*protocol.Policy
 	onProgress   [2]func(protocol.Progress)
-	clock        [2]holepunch.Clock
+	clock        [2]clock.Clock
 	// maxPaths is both clients' Options.MaxPaths; 0 is one path.
 	maxPaths int
 	// background runs the session in Background mode: the coordinator
@@ -49,7 +50,7 @@ type sessionSpec struct {
 	// prepare runs once the links exist and before anything is attached:
 	// fault tests arm their taps and triggers here.
 	prepare func(r *run)
-	// onReturn runs on a side's goroutine right after its AttachSession
+	// onReturn runs on a side's goroutine right after its Punch
 	// returned.
 	onReturn [2]func(r *run)
 }
@@ -69,7 +70,7 @@ type sideResult struct {
 	inflight int   // reads in flight on the control conn after return
 	rdl, wdl time.Time
 	// handed is the application's view of the winning socket, marked as
-	// handed over the moment AttachSession returned; markErr is why
+	// handed over the moment Punch returned; markErr is why
 	// it could not be marked. extra are the views of the extra paths'
 	// sockets, by Result.ExtraPaths; nil where a path shares the
 	// primary path's socket.
@@ -100,7 +101,7 @@ func (s *sideResult) reason() protocol.Reason {
 	return ""
 }
 
-// dur is the time AttachSession took.
+// dur is the time Punch took.
 func (s *sideResult) dur() time.Duration { return s.end.Sub(s.start) }
 
 // run is one session in progress and, once finished, its outcome.
@@ -193,7 +194,7 @@ func (r *run) execute() {
 	}
 }
 
-// client attaches one side to the coordinator and runs its AttachSession.
+// client attaches one side to the coordinator and runs its Punch.
 func (r *run) client(i int) {
 	o := &r.out[i]
 	o.start = time.Now()
@@ -209,7 +210,7 @@ func (r *run) client(i int) {
 		MaxPaths: r.spec.maxPaths,
 	}
 	if r.spec.background {
-		opts.Mode = protocol.ModeBackground
+		opts.AcceptBackground = true
 	}
 	if m := r.sides[i].mapper; m != nil {
 		opts.PortMapper = m
@@ -217,7 +218,7 @@ func (r *run) client(i int) {
 	if r.sides[i].pm != nil {
 		opts.PortMapper = r.sides[i].pm
 	}
-	o.sess, o.err = holepunch.AttachSession(r.ctx[i], r.spies[i], opts)
+	o.sess, o.err = holepunch.Punch(r.ctx[i], r.spies[i], opts)
 	o.end = time.Now()
 	if o.err == nil {
 		// From here on every library call on the winning socket counts as a
@@ -228,7 +229,7 @@ func (r *run) client(i int) {
 		}
 		for k, p := range o.sess.Result().ExtraPaths {
 			var h handedConn
-			if o.markErr == nil && o.sess.ExtraPacketConns()[k] != o.sess.PacketConn() {
+			if o.markErr == nil && o.sess.Result().ExtraPaths[k].Conn != o.sess.PacketConn() {
 				if v, o.markErr = r.sides[i].host.MarkHandover(p.LocalAddr); o.markErr == nil {
 					h = v.(handedConn)
 				}
@@ -266,7 +267,7 @@ func (r *run) closeSessions() error {
 // handed-over socket.
 const winnerCheckWait = time.Second
 
-// handoverQuietWindow is how long after AttachSession returned the handover
+// handoverQuietWindow is how long after Punch returned the handover
 // check looks for library calls on the winning socket; goleak, at the end of
 // every suite, catches a goroutine that would touch it later.
 const handoverQuietWindow = 100 * time.Millisecond
@@ -295,7 +296,7 @@ func (r *run) checkHandoverOpt(send bool) error {
 	}
 	for i := range 2 {
 		if n := r.sides[i].host.Stats().WritesAfterHandover; n != 0 {
-			return fmt.Errorf("%s: %d library calls on the winning socket after AttachSession returned", roles[i], n)
+			return fmt.Errorf("%s: %d library calls on the winning socket after Punch returned", roles[i], n)
 		}
 	}
 	for i := range 2 {

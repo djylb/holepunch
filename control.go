@@ -8,7 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -132,7 +133,7 @@ func (ct *control) fault(f *failure) {
 }
 
 func (ct *control) violation(err error) {
-	r, d, ok := protocol.WireReason(err)
+	r, d, ok := msgframe.Reason(err)
 	if !ok {
 		r, d = protocol.ReasonProtocolViolation, "decode"
 	}
@@ -146,7 +147,7 @@ func (ct *control) order(detail string) {
 // onPing answers at once in every phase; before punch_start is
 // accepted the ping waits, so a rejected start writes no frame at all.
 func (ct *control) onPing(c *controlwire.Conn, f controlwire.Frame) {
-	p, err := protocol.Unmarshal[protocol.Ping](f)
+	p, err := msgframe.Unmarshal[protocol.Ping](f)
 	if err != nil {
 		ct.violation(err)
 		return
@@ -165,7 +166,7 @@ func (ct *control) onPing(c *controlwire.Conn, f controlwire.Frame) {
 
 func sendPong(c *controlwire.Conn, p protocol.Ping, at time.Time) {
 	_ = c.SendFunc(controlwire.TypePong, func(now time.Time) ([]byte, error) {
-		fr, err := protocol.Marshal(protocol.PongFor(p, at, now))
+		fr, err := msgframe.Encode(protocol.PongFor(p, at, now))
 		return fr.Payload, err
 	})
 }
@@ -179,7 +180,7 @@ func (ct *control) onStart(f controlwire.Frame) {
 		ct.order("duplicate_punch_start")
 		return
 	}
-	m, err := protocol.Unmarshal[protocol.PunchStart](f)
+	m, err := msgframe.Unmarshal[protocol.PunchStart](f)
 	ct.startCh <- startMsg{msg: m, at: f.At, err: err}
 }
 
@@ -216,7 +217,7 @@ func (ct *control) onSummary(f controlwire.Frame) {
 		ct.order("duplicate_probe_summary")
 		return
 	}
-	m, err := protocol.Unmarshal[protocol.ProbeSummary](f)
+	m, err := msgframe.Unmarshal[protocol.ProbeSummary](f)
 	if err == nil {
 		err = protocol.CheckOrigin(m, sid, "")
 	}
@@ -249,7 +250,7 @@ func (ct *control) onGo(f controlwire.Frame) {
 		ct.order("go_before_summary")
 		return
 	}
-	m, err := protocol.Unmarshal[protocol.PunchGo](f)
+	m, err := msgframe.Unmarshal[protocol.PunchGo](f)
 	if err == nil {
 		err = protocol.CheckOrigin(m, sid, "")
 	}
@@ -298,7 +299,7 @@ func (ct *control) onAssist(f controlwire.Frame) {
 		ct.order("assist_before_start")
 		return
 	}
-	m, err := protocol.Unmarshal[protocol.Assist](f)
+	m, err := msgframe.Unmarshal[protocol.Assist](f)
 	if err == nil {
 		err = protocol.CheckOrigin(m, sid, "")
 	}
@@ -323,7 +324,7 @@ func (ct *control) onAbort(f controlwire.Frame) {
 	ct.mu.Lock()
 	sid, ok := ct.sessionID, ct.accepted
 	ct.mu.Unlock()
-	m, err := protocol.Unmarshal[protocol.Abort](f)
+	m, err := msgframe.Unmarshal[protocol.Abort](f)
 	if err == nil && ok {
 		err = protocol.CheckOrigin(m, sid, "")
 	}
@@ -347,7 +348,7 @@ func (ct *control) confirm() {
 
 // send queues a reliable frame.
 func (ct *control) send(m protocol.Message) error {
-	fr, err := protocol.Marshal(m)
+	fr, err := msgframe.Encode(m)
 	if err != nil {
 		return err
 	}
@@ -358,11 +359,11 @@ func (ct *control) send(m protocol.Message) error {
 // is written, so that elapsed_ms covers the queueing too (each message's
 // elapsed_ms is an RTT sample). The message is validated once up front.
 func (ct *control) sendBuilt(t controlwire.Type, build func(now time.Time) protocol.Message) error {
-	if _, err := protocol.Marshal(build(ct.rt.clk.Now())); err != nil {
+	if _, err := msgframe.Encode(build(ct.rt.clk.Now())); err != nil {
 		return err
 	}
 	return ct.conn.SendFunc(t, func(now time.Time) ([]byte, error) {
-		fr, err := protocol.Marshal(build(now))
+		fr, err := msgframe.Encode(build(now))
 		return fr.Payload, err
 	})
 }
@@ -443,7 +444,7 @@ func ctlCause(err error) *failure {
 	case errors.Is(err, net.ErrClosed):
 		return fail(protocol.ReasonCanceled, "control_closed", ErrClosed)
 	}
-	if r, d, ok := protocol.WireReason(err); ok {
+	if r, d, ok := msgframe.Reason(err); ok {
 		return fail(r, d, err)
 	}
 	return fail(protocol.ReasonControlInterrupted, "", err)

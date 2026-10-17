@@ -16,21 +16,19 @@ import (
 // The Background session mode on the client.
 
 // TestAcceptedMode: the client runs Background only when the server
-// offered it and the caller asked for it; an unknown mode is refused.
+// offered it and the caller accepts it.
 func TestAcceptedMode(t *testing.T) {
 	bg := protocol.ModeBackground
-	for _, c := range []struct{ offer, local, want protocol.SessionMode }{
-		{bg, bg, bg}, {bg, "", ""}, {"", bg, ""}, {bg, protocol.ModeInteractive, ""},
+	for _, c := range []struct {
+		offer  protocol.SessionMode
+		accept bool
+		want   protocol.SessionMode
+	}{
+		{bg, true, bg}, {bg, false, ""}, {"", true, ""}, {protocol.ModeInteractive, true, ""},
 	} {
-		if got := acceptedMode(c.offer, c.local); got != c.want {
-			t.Errorf("offer %q local %q: %q, want %q", c.offer, c.local, got, c.want)
+		if got := acceptedMode(c.offer, c.accept); got != c.want {
+			t.Errorf("offer %q accept %v: %q, want %q", c.offer, c.accept, got, c.want)
 		}
-	}
-	a, b := net.Pipe()
-	defer func() { _ = a.Close() }()
-	defer func() { _ = b.Close() }()
-	if e := validateOptions(a, &Options{ControlSecurity: protocol.ControlSecurityDeclared, Mode: "lazy"}); e == nil || e.Detail != "mode" {
-		t.Fatalf("unknown mode: %v", e)
 	}
 	rt := newTestRuntime(t, nil, nil)
 	rt.summary.Plan.Advice = protocol.AdviceBackgroundViable

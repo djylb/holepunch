@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/candidate"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // TestHostAddrClassification checks the split of the host's addresses:
@@ -364,11 +364,11 @@ func TestHostFirewallHint(t *testing.T) {
 	for _, c := range []struct {
 		name       string
 		self, peer protocol.Traits
-		want       []string
+		want       []Hint
 	}{
-		{"self", cone, open, []string{HintHostFirewall}},
-		{"peer without NAT", open, nonat, []string{HintPeerHostFirewall}},
-		{"both", cone, cone, []string{HintHostFirewall, HintPeerHostFirewall}},
+		{"self", cone, open, []Hint{HintHostFirewall}},
+		{"peer without NAT", open, nonat, []Hint{HintPeerHostFirewall}},
+		{"both", cone, cone, []Hint{HintHostFirewall, HintPeerHostFirewall}},
 		{"symmetric NAT", apdm, weak, nil},
 	} {
 		if got := familyHints(c.self, c.peer); !slices.Equal(got, c.want) {

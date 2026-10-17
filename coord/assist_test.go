@@ -7,10 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -382,13 +381,13 @@ func TestDriftVerification(t *testing.T) {
 	primary := nat.SocketID(u4, nat.IndexPrimary)
 	st.views[0] = protocol.PeerView{Families: []protocol.FamilyView{{Family: u4,
 		Endpoints: []protocol.Endpoint{{Addr: pubI, Source: protocol.EndpointServer, Verified: true}}}}}
-	slot := func(a netip.AddrPort, cookie uint32) natprobe.ServerObservation {
-		return natprobe.ServerObservation{Socket: primary, Observer: 1, Observed: a, Changes: 1, Cookie: cookie}
+	slot := func(a netip.AddrPort, cookie uint32) nat.Observation {
+		return nat.Observation{Socket: primary, Observer: 1, Observed: a, Changes: 1, Cookie: cookie}
 	}
-	take := func(o natprobe.ServerObservation) []netip.AddrPort {
+	take := func(o nat.Observation) []netip.AddrPort {
 		t.Helper()
 		st.pending[1] = nil
-		s.takeDriftLocked([2][]natprobe.ServerObservation{{o}, nil})
+		s.takeDriftLocked([2][]nat.Observation{{o}, nil})
 		var out []netip.AddrPort
 		for _, a := range st.pending[1] {
 			if a.Source != protocol.TargetsDrift || a.Family != u4 {
@@ -404,7 +403,7 @@ func TestDriftVerification(t *testing.T) {
 	steps := []struct {
 		name string
 		echo *protocol.Remap
-		o    natprobe.ServerObservation
+		o    nat.Observation
 		want int
 	}{
 		{"in the summary", nil, slot(pubI, 5), 0},

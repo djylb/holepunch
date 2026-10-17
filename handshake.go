@@ -10,8 +10,8 @@ import (
 	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/probe"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Per-round reporting limits.

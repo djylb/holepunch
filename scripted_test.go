@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/leak"
-	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -81,7 +80,7 @@ func (so *solo) report() (protocol.ProbeReport, protocol.PeerView) {
 		so.t.Fatal("no probe_report")
 	}
 	rep := *m.(*protocol.ProbeReport)
-	v, _, err := so.s.h.Merge(so.role, rep, nil, natprobeKey())
+	v, _, err := so.s.h.Merge(so.role, rep, nil, "", false)
 	if err != nil {
 		so.t.Fatal(err)
 	}
@@ -115,14 +114,14 @@ func roleViews(r protocol.Role, self, peer protocol.PeerView) [2]protocol.PeerVi
 	return [2]protocol.PeerView{peer, self}
 }
 
-// result waits for AttachSession.
+// result waits for Punch.
 func (so *solo) result(d time.Duration) attachResult {
 	so.t.Helper()
 	select {
 	case r := <-so.res:
 		return r
 	case <-time.After(d):
-		so.t.Fatal("AttachSession did not return")
+		so.t.Fatal("Punch did not return")
 	}
 	return attachResult{}
 }
@@ -151,7 +150,7 @@ func (so *solo) wantError(r attachResult, reason protocol.Reason) *Error {
 	return e
 }
 
-// checkControlReturned asserts that after AttachSession the control
+// checkControlReturned asserts that after Punch the control
 // connection reads with no deadline, and the library no longer reads it.
 func (so *solo) checkControlReturned() {
 	so.t.Helper()
@@ -184,5 +183,3 @@ func (so *solo) punchResult() *protocol.PunchResult {
 	}
 	return m.(*protocol.PunchResult)
 }
-
-func natprobeKey() natprobe.TraitsKey { return natprobe.TraitsKey{} }

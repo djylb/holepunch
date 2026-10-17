@@ -66,8 +66,8 @@ func TestChaosRandom(t *testing.T) {
 				p.s.Abort(protocol.ReasonCanceled, "chaos")
 			}
 			res := r.wait(p.s)
-			if !res.Code.Known() && res.Code != "" {
-				t.Fatalf("unknown code %q", res.Code)
+			if !res.Reason.Known() && res.Reason != "" {
+				t.Fatalf("unknown code %q", res.Reason)
 			}
 			if r.c.Len() != 0 || r.c.Stats().ActiveByKey != 0 {
 				t.Fatalf("not released: %d sessions, %d keys", r.c.Len(), r.c.Stats().ActiveByKey)

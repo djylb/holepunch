@@ -5,8 +5,8 @@ import (
 	"slices"
 
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Hairpin runs the hairpin self-test: the primary

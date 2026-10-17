@@ -8,8 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // entry is one registered session, at most about 4 KiB with both roles'
@@ -31,7 +32,7 @@ type entry struct {
 // not allocate; an APDM client's second socket grows it once.
 const initialSlots = 4
 
-func newEntry(reg Registration, tag [16]byte, codec *udpwire.Codec, now time.Time, cfg RegistryConfig) *entry {
+func newEntry(reg nat.Registration, tag [16]byte, codec *udpwire.Codec, now time.Time, cfg RegistryConfig) *entry {
 	e := &entry{id: reg.SessionID, route: reg.Route, tokenTag: tag, codec: codec, created: now}
 	for i := range e.roles {
 		e.roles[i].slots = make([]slot, 0, min(initialSlots, cfg.SlotsPerRole))

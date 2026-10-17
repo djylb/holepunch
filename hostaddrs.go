@@ -3,10 +3,9 @@ package holepunch
 import (
 	"net"
 	"net/netip"
-	"strings"
 
+	"github.com/djylb/holepunch/hostaddr"
 	"github.com/djylb/holepunch/internal/life"
-	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -25,53 +24,12 @@ type hostAddr struct {
 	overlay bool
 }
 
-// overlayName reports whether an interface name marks a tunnel or overlay
-// interface, by its prefix, compared case-insensitively: Tailscale
-// (tailscale0 on Linux, "Tailscale" on Windows), utun on Apple systems
-// (Tailscale, WireGuard and other VPNs), WireGuard (wg0), ZeroTier (zt… on
-// Unix, "ZeroTier One" on Windows) and tun devices. Docker and
-// virtual-machine bridges (docker0, br-…, virbr…, vmnet…) are ordinary LANs:
-// traffic over them is direct, between a host and its containers or
-// machines.
-func overlayName(name string) bool {
-	name = strings.ToLower(name)
-	for _, p := range [...]string{"tailscale", "utun", "wg", "zt", "zerotier", "tun"} {
-		if strings.HasPrefix(name, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// overlayAddr reports whether a, an address of interface ifc, is an overlay
-// address: on an interface whose name marks a tunnel or overlay, on
-// a point-to-point interface unless a is a public address — the link of a
-// PPPoE or cellular uplink carries the host's own public address — or in
-// the shared space 100.64/10, where Tailscale and carriers number their
-// overlays and subscribers.
-func overlayAddr(ifc net.Interface, a netip.Addr) bool {
-	return nat.IsCGN(a) || overlayName(ifc.Name) ||
-		ifc.Flags&net.FlagPointToPoint != 0 && (!a.IsGlobalUnicast() || netaddr.Private(a))
-}
-
-// hostAddrsOf classifies what Network.InterfaceAddrs returned. Addresses
-// without an interface at their index belong to an unnamed, live
-// interface.
+// hostAddrsOf classifies what Network.InterfaceAddrs returned (hostaddr).
 func hostAddrsOf(ifaces []net.Interface, addrs [][]netip.Prefix) []hostAddr {
-	var out []hostAddr
-	for i, list := range addrs {
-		ifc := net.Interface{Flags: net.FlagUp}
-		if i < len(ifaces) {
-			ifc = ifaces[i]
-		}
-		live := ifc.Flags&net.FlagUp != 0 && ifc.Flags&net.FlagLoopback == 0
-		for _, p := range list {
-			a := p.Addr().Unmap().WithZone("")
-			if !a.IsValid() {
-				continue
-			}
-			out = append(out, hostAddr{addr: a, iface: ifc.Name, live: live && !a.IsLoopback(), overlay: overlayAddr(ifc, a)})
-		}
+	list := hostaddr.Classify(ifaces, addrs)
+	out := make([]hostAddr, 0, len(list))
+	for _, a := range list {
+		out = append(out, hostAddr{addr: a.Addr(), iface: a.Interface, live: a.Usable(), overlay: a.Kind == hostaddr.Overlay})
 	}
 	return out
 }

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -109,7 +109,7 @@ func TestSessionGoroutinePanic(t *testing.T) {
 	}
 	s.group.Go("coord.test", func(context.Context) { panic("boom") })
 	res := r.wait(s)
-	if res.Code != protocol.ReasonInternal || !strings.HasPrefix(res.Detail, "panic:coord.test") {
+	if res.Reason != protocol.ReasonInternal || !strings.HasPrefix(res.Detail, "panic:coord.test") {
 		t.Fatalf("result %+v", res)
 	}
 	evs := r.waitEvents(EvInternalError, 1)
@@ -183,11 +183,11 @@ func TestStatsHistograms(t *testing.T) {
 	created := time.Unix(100, 0)
 	c.record(&Result{Outcome: OutcomeSucceeded, RTT: [2]time.Duration{30 * time.Millisecond, 2 * time.Second},
 		Winner: &WinnerInfo{Round: 2}, MemoryHit: true, Confirmed: [2]bool{true, false},
-		Timings: Timings{Created: created, FirstConfirm: created.Add(1500 * time.Millisecond)},
-		Rounds:  []RoundRecord{{Class: RoundNoContact}, {Class: RoundConfirmed}}})
-	c.record(&Result{Outcome: OutcomeFailed, Code: protocol.ReasonCandidateTimeout})
+		Timing: Timing{Created: created, FirstConfirm: created.Add(1500 * time.Millisecond)},
+		Rounds: []RoundRecord{{Class: RoundNoContact}, {Class: RoundConfirmed}}})
+	c.record(&Result{Outcome: OutcomeFailed, Reason: protocol.ReasonCandidateTimeout})
 	s := c.snapshot()
-	if s.SessionsTotal != 2 || s.ByOutcome != [3]int64{1, 1, 0} || s.ByCode[protocol.ReasonCandidateTimeout] != 1 ||
+	if s.SessionsTotal != 2 || s.ByOutcome != [3]int64{1, 1, 0} || s.ByReason[protocol.ReasonCandidateTimeout] != 1 ||
 		s.HalfConfirmed != 1 || s.ConfirmAtRound[2] != 1 || s.ConfirmAtRound[0] != 1 || s.RTTHistogramMs[1] != 1 ||
 		s.RTTHistogramMs[7] != 1 || s.TimeToConfirm[2] != 1 || s.MemoryHits != 1 || s.RoundsByClass[RoundNoContact] != 1 {
 		t.Fatalf("stats %+v", s)

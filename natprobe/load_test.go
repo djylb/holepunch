@@ -13,8 +13,8 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Load at component level (no sockets, which only add the kernel's cost): 2000
@@ -72,7 +72,7 @@ func TestLoadManySessions(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 	for n := range sessions {
-		if _, err := reg.Register(Registration{SessionID: fmt.Sprint("load-", n), Route: routes[n], Token: tokens[n], TTL: time.Minute}); err != nil {
+		if _, err := reg.register(nat.Registration{SessionID: fmt.Sprint("load-", n), Route: routes[n], Token: tokens[n], TTL: time.Minute}); err != nil {
 			t.Fatal(err)
 		}
 	}

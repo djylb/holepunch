@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -304,8 +303,8 @@ func sandwichWindow(a, b uint16) (lo, hi uint16) {
 // mapping moved — a new port, or after a rebind a new IP. Only the primary
 // socket counts: it is the one the peer aims at. It runs outside the lock;
 // takeDriftLocked decides what to push.
-func (s *Session) observeDrift() [2][]natprobe.ServerObservation {
-	var out [2][]natprobe.ServerObservation
+func (s *Session) observeDrift() [2][]nat.Observation {
+	var out [2][]nat.Observation
 	s.mu.Lock()
 	open := s.st.state == StatePunching
 	s.mu.Unlock()
@@ -335,7 +334,7 @@ func (s *Session) observeDrift() [2][]natprobe.ServerObservation {
 // its summary is not pushed again. Under the NoAssistRelay ablation nothing
 // is taken: the clients drop every assist, so the peer would never admit a
 // new IP that later plans aim at.
-func (s *Session) takeDriftLocked(drift [2][]natprobe.ServerObservation) {
+func (s *Session) takeDriftLocked(drift [2][]nat.Observation) {
 	st := &s.st
 	if s.ablate.NoAssistRelay {
 		return
@@ -368,7 +367,7 @@ func (s *Session) takeDriftLocked(drift [2][]natprobe.ServerObservation) {
 // slot's cookie in a round_result remap. natprobe draws a new
 // cookie whenever the value changes, so the echo vouches for this value
 // only.
-func (st *sessionState) remapEchoed(r int, fam protocol.Family, o natprobe.ServerObservation) bool {
+func (st *sessionState) remapEchoed(r int, fam protocol.Family, o nat.Observation) bool {
 	m := st.remaps[r][famIndex(fam)]
 	return m != nil && o.Cookie != 0 && m.Cookie == o.Cookie && m.Observer == o.Observer && m.Observed == o.Observed
 }

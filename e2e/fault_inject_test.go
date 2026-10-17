@@ -89,7 +89,7 @@ func (noGateway) Map(context.Context, net.PacketConn, protocol.PortMappingPolicy
 }
 
 // injectCases are the injection points a session reaches (the
-// portmapper's own points and natprobe.sweep need their packages' tests).
+// portmapper's own points need its package's tests).
 // Expectations: a client panic before the
 // confirmation is internal (detail panic:<goroutine>); a callback-class
 // point only counts; a server panic in a handler ends the session as
@@ -257,7 +257,7 @@ func runInject(t *testing.T, ic injectCase, seed int64) (v []string) {
 		if d := oi.end.Sub(start); d > scaled(injectBound) {
 			add("%s: returned after %v", roles[i], d)
 		}
-		if oi.inflight != 0 || (!oi.rdl.IsZero() || !oi.wdl.IsZero()) && !slices.Contains(oi.diag.Warn, warnControlUnreturnable) {
+		if oi.inflight != 0 || (!oi.rdl.IsZero() || !oi.wdl.IsZero()) && !slices.Contains(oi.diag.Warn, protocol.WarnControlUnreturnable) {
 			add("%s: control conn not returned clean", roles[i])
 		}
 	}

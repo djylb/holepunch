@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 )
 
 // TestWireExamples decodes every JSON example in testdata/examples — one or
@@ -45,7 +46,7 @@ func TestWireExamples(t *testing.T) {
 				t.Fatal(err)
 			}
 			payload = bytes.TrimSpace(payload)
-			m, err := Decode(controlwire.Frame{Type: controlwire.Type(messageTypeNamed(t, e.Type)), Payload: payload})
+			m, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(messageTypeNamed(t, e.Type)), Payload: payload})
 			if err != nil {
 				t.Fatalf("%s: Decode: %v", e.Source, err)
 			}
@@ -58,7 +59,7 @@ func TestWireExamples(t *testing.T) {
 					t.Errorf("%s: relayed assist: %v", e.Source, err)
 				}
 			}
-			f, err := Marshal(m)
+			f, err := marshalFrame(m)
 			if err != nil {
 				t.Fatalf("Marshal: %v", err)
 			}
@@ -161,14 +162,14 @@ func deref(m Message) Message { return reflect.ValueOf(m).Elem().Interface().(Me
 // Marshal → Unmarshal.
 func TestRoundTripAllMessages(t *testing.T) {
 	for _, m := range sampleMessages() {
-		f, err := Marshal(m)
+		f, err := marshalFrame(m)
 		if err != nil {
 			t.Fatalf("%s: Marshal: %v", m.MessageType(), err)
 		}
 		if f.Type != controlwire.Type(m.MessageType()) || len(f.Payload) > m.MessageType().MaxPayload() {
 			t.Fatalf("%s: frame type %d, %d bytes", m.MessageType(), f.Type, len(f.Payload))
 		}
-		got, err := Decode(f)
+		got, err := decodeFrame(f)
 		if err != nil {
 			t.Fatalf("%s: Decode: %v\n%s", m.MessageType(), err, f.Payload)
 		}
@@ -178,37 +179,37 @@ func TestRoundTripAllMessages(t *testing.T) {
 		// Pointers marshal too.
 		p := reflect.New(reflect.TypeOf(m))
 		p.Elem().Set(reflect.ValueOf(m))
-		if g, err := Marshal(p.Interface().(Message)); err != nil || !bytes.Equal(g.Payload, f.Payload) {
-			t.Fatalf("%s: Marshal(pointer) = %v", m.MessageType(), err)
+		if g, err := marshalFrame(p.Interface().(Message)); err != nil || !bytes.Equal(g.Payload, f.Payload) {
+			t.Fatalf("%s: marshalFrame(pointer) = %v", m.MessageType(), err)
 		}
 	}
 }
 
 func TestUnmarshalTyped(t *testing.T) {
-	f, err := Marshal(Ping{Seq: 3})
+	f, err := marshalFrame(Ping{Seq: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p, err := Unmarshal[Ping](f); err != nil || p.Seq != 3 {
-		t.Fatalf("Unmarshal[Ping] = %v, %v", p, err)
+	if p, err := unmarshalFrame[Ping](f); err != nil || p.Seq != 3 {
+		t.Fatalf("unmarshalFrame[Ping] = %v, %v", p, err)
 	}
-	if _, err := Unmarshal[Pong](f); !errors.Is(err, ErrUnexpectedMessage) {
-		t.Fatalf("Unmarshal[Pong](ping) = %v, want ErrUnexpectedMessage", err)
+	if _, err := unmarshalFrame[Pong](f); !errors.Is(err, ErrUnexpectedMessage) {
+		t.Fatalf("unmarshalFrame[Pong](ping) = %v, want ErrUnexpectedMessage", err)
 	}
 	var nilStart *PunchStart
-	if _, err := Marshal(nilStart); !errors.Is(err, ErrUnexpectedMessage) {
-		t.Fatalf("Marshal(typed nil) = %v", err)
+	if _, err := marshalFrame(nilStart); !errors.Is(err, ErrUnexpectedMessage) {
+		t.Fatalf("marshalFrame(typed nil) = %v", err)
 	}
-	if _, err := Marshal(nil); !errors.Is(err, ErrUnexpectedMessage) {
-		t.Fatalf("Marshal(nil) = %v", err)
+	if _, err := marshalFrame(nil); !errors.Is(err, ErrUnexpectedMessage) {
+		t.Fatalf("marshalFrame(nil) = %v", err)
 	}
-	if _, err := Marshal(Ping{Seq: 0}); !isViolation(err) {
-		t.Fatalf("Marshal(invalid) = %v", err)
+	if _, err := marshalFrame(Ping{Seq: 0}); !isViolation(err) {
+		t.Fatalf("marshalFrame(invalid) = %v", err)
 	}
 	big := f
 	big.Payload = make([]byte, MsgPing.MaxPayload()+1)
 	var verr *ValidationError
-	if _, err := Unmarshal[Ping](big); !errors.As(err, &verr) || verr.Detail != "frame_too_large" {
+	if _, err := unmarshalFrame[Ping](big); !errors.As(err, &verr) || verr.Detail != "frame_too_large" {
 		t.Fatalf("oversized payload: %v", err)
 	}
 }
@@ -244,7 +245,7 @@ func TestDecodePayloadRules(t *testing.T) {
 		{"last_reserved", math.MaxUint8, `{}`, ErrUnexpectedMessage},
 		{"zero", 0, `{}`, ErrUnexpectedMessage},
 	} {
-		_, err := Decode(controlwire.Frame{Type: controlwire.Type(tc.typ), Payload: []byte(tc.payload)})
+		_, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(tc.typ), Payload: []byte(tc.payload)})
 		match := errors.Is(err, tc.err)
 		if errors.Is(tc.err, errViolation) {
 			match = isViolation(err)
@@ -316,12 +317,12 @@ func TestDecodeBoundsClientLists(t *testing.T) {
 		}
 		over := nestedList(l.path, (l.typ.MaxPayload()-len(nestedList(l.path, 0)))/len("null,"))
 		var verr *ValidationError
-		if _, err := Decode(controlwire.Frame{Type: controlwire.Type(l.typ), Payload: []byte(over)}); !errors.As(err, &verr) ||
+		if _, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(l.typ), Payload: []byte(over)}); !errors.As(err, &verr) ||
 			verr.Reason != ReasonProtocolViolation || verr.Detail != detail {
 			t.Errorf("%s %s over its limit: %v, want detail %q", l.typ, detail, err, detail)
 		}
 		frame := controlwire.Frame{Type: controlwire.Type(l.typ), Payload: []byte(over)}
-		if alloc := allocBytes(func() { _, _ = Decode(frame) }); alloc > 4<<10 {
+		if alloc := allocBytes(func() { _, _ = decodeFrame(frame) }); alloc > 4<<10 {
 			t.Errorf("%s %s: decoding a %d-byte frame allocated %d bytes", l.typ, detail, len(over), alloc)
 		}
 	}
@@ -357,11 +358,11 @@ func TestDecodeBoundsClientLists(t *testing.T) {
 		}
 	}
 	report := maximalReport()
-	f, err := Marshal(report)
+	f, err := marshalFrame(report)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Decode(f); err != nil {
+	if _, err := decodeFrame(f); err != nil {
 		t.Fatalf("a report with every list full: %v", err)
 	}
 	if n := testing.AllocsPerRun(10, func() { _ = scanPayload(MsgProbeReport, f.Payload) }); n != 0 {
@@ -412,11 +413,12 @@ func TestMarshalLimitsAndEscaping(t *testing.T) {
 	for i := 0; i < 15; i++ {
 		p.Meta[fmt.Sprintf("m%03d", i)] = strings.Repeat("v", 64)
 	}
-	if _, err := Marshal(p); !errors.Is(err, controlwire.ErrFrameTooLarge) {
-		t.Fatalf("2 KiB+ progress: %v, want ErrFrameTooLarge", err)
+	var tooLarge *ValidationError
+	if _, err := marshalFrame(p); !errors.As(err, &tooLarge) || tooLarge.Detail != "frame_too_large" {
+		t.Fatalf("2 KiB+ progress: %v, want frame_too_large", err)
 	}
 	p.Counters, p.Meta = nil, nil
-	f, err := Marshal(p)
+	f, err := marshalFrame(p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,8 +447,8 @@ func TestCheckOrigin(t *testing.T) {
 	if err := CheckOrigin(report, "other", RoleInitiator); !errors.As(err, &verr) || verr.Detail != "session_mismatch" {
 		t.Fatalf("session mismatch: %v", err)
 	}
-	if r, d, ok := WireReason(CheckOrigin(report, "other", "")); !ok || r != ReasonProtocolViolation || d != "session_mismatch" {
-		t.Fatalf("WireReason = %s, %s, %v", r, d, ok)
+	if err := CheckOrigin(report, "other", ""); !errors.As(err, &verr) || verr.Reason != ReasonProtocolViolation || verr.Detail != "session_mismatch" {
+		t.Fatalf("session mismatch without a role: %v", err)
 	}
 	if err := CheckOrigin(Ping{Seq: 1}, "other", RoleInitiator); err != nil {
 		t.Fatalf("ping is link-level: %v", err)
@@ -463,7 +465,7 @@ func TestLogValueRedacts(t *testing.T) {
 	tokenText, _ := start.Token.MarshalText()
 	routeText, _ := start.Wire.RouteID.MarshalText()
 	secrets := []string{string(tokenText), string(routeText), fmt.Sprintf("%x", start.Token[:]),
-		fmt.Sprintf("%x", start.Wire.RouteID[:]), report.Transport.Data, summary.Transport.PeerData}
+		fmt.Sprintf("%x", start.Wire.RouteID[:]), base64.StdEncoding.EncodeToString(report.Transport.Data), base64.StdEncoding.EncodeToString(summary.Transport.PeerData)}
 	var jsonBuf, textBuf bytes.Buffer
 	slog.New(slog.NewJSONHandler(&jsonBuf, nil)).Info("x", "start", start, "report", report, "summary", summary,
 		"token", start.Token, "route", start.Wire.RouteID, "wire", start.Wire)
@@ -522,4 +524,25 @@ func TestPongFor(t *testing.T) {
 	if p := PongFor(Ping{Seq: 1}, read, read.Add(-time.Second)); p.HoldUs != 0 {
 		t.Fatalf("negative hold = %d", p.HoldUs)
 	}
+}
+
+// marshalFrame, unmarshalFrame and decodeFrame are Marshal, Unmarshal and
+// Decode on controlwire frames.
+func marshalFrame(m Message) (controlwire.Frame, error) {
+	p, err := Marshal(m)
+	if err != nil {
+		return controlwire.Frame{}, err
+	}
+	return controlwire.Frame{Type: controlwire.Type(m.MessageType()), Payload: p}, nil
+}
+
+func unmarshalFrame[T any, P interface {
+	*T
+	Message
+}](f controlwire.Frame) (T, error) {
+	return Unmarshal[T, P](MessageType(f.Type), f.Payload)
+}
+
+func decodeFrame(f controlwire.Frame) (Message, error) {
+	return Decode(MessageType(f.Type), f.Payload)
 }

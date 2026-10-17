@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"fmt"
-	"net"
-	"slices"
 	"testing"
 	"time"
 
@@ -23,13 +21,7 @@ import (
 // handedSockets is how many distinct sockets a Session holds: the primary
 // path's and those of the extra paths that do not share it.
 func handedSockets(s *holepunch.Session) int {
-	conns := []net.PacketConn{s.PacketConn()}
-	for _, c := range s.ExtraPacketConns() {
-		if !slices.Contains(conns, c) {
-			conns = append(conns, c)
-		}
-	}
-	return len(conns)
+	return len(s.PacketConns())
 }
 
 // twoPaths sets both clients to two paths.

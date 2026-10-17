@@ -180,7 +180,7 @@ func (s *Session) onPunchResultLocked(r int, m *protocol.PunchResult, now time.D
 	st := &s.st
 	var fx effects
 	st.finals[r] = &ClientFinal{
-		OK: m.OK, Code: m.Code, Phase: m.Phase, Detail: m.Detail, Path: clonePath(m.Path), ExtraPaths: slices.Clone(m.ExtraPaths), Stats: m.Stats,
+		OK: m.OK, Reason: m.Reason, Phase: m.Phase, Detail: m.Detail, Path: clonePath(m.Path), ExtraPaths: slices.Clone(m.ExtraPaths), Stats: m.Stats,
 		Timing: m.Timing, Traits: slices.Clone(m.Traits), Warn: slices.Clone(m.Warn),
 	}
 	if m.OK {
@@ -200,7 +200,7 @@ func (s *Session) onPunchResultLocked(r int, m *protocol.PunchResult, now time.D
 	if st.state == StateConfirming && !st.confirmed[r] && st.confirmed[1-r] {
 		return fx
 	}
-	t := &terminal{code: m.Code, detail: truncate(m.Detail, maxDetail), failed: roleOf(r)}
+	t := &terminal{code: m.Reason, detail: truncate(m.Detail, maxDetail), failed: roleOf(r)}
 	if s.ablate.NoEarlyAbort {
 		// Ablation: the peer is not told; the session runs to its stage
 		// deadline and ends with this code there.

@@ -103,7 +103,7 @@ func sampleMessages() []Message {
 			Traits:     sampleTraits(),
 		}},
 		Clock:     ClockSample{RTTMs: 30, OffsetMs: -412},
-		Transport: Transport{Mode: "quic", Data: "c2hhMjU2OjQ1Njc4"},
+		Transport: Transport{Mode: "quic", Data: []byte("sha256:45678")},
 	}
 	summary := ProbeSummary{
 		SessionID: testSession,
@@ -111,7 +111,7 @@ func sampleMessages() []Message {
 		Peer:      PeerView{Families: []FamilyView{{Family: FamilyUDP6, Traits: Traits{Family: FamilyUDP6, NoNAT: TriTrue}, Endpoints: []Endpoint{{Addr: ap("[2001:db8::2]:7000"), Source: EndpointLAN}}}}},
 		Pair: PairFacts{SharedFamilies: []Family{FamilyUDP6, FamilyUDP4}, SamePublicIP: map[Family]bool{FamilyUDP4: true}, LikelySameLAN: map[Family]bool{FamilyUDP4: false},
 			ProbeRTTMs: map[Role]uint32{RoleInitiator: 31, RoleResponder: 88}, ClockOffsetMs: map[Role]int64{RoleInitiator: -412}, Unverified: map[Family]bool{FamilyUDP4: true}},
-		Transport: TransportPick{Mode: "quic", PeerData: "cGVlcg"},
+		Transport: TransportPick{Mode: "quic", PeerData: []byte("peer")},
 		Timeouts:  DefaultTimeouts(),
 		Plan: PlanSpec{ID: "p-7f3a", PairClass: "pdf_x_seq", RoundsMax: 5, Ladder: []string{"pdf_recv_predict", "swap_ttl"},
 			Budget: Budget{MaxPackets: 2500, MaxPPS: 200, MaxDistinctTargets: 1024, MaxSockets: 8, MaxNewPerSec: 100, Birthday: BirthdayOff},
@@ -129,19 +129,19 @@ func sampleMessages() []Message {
 	relayed := seen.Relayed(RoleResponder)
 	targets := Assist{SessionID: testSession, From: RoleServer, Kind: AssistPeerTargets, Round: 2, Family: FamilyUDP4,
 		Targets: []netip.AddrPort{ap("192.0.2.55:61017")}, Window: &PortWindow{IP: ip("192.0.2.55"), Lo: 61017, Hi: 61019}, Source: TargetsSandwich}
-	abort := Abort{SessionID: testSession, By: RoleServer, Code: ReasonServerBusy, Detail: "busy", RetryAfterMs: 5000}
+	abort := Abort{SessionID: testSession, By: RoleServer, Reason: ReasonServerBusy, Detail: "busy", RetryAfterMs: 5000}
 	rr := RoundResult{SessionID: testSession, Role: RoleInitiator, Round: 2, ElapsedMs: 640, FireSkewMs: -3, Status: RoundConfirmed,
 		Families: []FamilyOutcome{{Family: FamilyUDP4, Hit: true, SeenFrom: []netip.AddrPort{ap("192.0.2.55:61019")}, PeerSeenUs: true,
 			Sent: 41, Recv: 6, DistinctPorts: 5, ICMPUnreach: 1, BindFailed: 1, BudgetHit: true, Drift: true, Rejected: 2,
 			Remap: &Remap{Observer: 1, Observed: ap("198.51.100.9:40125"), Cookie: 0x5eed}}},
 		Path: samplePath("")}
-	pr := PunchResult{SessionID: testSession, Role: RoleResponder, OK: true, Code: ReasonInternal, Phase: PhaseDone, Detail: "ok",
+	pr := PunchResult{SessionID: testSession, Role: RoleResponder, OK: true, Reason: ReasonInternal, Phase: PhaseDone, Detail: "ok",
 		Path:   samplePath(ConfirmedByReady),
 		Stats:  Stats{Sent: 211, Recv: 17, Replies: 9, Rounds: 2, Hits: 2, Drops: map[string]uint32{DropAuth: 1, DropReplay: 3}, BudgetHit: true},
 		Timing: Timing{ProbeMs: 131, SummaryWaitMs: 930, GoWaitMs: 71, PunchMs: 3350, HandoverMs: 31},
 		Traits: []TraitsUpdate{{Family: FamilyUDP4, Mapping: ptr(MapEIM), MappingConf: ptr(ConfHigh), Filtering: ptr(FiltADF),
 			FilteringConf: ptr(ConfLow), PortStep: ptr(int16(2)), PortVelocity: ptr(float32(0.5)), Hairpin: ptr(TriFalse), Source: TraitsSourcePeer}},
-		Warn: []string{WarnClockSkew}}
+		Warn: []Warning{WarnClockSkew}}
 	return []Message{start, Ping{Seq: 1}, Pong{Seq: 1, HoldUs: 41, ClientUnixMs: 1791234567514}, report, summary, ready, gom,
 		progress, seen, relayed, targets, abort, rr, pr}
 }

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/internal/udpicmp"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // A reply to a client that went away comes back as ICMP "port unreachable".
@@ -28,7 +28,7 @@ func TestListenerSurvivesPortUnreachable(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			if err := udpicmp.EnableReports(c); err != nil {
+			if err := udpsock.EnableICMPReports(c); err != nil {
 				_ = c.Close()
 				return nil, err
 			}
@@ -86,7 +86,7 @@ type seenConn struct {
 
 func (c *seenConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	n, a, err := c.PacketConn.ReadFrom(b)
-	if udpicmp.IsReport(err) {
+	if udpsock.IsICMPReport(err) {
 		c.seen.Add(1)
 	}
 	return n, a, err

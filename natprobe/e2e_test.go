@@ -11,9 +11,9 @@ import (
 
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/probe"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // pumpSock is a client socket; the test plays the runtime: the socket's only
@@ -125,7 +125,7 @@ func runEndToEnd(t *testing.T, f protocol.Family, ip netip.Addr) {
 		}
 	}()
 	token, route := protocol.NewToken(), protocol.NewRouteID()
-	h, err := reg.Register(natprobe.Registration{SessionID: "e2e-session", Route: route, Token: token, TTL: 25 * time.Second})
+	h, err := nat.RegisterProbe(reg, nat.Registration{SessionID: "e2e-session", Route: route, Token: token, TTL: 25 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,11 +170,11 @@ func runEndToEnd(t *testing.T, f protocol.Family, ip netip.Addr) {
 		t.Fatal(err)
 	}
 	mem := natprobe.NewTraitsMemory(natprobe.TraitsMemoryConfig{})
-	view, diag, err := h.Merge(protocol.RoleResponder, rep, mem, natprobe.TraitsKey{ClientKey: "c"})
+	view, diag, err := h.Merge(protocol.RoleResponder, rep, mem, "c", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diag != (natprobe.MergeDiag{}) || len(view.Families) != 1 {
+	if diag != (nat.MergeDiag{}) || len(view.Families) != 1 {
 		t.Fatalf("diag %+v view %+v", diag, view)
 	}
 	fv := view.Families[0]

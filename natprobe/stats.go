@@ -15,7 +15,7 @@ type ServerStats struct {
 	Openers                      uint64 // authentic probes that came as an opener; their replies left as openers too
 	SandwichEvents               uint64 // sandwich probes queued for the coordinator
 	SandwichDropped              uint64 // sandwich queue full or closed
-	Panics                       uint64 // recovered: per packet, reader loops, the sweeper, sinks
+	Panics                       uint64 // recovered: per packet, reader loops, sinks
 	WriteErrors, ReadErrors      uint64
 	CloseTimeouts                uint64
 	DeadListeners                int  // listeners stopped by a reader-loop panic

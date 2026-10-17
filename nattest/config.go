@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/netip"
 	"time"
+
+	"github.com/djylb/holepunch/stun"
 )
 
 // Mapping is the mapping behaviour of a NAT (RFC 4787, section 4.1): which outbound
@@ -336,7 +338,7 @@ type Classifier struct {
 	// means 5.
 	Window int
 	// Allow reports whether a datagram lets its flow through; nil allows
-	// STUN messages ([IsSTUN]). It is called without any lock of the
+	// STUN messages (stun.IsMessage). It is called without any lock of the
 	// network held, must not block and must not keep payload.
 	Allow func(payload []byte) bool
 }
@@ -406,7 +408,7 @@ func (c NATConfig) normalized() NATConfig {
 			k.Window = defaultClassifierWindow
 		}
 		if k.Allow == nil {
-			k.Allow = IsSTUN
+			k.Allow = stun.IsMessage
 		}
 		c.Classifier = &k
 	}

@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -34,11 +35,11 @@ func violates(t *testing.T, raw []byte, code protocol.Reason, detail string) {
 	}
 	defer func() { _ = nc.Close() }()
 	go func() { _, _ = nc.Write(raw) }()
-	if a := expectAbort(t, p.cl[1]); a.By != protocol.RoleInitiator || a.Code != code {
+	if a := expectAbort(t, p.cl[1]); a.By != protocol.RoleInitiator || a.Reason != code {
 		t.Fatalf("abort %+v", a)
 	}
 	res := r.wait(p.s)
-	if res.Code != code || res.FailedRole != protocol.RoleInitiator || (detail != "" && res.Detail != detail) {
+	if res.Reason != code || res.FailedRole != protocol.RoleInitiator || (detail != "" && res.Detail != detail) {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -69,10 +70,10 @@ func TestVersionMismatchRejected(t *testing.T) {
 		if err := p.cl[0].SendFrame(ctx(t), controlwire.TypeProbeReport, b); err != nil {
 			t.Fatal(err)
 		}
-		if a := expectAbort(t, p.cl[1]); a.Code != protocol.ReasonControlVersionMismatch || a.By != protocol.RoleInitiator {
+		if a := expectAbort(t, p.cl[1]); a.Reason != protocol.ReasonControlVersionMismatch || a.By != protocol.RoleInitiator {
 			t.Fatalf("abort %+v", a)
 		}
-		if res := r.wait(p.s); res.Code != protocol.ReasonControlVersionMismatch {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonControlVersionMismatch {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -102,7 +103,7 @@ func TestUnknownTypeTolerated(t *testing.T) {
 				}
 			}
 			rep := simclient.Report(*p.starts[0], 1, "", fam(0, simclient.OpenTraits))
-			f, _ := protocol.Marshal(&rep)
+			f, _ := msgframe.Encode(&rep)
 			if _, err := nc.Write(rawFrame(controlwire.Version, f.Type, uint32(len(f.Payload)), f.Payload)); err != nil {
 				t.Fatal(err)
 			}
@@ -111,7 +112,7 @@ func TestUnknownTypeTolerated(t *testing.T) {
 				t.Fatal(err)
 			}
 			res := r.wait(p.s)
-			if res.Code != protocol.ReasonProtocolViolation || res.Detail != "unknown_frames" || res.Counters.UnknownFrames < controlwire.MaxDiscarded {
+			if res.Reason != protocol.ReasonProtocolViolation || res.Detail != "unknown_frames" || res.Counters.UnknownFrames < controlwire.MaxDiscarded {
 				t.Fatalf("result %+v", res)
 			}
 		})
@@ -132,7 +133,7 @@ func TestFrameQuota(t *testing.T) {
 		}
 	}()
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonProtocolViolation || res.Detail != detailControlFlood {
+	if res.Reason != protocol.ReasonProtocolViolation || res.Detail != detailControlFlood {
 		t.Fatalf("result %+v", res)
 	}
 	if res.Counters.ProgressDropped != 0 {
@@ -151,7 +152,7 @@ func TestFrameRate(t *testing.T) {
 			}
 		}
 	}()
-	if a := expectAbort(t, p.cl[0]); a.Code != protocol.ReasonProtocolViolation || a.Detail != detailControlFlood {
+	if a := expectAbort(t, p.cl[0]); a.Reason != protocol.ReasonProtocolViolation || a.Detail != detailControlFlood {
 		t.Fatalf("abort to the flooder %+v", a)
 	}
 	if res := r.wait(p.s); res.Detail != detailControlFlood || res.FailedRole != protocol.RoleInitiator {
@@ -235,7 +236,7 @@ func TestMessageViolations(t *testing.T) {
 			p := r.pair(SessionOptions{})
 			c.do(t, p)
 			res := r.wait(p.s)
-			if res.Code != protocol.ReasonProtocolViolation || res.FailedRole != protocol.RoleInitiator ||
+			if res.Reason != protocol.ReasonProtocolViolation || res.FailedRole != protocol.RoleInitiator ||
 				(c.detail != "" && res.Detail != c.detail) {
 				t.Fatalf("result %+v", res)
 			}

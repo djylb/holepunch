@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/internal/udpicmp"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // Windows sets the unicast TTL of both families through setsockopt, and the
@@ -25,21 +25,20 @@ func TestWindowsHopLimit(t *testing.T) {
 				t.Skip("no loopback:", err)
 			}
 			defer func() { _ = c.Close() }()
-			v6 := tc.network == "udp6"
-			h := newHopCtl(c, v6, new(atomic.Int64))
-			if !h.ok || h.orig <= 0 {
+			h := newHopCtl(c, new(atomic.Int64))
+			if !h.ok || h.orig < 0 {
 				t.Fatalf("hop control %+v", h)
 			}
 			if err := h.set(4); err != nil {
 				t.Fatal(err)
 			}
-			if v, err := rawHopLimit(h.rc, v6); err != nil || v != 4 {
+			if v, err := udpsock.HopLimit(c); err != nil || v != 4 {
 				t.Fatalf("hop limit %d, %v", v, err)
 			}
 			if err := h.set(0); err != nil {
 				t.Fatal(err)
 			}
-			if v, _ := rawHopLimit(h.rc, v6); v != h.orig {
+			if v, _ := udpsock.HopLimit(c); v != h.orig {
 				t.Fatalf("restored %d want %d", v, h.orig)
 			}
 		})
@@ -109,7 +108,7 @@ func (n reportsOnNetwork) ListenPacket(ctx context.Context, network string, ladd
 	if err != nil {
 		return nil, err
 	}
-	if err := udpicmp.EnableReports(c); err != nil {
+	if err := udpsock.EnableICMPReports(c); err != nil {
 		_ = c.Close()
 		return nil, err
 	}

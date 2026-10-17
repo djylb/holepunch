@@ -22,6 +22,7 @@ const (
 	detailControlInterrupted = "control_interrupted"
 	detailPlannerTimeout     = "planner_timeout"
 	detailInsecureControl    = "insecure_control"
+	detailTLSHandshake       = "tls_handshake"
 	detailBudgetViolation    = "budget_violation"
 	detailControlFlood       = "control_flood"
 	detailDuplicate          = "duplicate_message"
@@ -264,11 +265,11 @@ func (s *Session) noticesLocked(t terminal, prev State) []notice {
 		if l == nil || l.dead || st.gone[r] || st.confirmed[r] || (role == t.failed && !t.notifyFailed) {
 			continue
 		}
-		m := protocol.Abort{SessionID: s.id, By: protocol.RoleServer, Code: t.code, Detail: t.detail}
+		m := protocol.Abort{SessionID: s.id, By: protocol.RoleServer, Reason: t.code, Detail: t.detail}
 		if t.failed != "" && t.failed != role {
 			m.By = t.failed
 			if t.peerCode != "" {
-				m.Code, m.Detail = t.peerCode, t.peerDetail
+				m.Reason, m.Detail = t.peerCode, t.peerDetail
 			}
 		}
 		if retry.Retryable && retry.After > 0 {
@@ -301,16 +302,16 @@ func (s *Session) bareResult(t terminal, now time.Time) Result {
 	res := Result{
 		SessionID:  s.id,
 		Outcome:    outcomeOf(t.code),
-		Code:       t.code,
+		Reason:     t.code,
 		Detail:     t.detail,
 		FailedRole: t.failed,
 		Labels:     s.labels,
 	}
-	if res.Code == "" {
+	if res.Reason == "" {
 		res.FailedRole = ""
 	}
-	res.Timings.Created = s.epoch
-	res.Timings.Closed = now
+	res.Timing.Created = s.epoch
+	res.Timing.Closed = now
 	return res
 }
 
@@ -333,17 +334,17 @@ func (s *Session) resultLocked(t terminal, now time.Time) Result {
 		res.RTT[r], _ = st.rtt[r].min()
 		res.ClockOffset[r] = st.offset[r]
 		if st.links[r] != nil {
-			res.Timings.Attached[r] = s.at(st.links[r].attachAt)
+			res.Timing.Attached[r] = s.at(st.links[r].attachAt)
 		}
 	}
 	if st.summarized {
-		res.Timings.Summary = s.at(st.summaryAt)
+		res.Timing.Summary = s.at(st.summaryAt)
 	}
 	if st.round > 0 {
-		res.Timings.FirstGo = s.at(st.firstGoAt)
+		res.Timing.FirstGo = s.at(st.firstGoAt)
 	}
 	if first, ok := st.firstConfirm(); ok {
-		res.Timings.FirstConfirm = s.at(first)
+		res.Timing.FirstConfirm = s.at(first)
 	}
 	if st.round > 0 && !st.cur.evaluating {
 		// The round under way ends with the session.
@@ -352,7 +353,7 @@ func (s *Session) resultLocked(t terminal, now time.Time) Result {
 	for i := range min(st.tlN, timelineCap) {
 		res.Timeline = append(res.Timeline, st.timeline[(st.tlN-min(st.tlN, timelineCap)+i)%timelineCap])
 	}
-	if res.Code == "" && st.winRound > 0 {
+	if res.Reason == "" && st.winRound > 0 {
 		res.Winner = &WinnerInfo{Round: st.winRound, Variant: st.winVar, Family: st.winFam, Path: st.paths}
 		for r, f := range st.finals {
 			if f != nil && f.OK {
@@ -385,7 +386,7 @@ func (st *sessionState) firstConfirm() (time.Duration, bool) {
 	return 0, false
 }
 
-func (st *sessionState) addWarn(w string) {
+func (st *sessionState) addWarn(w protocol.Warning) {
 	if !slices.Contains(st.warn, w) && len(st.warn) < maxWarn {
 		st.warn = append(st.warn, w)
 	}

@@ -69,6 +69,6 @@ func TestPunchStateStableUnderReadLoops(t *testing.T) {
 	if !ready {
 		t.Fatal("no punch_ready")
 	}
-	so.link.send(protocol.Abort{SessionID: so.s.sid, By: protocol.RoleServer, Code: protocol.ReasonCanceled})
+	so.link.send(protocol.Abort{SessionID: so.s.sid, By: protocol.RoleServer, Reason: protocol.ReasonCanceled})
 	so.wantFailure(so.result(5*time.Second), protocol.ReasonCanceled)
 }

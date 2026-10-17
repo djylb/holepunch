@@ -9,7 +9,6 @@ import (
 
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -121,7 +120,7 @@ func TestPacketQuota(t *testing.T) {
 		t.Fatalf("unlimited responder key: %d", left)
 	}
 	p.endRound(1, [2]simclient.Outcome{fired(5), fired(5)})
-	if res := r.wait(p.s); res.Code != protocol.ReasonPacketBudgetExceeded {
+	if res := r.wait(p.s); res.Reason != protocol.ReasonPacketBudgetExceeded {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -406,9 +405,9 @@ func TestMemoryBounds(t *testing.T) {
 	defer s.mu.Unlock()
 	st := &s.st
 	u4 := protocol.FamilyUDP4
-	var drift [2][]natprobe.ServerObservation
+	var drift [2][]nat.Observation
 	for i := range 40 {
-		drift[0] = append(drift[0], natprobe.ServerObservation{Socket: nat.SocketID(u4, nat.IndexPrimary),
+		drift[0] = append(drift[0], nat.Observation{Socket: nat.SocketID(u4, nat.IndexPrimary),
 			Observed: netip.AddrPortFrom(pubI.Addr(), uint16(1000+i)), Changes: 1})
 	}
 	for range 6 {

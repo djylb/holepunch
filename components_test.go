@@ -12,12 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/candidate"
-	"github.com/djylb/holepunch/internal/clock"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 func TestKeepaliveTable(t *testing.T) {
@@ -37,19 +38,19 @@ func TestKeepaliveTable(t *testing.T) {
 		self, peer protocol.Traits
 		pm         *protocol.PortMappingInfo
 		iv         time.Duration
-		reason     string
+		reason     KeepaliveReason
 	}{
-		{"lan", protocol.FamilyUDP4, protocol.PathLAN, pdf, apdm, nil, 30 * time.Second, keepNoNAT},
-		{"overlay", protocol.FamilyUDP4, protocol.PathOverlay, pdf, apdm, nil, 30 * time.Second, keepNoNAT},
-		{"no nat open", protocol.FamilyUDP4, protocol.PathPublic, open, open, nil, 30 * time.Second, keepNoNAT},
-		{"v6 firewall", protocol.FamilyUDP6, protocol.PathPublic, fw, open, nil, 25 * time.Second, keepNoNAT},
-		{"eim known", protocol.FamilyUDP4, protocol.PathPublic, eim, eim, nil, 20 * time.Second, keepEIMKnown},
-		{"pdf", protocol.FamilyUDP4, protocol.PathPublic, eim, pdf, nil, 15 * time.Second, keepRestricted},
-		{"edm", protocol.FamilyUDP4, protocol.PathPublic, apdm, eim, nil, 15 * time.Second, keepRestricted},
-		{"cgnat", protocol.FamilyUDP4, protocol.PathPublic, cg, eim, nil, 10 * time.Second, keepCGNAT},
-		{"unknown", protocol.FamilyUDP4, protocol.PathPublic, protocol.Traits{}, eim, nil, 15 * time.Second, keepUnknown},
-		{"portmap", protocol.FamilyUDP4, protocol.PathPublic, eim, eim, &protocol.PortMappingInfo{Lease: 30 * time.Second}, 10 * time.Second, keepPortmapped},
-		{"portmap short lease clamps", protocol.FamilyUDP4, protocol.PathPublic, eim, eim, &protocol.PortMappingInfo{Lease: 6 * time.Second}, 5 * time.Second, keepPortmapped},
+		{"lan", protocol.FamilyUDP4, protocol.PathLAN, pdf, apdm, nil, 25 * time.Second, KeepaliveNoNAT},
+		{"overlay", protocol.FamilyUDP4, protocol.PathOverlay, pdf, apdm, nil, 25 * time.Second, KeepaliveNoNAT},
+		{"no nat open", protocol.FamilyUDP4, protocol.PathPublic, open, open, nil, 25 * time.Second, KeepaliveNoNAT},
+		{"v6 firewall", protocol.FamilyUDP6, protocol.PathPublic, fw, open, nil, 25 * time.Second, KeepaliveNoNAT},
+		{"eim known", protocol.FamilyUDP4, protocol.PathPublic, eim, eim, nil, 20 * time.Second, KeepaliveEIMKnown},
+		{"pdf", protocol.FamilyUDP4, protocol.PathPublic, eim, pdf, nil, 15 * time.Second, KeepaliveRestricted},
+		{"edm", protocol.FamilyUDP4, protocol.PathPublic, apdm, eim, nil, 15 * time.Second, KeepaliveRestricted},
+		{"cgnat", protocol.FamilyUDP4, protocol.PathPublic, cg, eim, nil, 10 * time.Second, KeepaliveCGNAT},
+		{"unknown", protocol.FamilyUDP4, protocol.PathPublic, protocol.Traits{}, eim, nil, 15 * time.Second, KeepaliveUnknown},
+		{"portmap", protocol.FamilyUDP4, protocol.PathPublic, eim, eim, &protocol.PortMappingInfo{Lease: 30 * time.Second}, 10 * time.Second, KeepalivePortmapped},
+		{"portmap short lease clamps", protocol.FamilyUDP4, protocol.PathPublic, eim, eim, &protocol.PortMappingInfo{Lease: 6 * time.Second}, 5 * time.Second, KeepalivePortmapped},
 	}
 	for _, c := range cases {
 		a := keepaliveFor(c.fam, c.kind, c.self, c.peer, c.pm)
@@ -96,7 +97,7 @@ func TestDiagnosticsCloneIsDeep(t *testing.T) {
 		Timeline: []Transition{{Event: "x"}}, Self: []protocol.Traits{{}}, Plan: &plan, Rounds: []protocol.RoundPlan{plan.Round1},
 		Path:     &protocol.PathInfo{Epoch: 1},
 		Families: []FamilyDiagnostics{{Candidates: map[string]int{"a": 1}, Counters: Counters{Drops: map[string]int{"auth": 1}}}},
-		Counters: Counters{TxByStage: map[string]int{"direct": 1}}, Warn: []string{"w"},
+		Counters: Counters{TxByStage: map[string]int{"direct": 1}}, Warn: []protocol.Warning{"w"},
 	}
 	c := d.clone()
 	c.Plan.Round1.Sides[0].Stages[0].Targets[0] = netip.AddrPort{}
@@ -140,7 +141,7 @@ func TestSessionClose(t *testing.T) {
 	}
 	relErr := errors.New("release failed")
 	n := 0
-	s := &Session{conn: c, releases: []func() error{func() error { n++; return relErr }}}
+	s := &Session{conns: []net.PacketConn{c}, releases: []func() error{func() error { n++; return relErr }}}
 	var wg sync.WaitGroup
 	errs := make([]error, 8)
 	for i := range errs {
@@ -156,7 +157,7 @@ func TestSessionClose(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("release ran %d times", n)
 	}
-	p := &Session{conn: c, releases: []func() error{func() error { panic("x") }}}
+	p := &Session{conns: []net.PacketConn{c}, releases: []func() error{func() error { panic("x") }}}
 	if err := p.Close(); err == nil {
 		t.Fatal("panicking release must report")
 	}
@@ -177,7 +178,7 @@ func TestSessionCloseUncomparableConn(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := uncomparableConn{PacketConn: c}
-	s := &Session{conn: u, extra: []net.PacketConn{u}}
+	s := &Session{conns: []net.PacketConn{u, u}}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -195,20 +196,20 @@ func TestSystemNetwork(t *testing.T) {
 		t.Skip("no IPv4 loopback:", err)
 	}
 	defer func() { _ = c.Close() }()
-	h := newHopCtl(c, false, new(atomic.Int64))
-	if !h.ok || h.orig <= 0 {
+	h := newHopCtl(c, new(atomic.Int64))
+	if !h.ok || h.orig < 0 {
 		t.Fatalf("hop control %+v", h)
 	}
 	if err := h.set(3); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := rawHopLimit(h.rc, false); v != 3 {
+	if v, _ := udpsock.HopLimit(c); v != 3 {
 		t.Fatalf("ttl %d", v)
 	}
 	if err := h.set(0); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := rawHopLimit(h.rc, false); v != h.orig {
+	if v, _ := udpsock.HopLimit(c); v != h.orig {
 		t.Fatalf("restored %d want %d", v, h.orig)
 	}
 	wildcard, err := nw.ListenPacket(context.Background(), "udp4", netip.AddrPort{}, PurposeProbe)
@@ -473,7 +474,7 @@ func TestKeepaliveProbes(t *testing.T) {
 // panic, like every other user implementation's.
 func TestHopLimiterPanicCounted(t *testing.T) {
 	var n atomic.Int64
-	h := newHopCtl(panicHop{}, false, &n)
+	h := newHopCtl(panicHop{}, &n)
 	if err := h.set(4); err == nil || n.Load() != 1 {
 		t.Fatalf("err %v, panics %d", err, n.Load())
 	}

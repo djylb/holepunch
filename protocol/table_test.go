@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 )
 
 // jsonFields lists the JSON names of t's fields; a name ending in "?" is
@@ -154,7 +154,7 @@ func TestProtocolTable(t *testing.T) {
 		if typ.Known() || typ.MaxPayload() != controlwire.DiscardCap || typ.String() != fmt.Sprintf("type(%d)", b) {
 			t.Errorf("type %d: known %v, cap %d, name %q; want a reserved type", b, typ.Known(), typ.MaxPayload(), typ)
 		}
-		if _, err := Decode(controlwire.Frame{Type: controlwire.Type(b), Payload: []byte("{}")}); !errors.Is(err, ErrUnexpectedMessage) {
+		if _, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(b), Payload: []byte("{}")}); !errors.Is(err, ErrUnexpectedMessage) {
 			t.Errorf("Decode of reserved type %d = %v", b, err)
 		}
 	}
@@ -227,7 +227,7 @@ func TestEnumValues(t *testing.T) {
 		"portalloc": {texts(6, func(i int) ([]byte, error) { return PortAlloc(i).MarshalText() }), "unknown preserving sequential pool random preserve_fresh"},
 		"conf":      {texts(4, func(i int) ([]byte, error) { return Conf(i).MarshalText() }), "none low medium high"},
 		"tri":       {texts(3, func(i int) ([]byte, error) { return Tri(i).MarshalText() }), "unknown false true"},
-		"security":  {texts(3, func(i int) ([]byte, error) { return ControlSecurity(i).MarshalText() }), "unknown declared insecure_for_testing"},
+		"security":  {texts(3, func(i int) ([]byte, error) { return ControlSecurity(i).MarshalText() }), "auto declared insecure_for_testing"},
 		"class":     {texts(5, func(i int) ([]byte, error) { return ReasonClass(i).MarshalText() }), "none fatal transient nat_hard canceled"},
 	} {
 		if strings.Join(tc.got, " ") != tc.want {

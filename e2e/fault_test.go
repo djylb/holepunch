@@ -14,7 +14,7 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -48,13 +48,6 @@ const (
 	stageSummaryReceived = "summary_received"
 	stageFire            = "fire"
 	stageConfirmed       = "confirmed"
-)
-
-// Client warnings (an open enumeration; the root package does not
-// export them).
-const (
-	warnControlLostAfterConfirm = "control_lost_after_confirm"
-	warnControlUnreturnable     = "control_unreturnable"
 )
 
 // silence is how the peers' UDP is blocked in a fault cell, so that the
@@ -91,7 +84,7 @@ type faultExpect struct {
 	bound func(fc *faultCell) time.Time
 	quiet silence
 	// warn must be in the initiator's Warn on success.
-	warn string
+	warn protocol.Warning
 	// phases are the Error.Phase values allowed on failure.
 	phases []protocol.Phase
 	// check adds an assertion of the cell.
@@ -239,7 +232,7 @@ func roundEnd(k uint8) func(*faultCell) time.Time {
 	}
 }
 
-// fromStart bounds a return relative to the initiator's AttachSession call:
+// fromStart bounds a return relative to the initiator's Punch call:
 // punch_start arrives one link delay later.
 func fromStart(d func(fc *faultCell) time.Duration) func(*faultCell) time.Time {
 	return func(fc *faultCell) time.Time {
@@ -265,7 +258,7 @@ func goWait(fc *faultCell) time.Duration {
 // handshake bounds a return to the first go + handshake_timeout + the
 // confirmation grace.
 func handshake(fc *faultCell) time.Time {
-	fg := fc.r.res.Timings.FirstGo
+	fg := fc.r.res.Timing.FirstGo
 	if fg.IsZero() {
 		fg = fc.injectedAt()
 	}
@@ -324,7 +317,7 @@ func expectLinkLoss(p phase, quick time.Duration, before ...protocol.Reason) (fa
 	case phBetweenRounds:
 		return faultExpect{reasons: reasons(protocol.ReasonControlInterrupted), bound: after(boundGap), quiet: silenceAll, phases: punchPhases}, true
 	case phConfirmed:
-		return faultExpect{reasons: reasons(""), warn: warnControlLostAfterConfirm}, true
+		return faultExpect{reasons: reasons(""), warn: protocol.WarnControlLostAfterConfirm}, true
 	case phResponderDone:
 		return success(silenceNone), true
 	}
@@ -335,7 +328,7 @@ func expectLinkLoss(p phase, quick time.Duration, before ...protocol.Reason) (fa
 // udp_blocked}: every socket write failed for a second.
 func fatalUDP(fc *faultCell, i int) bool {
 	for _, rr := range view(fc.r.taps[i]).rounds {
-		if rr.Status == protocol.RoundFatal && rr.Code == protocol.ReasonUDPBlocked {
+		if rr.Status == protocol.RoundFatal && rr.Reason == protocol.ReasonUDPBlocked {
 			return true
 		}
 	}
@@ -363,8 +356,8 @@ func udpBlocked(mustFatal bool) func(fc *faultCell) error {
 		if fatal[0] && fatal[1] {
 			want = protocol.ReasonUDPBlocked
 		}
-		if fc.r.resOK && fc.r.res.Code != want {
-			errs = append(errs, fmt.Errorf("coordinator attributed %q, want %q (fatal %v)", fc.r.res.Code, want, fatal))
+		if fc.r.resOK && fc.r.res.Reason != want {
+			errs = append(errs, fmt.Errorf("coordinator attributed %q, want %q (fatal %v)", fc.r.res.Reason, want, fatal))
 		}
 		return errors.Join(errs...)
 	}
@@ -384,8 +377,8 @@ func coordFirst(fc *faultCell) error {
 	if got == "" || got == protocol.ReasonControlInterrupted {
 		return nil
 	}
-	if !fc.r.resOK || got != fc.r.res.Code || !slices.Contains(attributionCodes, got) {
-		return fmt.Errorf("%s ended with %q, which is neither control_interrupted nor the coordinator's attribution %q", roles[observed], got, fc.r.res.Code)
+	if !fc.r.resOK || got != fc.r.res.Reason || !slices.Contains(attributionCodes, got) {
+		return fmt.Errorf("%s ended with %q, which is neither control_interrupted nor the coordinator's attribution %q", roles[observed], got, fc.r.res.Reason)
 	}
 	return nil
 }
@@ -830,7 +823,7 @@ func (fc *faultCell) check() []string {
 	}
 	for i := range 2 {
 		oi := &r.out[i]
-		if oi.inflight != 0 || (!oi.rdl.IsZero() || !oi.wdl.IsZero()) && !slices.Contains(oi.diag.Warn, warnControlUnreturnable) {
+		if oi.inflight != 0 || (!oi.rdl.IsZero() || !oi.wdl.IsZero()) && !slices.Contains(oi.diag.Warn, protocol.WarnControlUnreturnable) {
 			add("%s: control conn not returned clean: %d reads in flight, read deadline %v, write deadline %v",
 				roles[i], oi.inflight, oi.rdl, oi.wdl)
 		}

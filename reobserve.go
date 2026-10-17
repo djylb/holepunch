@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/netaddr"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Re-observation of the primary socket's mapping while punching. A NAT may

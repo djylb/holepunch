@@ -33,7 +33,7 @@ func TestFamilyNoContact(t *testing.T) {
 	blocked := quiet()
 	blocked.Families[0].ICMPUnreach = icmpBlocked
 	fatal := quiet()
-	fatal.Status, fatal.Code = protocol.RoundFatal, protocol.ReasonUDPBlocked
+	fatal.Status, fatal.Reason = protocol.RoundFatal, protocol.ReasonUDPBlocked
 	for name, r := range map[string]*protocol.RoundResult{"hit": hit, "blocked": blocked, "fatal": fatal} {
 		if familyNoContact([2]*protocol.RoundResult{r, quiet()}, protocol.FamilyUDP4) {
 			t.Errorf("%s counted as no contact", name)

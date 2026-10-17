@@ -94,7 +94,7 @@ func (w *e2eWorld) punch(hosts [2]*nattest.Host, mappers [2]holepunch.PortMapper
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sess[i], errs[i] = holepunch.AttachSession(ctx, cli, holepunch.Options{ControlSecurity: protocol.ControlSecurityInsecureForTesting,
+			sess[i], errs[i] = holepunch.Punch(ctx, cli, holepunch.Options{ControlSecurity: protocol.ControlSecurityInsecureForTesting,
 				Network: hosts[i], TransportMode: "quic", PortMapper: mappers[i]})
 		}()
 	}
@@ -117,7 +117,7 @@ func (w *e2eWorld) punch(hosts [2]*nattest.Host, mappers [2]holepunch.PortMapper
 	res, _ := s.Result()
 	for i, err := range errs {
 		if err != nil {
-			t.Fatalf("client %d: %v (coordinator: %s %s)", i, err, res.Code, res.Detail)
+			t.Fatalf("client %d: %v (coordinator: %s %s)", i, err, res.Reason, res.Detail)
 		}
 		if d := sess[i].Diagnostics(); d.Counters.TargetRejected != 0 {
 			t.Errorf("client %d refused %d targets of the plans (warn %v)", i, d.Counters.TargetRejected, d.Warn)

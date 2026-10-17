@@ -5,6 +5,25 @@
 // round-trip times, relays what each client sees of the other while punching,
 // and lets the session go as soon as the clients confirm a UDP path.
 //
+// # Usage
+//
+// A deployment shares one natprobe.Registry between its natprobe.Server and
+// its Coordinator, then pairs two authenticated client connections in a
+// session:
+//
+//	co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: probe.ProbeSpec()})
+//	...
+//	sess, err := co.NewSession(coord.SessionOptions{})
+//	err = sess.Attach(protocol.RoleInitiator, connA, coord.AttachOptions{})
+//	err = sess.Attach(protocol.RoleResponder, connB, coord.AttachOptions{})
+//	res, err := sess.Wait(ctx) // or Config.OnResult for every session
+//
+// Once Attach returns nil the connection belongs to the session, which
+// closes it when the session ends. A failed session's Result.Retry says
+// whether to try again and in which mode; a client that should keep
+// relaying and punch in the background gets SessionOptions.Mode
+// protocol.ModeBackground.
+//
 // # Model
 //
 // A Coordinator creates sessions; a Session needs no connection to exist.
@@ -18,13 +37,13 @@
 // failure, abort, panic and shutdown. The Result is delivered to
 // Config.OnResult exactly once, after every resource of the session is gone.
 //
-// The planning decisions are made by a Planner (internal/plan's
-// DefaultPlanner unless the caller supplies one); the coordinator does not
+// The planning decisions are made by a Planner (the built-in one unless the
+// caller supplies one); the coordinator does not
 // trust it: every decision is clamped to the per-round budget classes, the
 // session and per-key budgets and the protocol limits, its targets pass
 // admission (addresses natprobe verified with a return-path cookie;
 // private addresses of a peer on the same LAN or behind the same upstream
-// NAT; in an unverified family — relay-only mode, or a family no observer
+// NAT; in an unverified family — NoObserver mode, or a family no observer
 // covers — Direct stages to a few self-reported global addresses),
 // and escalation is guarded (a round rises at most one budget class). The
 // admission sets are the ones the clients build from their summaries, and
@@ -66,9 +85,8 @@
 //
 // # Concurrency
 //
-// Each attached control stream is a controlwire.Conn, which owns one reading
-// and one writing goroutine. Accepted frames go, through Conn's Intercept,
-// into a small bounded channel per link. One session goroutine consumes both
+// Each attached control stream is framed by one reading and one writing
+// goroutine. Accepted frames go into a small bounded channel per link. One session goroutine consumes both
 // links' channels and their Done signals in a single select: every frame,
 // every link failure and every planning step of a session runs on it, so the
 // state machine sees one ordered stream of events. A session therefore has at
@@ -80,9 +98,9 @@
 // session owns a single Clock timer, re-armed under the mutex to the nearest
 // of its stage deadline, its next ping and pending sandwich events; the timer
 // callback only changes state or wakes the session goroutine. User code — the
-// Planner, StrategyMemory, natprobe.TraitsMemory, Handle.Merge, the Observer,
+// Planner, StrategyMemory, natprobe.TraitsMemory, the natprobe merge, the Observer,
 // OnResult, and the methods of the errors the caller's connections fail with
-// — always runs outside the mutex, inside life.Safe, and the
+// — always runs outside the mutex, inside a recover boundary, and the
 // result of an out-of-lock call is discarded when the session's generation
 // changed meanwhile. A Planner that never returns keeps only the session
 // goroutine; the stage deadline still ends the session and frees everything
@@ -100,7 +118,7 @@
 // the caller otherwise; the session closes it in finish. Attach returns an
 // error only while it has not touched the stream; once the stream is wrapped
 // it is the session's, and a failure from then on ends the session with
-// internal. The natprobe Handle, the quota reservations, the index entry, the
+// internal. The natprobe registration, the quota reservations, the index entry, the
 // timer, the session context and the parent-context registration are owned
 // by the session and released by finish. finish closes the session before it
 // works anything out, and runs every release step, and every link's close, in
@@ -119,11 +137,11 @@
 // returns the error.
 //
 // The Coordinator owns the housekeeping goroutine (quota table, strategy
-// memory and Registry sweeping every 10 s) and, when an Observer is set, one
+// memory sweeping every 10 s) and, when an Observer is set, one
 // event dispatcher with a bounded queue. Close ends every session with
 // server_shutdown and joins them within 3 s; its steps have a recover
 // boundary each, so a panic in one is counted and skips none of the others,
-// and Close returns it as a *life.PanicError. Every channel that
+// and Close returns it as a *holepunch.PanicError. Every channel that
 // signals an end — Close's, a session's quit, a link's quit — is closed in a
 // defer, or before anything that could fail, on the path that ends.
 //
@@ -143,7 +161,6 @@
 // targets each side has sent (the targets of at most 8 rounds), sandwich
 // events (8), warnings (8) and the timeline.
 //
-// coord depends on protocol, controlwire, udpwire, natprobe and the internal
-// packages nat, plan, life, clock, faultinject and ablation; it never links
-// the client root package, the port mapper or golang.org/x/net.
+// coord depends on protocol, natprobe, clock and internal packages; it never
+// links the client root package, the port mapper or golang.org/x/net.
 package coord

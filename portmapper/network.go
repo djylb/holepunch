@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/djylb/holepunch/internal/life"
-	"github.com/djylb/holepunch/internal/udpicmp"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // opener opens a request socket bound to local:0 for one request bounded by
@@ -43,7 +43,7 @@ func (m *Mapper) openRequest(ctx context.Context, local netip.Addr) (*reqConn, e
 		return nil, perr
 	}
 	if err == nil && !life.IsNil(pc) {
-		err = life.Safe("udpicmp.DisableReports", func() { _ = udpicmp.DisableReports(pc) })
+		err = life.Safe("udpsock.DisableICMPReports", func() { _ = udpsock.DisableICMPReports(pc) })
 	}
 	if err != nil {
 		if !life.IsNil(pc) { // the switch panicked, or the Network broke its contract: do not leak the conn

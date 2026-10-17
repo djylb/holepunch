@@ -166,7 +166,7 @@ func TestServerFaultMatrix(t *testing.T) {
 				}
 				if p.cl[1] != nil {
 					if want.abort {
-						if a := expectAbort(t, p.cl[1]); a.Code != want.code && a.Code != protocol.ReasonPeerOffline {
+						if a := expectAbort(t, p.cl[1]); a.Reason != want.code && a.Reason != protocol.ReasonPeerOffline {
 							t.Fatalf("abort %+v", a)
 						}
 					} else {
@@ -174,7 +174,7 @@ func TestServerFaultMatrix(t *testing.T) {
 					}
 				}
 				res := r.wait(p.s)
-				if want.success != (res.Outcome == OutcomeSucceeded) || !want.success && res.Code != want.code {
+				if want.success != (res.Outcome == OutcomeSucceeded) || !want.success && res.Reason != want.code {
 					t.Fatalf("result %+v, want %+v", res, want)
 				}
 				if r.c.Len() != 0 || r.c.Stats().ActiveByKey != 0 {
@@ -223,7 +223,7 @@ func TestStalledPeerBounded(t *testing.T) {
 	defer func() { _ = nc.Close() }()
 	pingNow(r, p)
 	start := time.Now()
-	if a := expectAbort(t, p.cl[1]); a.By != protocol.RoleInitiator || a.Code != protocol.ReasonPeerOffline {
+	if a := expectAbort(t, p.cl[1]); a.By != protocol.RoleInitiator || a.Reason != protocol.ReasonPeerOffline {
 		t.Fatalf("abort %+v", a)
 	}
 	res := r.wait(p.s)
@@ -253,7 +253,7 @@ func TestStalledQueue(t *testing.T) {
 		s.mu.Unlock()
 	}
 	res := r.wait(s)
-	if res.Code != protocol.ReasonPeerOffline || res.Detail != detailStalled {
+	if res.Reason != protocol.ReasonPeerOffline || res.Detail != detailStalled {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -273,7 +273,7 @@ func TestStalledRearmsFromNow(t *testing.T) {
 	r.clk.Advance(left / 2)
 	p.s.apply(p.s.stalled(0))
 	r.clk.Advance(left - left/2)
-	if res := r.wait(p.s); res.Code != protocol.ReasonControlInterrupted || res.FailedRole != protocol.RoleInitiator {
+	if res := r.wait(p.s); res.Reason != protocol.ReasonControlInterrupted || res.FailedRole != protocol.RoleInitiator {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -295,11 +295,11 @@ func TestPanickyConnError(t *testing.T) {
 	p, fc := r.matrixPair(StateProbing)
 	fc.FailWrites(panickyErr{})
 	pingNow(r, p)
-	if a := expectAbort(t, p.cl[1]); a.By != protocol.RoleInitiator || a.Code != protocol.ReasonPeerOffline {
+	if a := expectAbort(t, p.cl[1]); a.By != protocol.RoleInitiator || a.Reason != protocol.ReasonPeerOffline {
 		t.Fatalf("abort %+v", a)
 	}
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonPeerOffline || res.FailedRole != protocol.RoleInitiator {
+	if res.Reason != protocol.ReasonPeerOffline || res.FailedRole != protocol.RoleInitiator {
 		t.Fatalf("result %+v", res)
 	}
 	if r.c.Stats().Panics == 0 {
@@ -317,7 +317,7 @@ func TestCallbackPanics(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	p.s.Abort(protocol.ReasonCanceled, "")
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonCanceled {
+	if res.Reason != protocol.ReasonCanceled {
 		t.Fatalf("result %+v", res)
 	}
 	eventually(t, "panics counted", func() bool { return r.c.Stats().Panics >= 2 })

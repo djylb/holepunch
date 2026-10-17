@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // spraySeed builds a spray seed the way the client would, from the one KDF

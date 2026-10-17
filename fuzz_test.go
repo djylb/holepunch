@@ -9,9 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // FuzzDispatch feeds arbitrary datagrams to a socket's dispatcher, before
@@ -47,7 +48,7 @@ func FuzzDispatch(f *testing.F) {
 func FuzzIntercept(f *testing.F) {
 	ps := protocol.PunchStart{SessionID: "fuzz", Role: protocol.RoleInitiator, Token: protocol.NewToken(),
 		Wire: protocol.NewWireSpec(), Control: protocol.DefaultControlSpec(), Probe: protocol.ProbeSpec{V: protocol.ProbeSpecVersion}}
-	start, _ := protocol.Marshal(ps)
+	start, _ := msgframe.Encode(ps)
 	f.Add(uint8(controlwire.TypePunchStart), start.Payload, true)
 	f.Add(uint8(controlwire.TypePunchGo), []byte(`{"session_id":"fuzz","round":2,"window_ms":800}`), true)
 	f.Add(uint8(controlwire.TypeAssist), []byte(`{"session_id":"fuzz","kind":"peer_seen","round":1,"family":"udp4","sock":0,"cand":0,"type":6}`), true)

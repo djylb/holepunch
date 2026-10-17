@@ -1,88 +1,75 @@
-// Package holepunch is the client runtime of holepunch, a UDP hole-punching
-// library: given a control connection to a holepunch coordinator, it finds a
-// direct UDP path to the peer the coordinator pairs it with and hands the
-// winning socket to the caller.
+// Package holepunch is the client side of holepunch, a UDP hole-punching
+// library: given a control connection to a holepunch coordinator (package
+// coord), Punch finds a direct UDP path to the peer the coordinator pairs it
+// with and hands the confirmed socket to the caller.
 //
-// The package example runs a whole deployment on a simulated Internet —
-// natprobe, the coordinator (package coord) and two clients behind NATs —
-// and ExampleAttachSession shows the client side against a real server,
-// with the handling of a failure.
+// # Usage
 //
-// # Integration
+// The caller opens an authenticated, encrypted stream to the coordinator —
+// TLS works as is — sends whatever its application needs first, and calls
+// Punch:
 //
-// The caller establishes an authenticated, encrypted stream to the
-// coordinator (TLS, an encrypted bridge, a QUIC stream), sends whatever it
-// needs before the session, and calls AttachSession with it. The library
-// reads the first frame, punch_start, and then runs the session the server
-// drives:
+//	sess, err := holepunch.Punch(ctx, conn, holepunch.Options{})
+//	if err != nil {
+//		// a *holepunch.Error: keep relaying, maybe retry (see below)
+//	}
+//	defer sess.Close()
+//	pc := sess.PacketConn()               // the punched UDP socket, now the caller's
+//	peer := sess.Result().Path.RemoteAddr // the peer's address on it
 //
-//  1. probing: it binds its sockets through Options.Network, measures the
-//     NAT against the natprobe observers listed in punch_start and reports,
-//     with the host's overlay addresses — tunnels such as Tailscale or
-//     WireGuard, 100.64/10 — kept apart from its LAN ones (hostaddrs.go);
-//  2. preparation: it takes the summary — both sides' NAT view and the first
-//     round's plan — admits the targets, pre-binds the round's sockets and
-//     reports ready;
-//  3. punching: it runs every round the server starts with punch_go, at the
-//     instant the server aligned for both sides, sending only to admitted
-//     peer addresses and only through its send gate (budget, rate, new
-//     targets, distinct ports); the first datagram of every flow — socket
-//     and remote endpoint — leaves as a STUN Binding Request carrying the
-//     packet (opener.go), for networks that cut flows that do not
-//     start like WebRTC; a round that hears nothing from the peer
-//     re-observes its own mapping halfway, so that a mapping the NAT moved
-//     reaches the peer through the server (reobserve.go); a round may
-//     bind fresh sockets at ports drawn from its seed, for a NAT that keeps
-//     a fresh socket's port, or open its sockets slowly over a long
-//     window, the slow birthday of a Background session, which a spike of
-//     bind or write failures halts; both are closed when the round
-//     ends unless they heard the peer;
-//  4. handover: once a candidate pair carries traffic both ways, the
-//     nomination handshake (nominate, accept, ready, handover_ack) confirms
-//     it over UDP alone — the server is no longer needed — and the socket is
-//     handed over clean: no read loop, no deadline, normal TTL.
+// The control connection stays the caller's throughout: Punch never closes
+// it, and closing it is how a caller stops a running Punch. A stream that is
+// not TLS but protected by an outer layer needs Options.ControlSecurity
+// protocol.ControlSecurityDeclared.
 //
-// With Options.MaxPaths above 1 the session also hands over up to
-// MaxPaths-1 extra paths that already carried the peer's packets — another
-// family, another kind of network, other sockets — each confirmed on its
-// own pair within the handover.
+// # What a session hands over
 //
-// The result is a *Session (the sockets, the Result and the Diagnostics) or
-// an *Error whose Reason is one of the 26 protocol.Reason values, with the
-// server's advice for the next attempt (Error.Advice: stay on the relay and
-// punch again in Background mode, or relay only). Options.Mode accepts a
-// Background session the server offers: the caller already relays and
-// nobody waits. The control connection always remains the caller's.
+// A Session holds the sockets of the confirmed paths: the primary path
+// (PacketConn, Result.Path) and, with Options.MaxPaths above 1, extra paths
+// on another family or kind of network (Result.ExtraPaths, PacketConns).
+// The library no longer reads or writes them; their deadlines are cleared
+// and their TTL restored. Each Path says what kind of network it crosses
+// (public, LAN, overlay, port mapping), its RTT and the keepalive that keeps
+// its NAT mappings open. An upper layer other than QUIC reads through
+// Session.FilterResidual, which drops the peer's last handshake packets;
+// QUIC needs nothing. Close the Session, not the sockets, so that a port
+// mapping is released too.
 //
-// # Concurrency
+// # Failures
 //
-// AttachSession runs the phases on the caller's goroutine. Every other
-// goroutine starts through internal/life.Group.Go, which recovers panics:
-// the control connection's reader and writer (controlwire), one read loop
-// per socket, one prober and one port-mapping attempt per family, one
-// goroutine per family and round, the nomination goroutine that owns the
-// candidate state machine, a few bounded peer_seen follow-ups, and the
-// OnProgress delivery goroutine. User code — Network, PortMapper,
-// HopLimiter, Clock callbacks, OnProgress — is called outside every lock
-// and inside a recover boundary. Every UDP write passes the send gate, one
-// packet of a family at a time, so that the gate judges the sequence of
-// destination ports in the order the packets actually leave. Nothing polls:
-// an idle session sleeps on its channels and on the timers of its next
-// deadline.
+// Every failure is an *Error whose Reason is one of the protocol.Reason
+// values, with the phase it happened in, a detail and, from the server,
+// advice for the next attempt (Error.Advice: relay and punch again in
+// Background mode, or relay only) and a RetryAfter:
 //
-// # Ownership
+//	if e, ok := errors.AsType[*holepunch.Error](err); ok && e.Reason == protocol.ReasonServerBusy {
+//		time.Sleep(e.RetryAfter)
+//	}
 //
-// The session group owns every socket, every port-mapping release and every
-// goroutine; the punching group, inside it, holds the goroutines that may
-// write the winning socket. A single cleanup path serves success and failure
-// alike (finish): it disowns and detaches the winner — and the extra paths'
-// sockets — stops and joins the punching goroutines and their read loops,
-// clears their deadlines and TTL, writes punch_result, releases the control
-// connection and closes the rest. After AttachSession returns, the library
-// neither reads nor writes the control connection or a handed-over socket
-// again.
+// Diagnostics — on the Session and on the Error — tell how the session went:
+// both sides' NAT traits, the rounds run, counters, timings, warnings and
+// hints for people (HintHostFirewall, HintServerSeesLAN).
 //
-// Every wait is bounded by its own deadline, so AttachSession returns within
-// the session cap T (71 s by default, 150 s at most) even with
-// context.Background().
+// # Related packages
+//
+//   - coord and natprobe are the server side; portmapper adds UPnP, NAT-PMP
+//     and PCP port mappings (Options.PortMapper).
+//   - stun, udpsock and hostaddr are standalone tools the library is built
+//     on: STUN queries and a server, ICMP reports and TTLs of UDP sockets,
+//     and the host's LAN, public and overlay addresses.
+//   - nattest simulates NATs and networks in process, and clock provides
+//     the Fake clock that drives a whole deployment deterministically; the
+//     package example runs one.
+//
+// # Guarantees
+//
+// Punch does not panic: user code — Network, PortMapper, HopLimiter, Clock,
+// OnProgress — runs outside every lock and inside a recover boundary, and a
+// panic in the library becomes an *Error with Reason internal. When Punch
+// returns, every goroutine it started has exited and every resource it did
+// not hand over is released, on success and failure alike. Every wait has
+// its own deadline, so Punch returns within the session cap (71 s by
+// default, 150 s at most) even with context.Background(), plus a TLS
+// handshake it ran for the caller (15 s at most). Nothing polls: an
+// idle session sleeps until its next deadline.
 package holepunch

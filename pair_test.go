@@ -14,7 +14,6 @@ import (
 	"github.com/djylb/holepunch/internal/leak"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 func prc() *nattest.NATConfig { return natCfg(nattest.PortRestricted()) }
@@ -51,7 +50,7 @@ func TestHandoverZeroTouch(t *testing.T) {
 			t.Fatal(err)
 		}
 		app[i] = c
-		if r.sess.PacketConn() == nil || !slices.Equal(r.sess.ResidualFilter().Codec.Peers(), []netip.AddrPort{r.sess.Result().Path.RemoteAddr}) {
+		if r.sess.PacketConn() == nil || !slices.Equal(r.sess.codec.Peers(), []netip.AddrPort{r.sess.Result().Path.RemoteAddr}) {
 			t.Fatalf("client %d: residual filter not bound to the peer", i)
 		}
 		if ps.results[i] == nil || !ps.results[i].OK || ps.results[i].Path == nil || ps.results[i].Path.ConfirmedBy == "" {
@@ -142,7 +141,7 @@ func TestPairSymmetricSequential(t *testing.T) {
 }
 
 // Progress reaches the callback in order, a panicking callback is counted
-// and the session goes on; no call happens after AttachSession returns.
+// and the session goes on; no call happens after Punch returns.
 func TestProgressCallback(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
@@ -242,7 +241,7 @@ func TestPortMapping(t *testing.T) {
 			t.Fatalf("client %d: mapped %d released %d", i, maps[i].mapped.Load(), maps[i].released.Load())
 		}
 		res := pr.res[i].sess.Result()
-		if res.Path.PortMapping == nil || res.Path.Keepalive.Reason != keepPortmapped {
+		if res.Path.PortMapping == nil || res.Path.Keepalive.Reason != KeepalivePortmapped {
 			t.Fatalf("client %d result %+v", i, res)
 		}
 	}
@@ -377,8 +376,11 @@ func TestResidualFilter(t *testing.T) {
 	pr := runPair(t, w, [2]*nattest.NATConfig{prc(), prc()}, ps, nil)
 	defer pr.closeAll()
 	wantSuccess(t, pr)
-	rf := pr.res[1].sess.ResidualFilter()
-	if rf.Window != udpwire.DefaultResidualWindow || !slices.Equal(rf.Codec.Peers(), []netip.AddrPort{pr.res[1].sess.Result().Path.RemoteAddr}) {
-		t.Fatalf("filter %+v", rf)
+	s := pr.res[1].sess
+	if !slices.Equal(s.codec.Peers(), []netip.AddrPort{s.Result().Path.RemoteAddr}) {
+		t.Fatalf("filter bound to %v", s.codec.Peers())
+	}
+	if fc := s.FilterResidual(s.PacketConn()); fc == nil || fc.Dropped() != 0 {
+		t.Fatal("FilterResidual returned no filter")
 	}
 }

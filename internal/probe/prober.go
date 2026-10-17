@@ -8,11 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/stun"
 )
 
 // SocketHandle is a probing socket as its owner, the session runtime,
@@ -108,7 +109,7 @@ type inbound struct {
 	from   netip.AddrPort
 	h      udpwire.Header
 	t      udpwire.TLVs
-	txid   [12]byte
+	txid   stun.TransactionID
 	mapped netip.AddrPort
 	at     time.Time
 }
@@ -224,7 +225,7 @@ func (p *Prober) DeliverSTUN(sock uint8, from netip.AddrPort, pkt []byte, at tim
 	if !slices.ContainsFunc(p.stunServers, func(sv stunServer) bool { return sv.addr == from }) {
 		return false
 	}
-	txid, mapped, ok := parseSTUN(pkt)
+	txid, mapped, ok := stun.ParseBindingResponse(pkt)
 	if !ok {
 		return false
 	}

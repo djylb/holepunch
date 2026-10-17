@@ -12,9 +12,8 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/djylb/holepunch"
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord"
-	"github.com/djylb/holepunch/internal/clock"
 	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
@@ -289,4 +288,4 @@ func TestFaultUserCode(t *testing.T) {
 	goleak.VerifyNone(t)
 }
 
-var _ holepunch.Clock = (*panicClock)(nil)
+var _ clock.Clock = (*panicClock)(nil)

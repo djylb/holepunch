@@ -7,13 +7,12 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
 
 // primarySlot is natprobe's slot of role's primary socket at observer obs.
-func primarySlot(t *testing.T, h *natprobe.Handle, role protocol.Role, obs uint8) natprobe.ServerObservation {
+func primarySlot(t *testing.T, h nat.ProbeHandle, role protocol.Role, obs uint8) nat.Observation {
 	t.Helper()
 	for _, o := range h.Observations(role) {
 		if o.Socket == nat.SocketID(protocol.FamilyUDP4, nat.IndexPrimary) && o.Observer == obs {
@@ -21,7 +20,7 @@ func primarySlot(t *testing.T, h *natprobe.Handle, role protocol.Role, obs uint8
 		}
 	}
 	t.Fatalf("no slot of the primary socket at observer %d", obs)
-	return natprobe.ServerObservation{}
+	return nat.Observation{}
 }
 
 // TestReobserveReportsRemap: the client's NAT changes its external IP

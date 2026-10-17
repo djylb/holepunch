@@ -8,7 +8,7 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
 )
 
 // FuzzNATSim drives random outbound, inbound, time and reboot sequences

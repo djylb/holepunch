@@ -116,7 +116,7 @@ type ClassifyInput struct {
 	Initiator protocol.PeerView
 	Responder protocol.PeerView
 	// Measured is, by role (0 initiator, 1 responder), what natprobe itself
-	// measured of each family it observed: the view Handle.Merge returns
+	// measured of each family it observed: the view the natprobe merge returns
 	// without a TraitsMemory (the coordinator's raw view). A family
 	// natprobe did not observe is absent — every family without a natprobe
 	// registry, a family no observer covers — and so is the
@@ -149,7 +149,7 @@ type familyPlan struct {
 	Ladder  []VariantID
 	// MaxTargets bounds the Direct targets of a side and round: 8 in a
 	// verified family; in an unverified one 4, or 16 when every
-	// shared family is unverified (the relay-only mode).
+	// shared family is unverified (the NoObserver mode).
 	MaxTargets int
 	// From is where the family's ladder starts in RoundInput.Prev: the
 	// rounds before it ran on the ladder an escalation left.

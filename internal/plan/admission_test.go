@@ -282,7 +282,7 @@ func selfV6(n int, tr protocol.Traits) protocol.FamilyView {
 	return fv
 }
 
-// relayOnlyV4 is side n's IPv4 family in the relay-only mode: the
+// relayOnlyV4 is side n's IPv4 family in the NoObserver mode: the
 // client's own probe rows and STUN rows on five public IPs, two ports each,
 // and its private address — eleven endpoints, a view holds twelve at most;
 // nothing verified.
@@ -405,7 +405,7 @@ func admissionCases() []admissionCase {
 }
 
 // TestPlansAdmittedByClient: in the three shared-network situations — a family the
-// server cannot verify (and the relay-only mode), one shared LAN, and two
+// server cannot verify (and the NoObserver mode), one shared LAN, and two
 // LANs behind one upstream NAT — every round of every ladder, the rescue
 // round included, runs under the clients' admission exactly as planned.
 func TestPlansAdmittedByClient(t *testing.T) {

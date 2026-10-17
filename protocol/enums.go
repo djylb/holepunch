@@ -104,7 +104,7 @@ type Phase string
 
 // Phase values.
 const (
-	PhaseCreated     Phase = "created"     // AttachSession called
+	PhaseCreated     Phase = "created"     // Punch called
 	PhaseProbing     Phase = "probing"     // punch_start accepted
 	PhaseReported    Phase = "reported"    // probe_report written
 	PhasePlanned     Phase = "planned"     // summary accepted, sockets pre-bound
@@ -133,16 +133,23 @@ func (p Phase) Terminal() bool { return p == PhaseDone || p == PhaseFailed }
 // ---- control-stream security ----
 
 // ControlSecurity says how the caller vouches for the control stream's
-// confidentiality and integrity. Wire text: unknown | declared |
+// confidentiality and integrity. Text: auto | declared |
 // insecure_for_testing.
 type ControlSecurity uint8
 
 // ControlSecurity values.
 const (
-	// ControlSecurityUnknown is the default: the stream is accepted only if
-	// the conn has ConnectionState() with HandshakeComplete (TLS); otherwise
-	// it is rejected with invalid_argument (detail insecure_control).
-	ControlSecurityUnknown ControlSecurity = iota
+	// ControlSecurityAuto is the default: the library judges the stream
+	// itself and accepts any one that shows it is encrypted and
+	// authenticated. Today that is a conn with
+	// ConnectionState() tls.ConnectionState — *tls.Conn, or any wrapper of
+	// a secure channel that exposes it — whose handshake completes; one
+	// whose handshake has not run yet (a tls.Listener's fresh conn) is
+	// handshaken first. A stream it cannot judge is rejected with
+	// invalid_argument, detail insecure_control (tls_handshake when the
+	// handshake fails): a caller that knows its channel is protected
+	// declares it with ControlSecurityDeclared.
+	ControlSecurityAuto ControlSecurity = iota
 	// ControlSecurityDeclared means the caller declares the outer layer
 	// encrypted and authenticated (such as an encrypted bridge).
 	ControlSecurityDeclared
@@ -155,7 +162,7 @@ const (
 // functions returning arrays rather than package variables so that no shared
 // table can be modified (lintcheck noglobalstate).
 func controlSecurityNames() [3]string {
-	return [3]string{"unknown", "declared", "insecure_for_testing"}
+	return [3]string{"auto", "declared", "insecure_for_testing"}
 }
 
 // String returns the wire name of s.

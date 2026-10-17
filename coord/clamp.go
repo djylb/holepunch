@@ -30,7 +30,7 @@ const (
 
 	// Unverified families: Direct stages only, to at most this many
 	// distinct targets per side and round — 16 when every family is
-	// unverified (the relay-only mode), else 4 — and at most 8 packets per
+	// unverified (the NoObserver mode), else 4 — and at most 8 packets per
 	// target and round. The targets lie on the first reportedIPs distinct
 	// global IPs the peer reported: the ones its client admits.
 	maxRelayOnlyTargets  = 16
@@ -309,7 +309,7 @@ func (s *Session) lowTTLOK(caps protocol.ClientCaps, fam protocol.Family) bool {
 // each), predict and random stages need a verified peer IP — never in an
 // unverified family — and are dropped under the NoPrediction ablation, and
 // every count is clamped. An unverified family keeps at most 16 (every
-// family unverified: relay-only mode) or 4 distinct public targets. It reports
+// family unverified: NoObserver mode) or 4 distinct public targets. It reports
 // whether a stage that sends is left and how many distinct targets the
 // stages aim at.
 func (s *Session) clampStagesLocked(k, r int, fam protocol.Family, stages []protocol.Stage, ttlOK bool, now time.Duration) ([]protocol.Stage, bool, int) {
@@ -558,7 +558,7 @@ func usableAddr(a netip.AddrPort, fam protocol.Family) bool {
 }
 
 // allUnverified reports whether the server verified none of the session's
-// families: the relay-only mode, or a registry that observes none of the
+// families: the NoObserver mode, or a registry that observes none of the
 // shared families. The planner draws the same line (plan's
 // maxRelayOnlyTargets).
 func (st *sessionState) allUnverified() bool {

@@ -11,17 +11,17 @@ import (
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/plan"
-	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
 
 // planIn is the planning input taken under the lock.
 type planIn struct {
-	gen     uint64
-	reports [2]protocol.ProbeReport
-	echoed  [2]bool
-	planner Planner
-	memory  StrategyMemory
+	gen        uint64
+	unobserved []protocol.Family // Session.unobserved
+	reports    [2]protocol.ProbeReport
+	echoed     [2]bool
+	planner    Planner
+	memory     StrategyMemory
 }
 
 // planOut is what the planning computed outside the lock.
@@ -99,11 +99,12 @@ func (s *Session) planInput() (planIn, bool) {
 		return planIn{}, false
 	}
 	return planIn{
-		gen:     st.gen,
-		reports: [2]protocol.ProbeReport{*st.reports[0], *st.reports[1]},
-		echoed:  st.echoed,
-		planner: st.planner,
-		memory:  st.memory,
+		gen:        st.gen,
+		reports:    [2]protocol.ProbeReport{*st.reports[0], *st.reports[1]},
+		echoed:     st.echoed,
+		planner:    st.planner,
+		memory:     st.memory,
+		unobserved: s.unobserved,
 	}, true
 }
 
@@ -163,7 +164,7 @@ func (s *Session) plan(in planIn) planOut {
 }
 
 // mergeViews builds both sides' views: natprobe's authoritative merge (only
-// endpoints whose cookie was echoed are verified), or in relay-only mode
+// endpoints whose cookie was echoed are verified), or in NoObserver mode
 // the clients' own reports, whose global endpoints the planner may aim at. The
 // planner sees the views as sent.
 func (s *Session) mergeViews(in planIn, out *planOut) bool {
@@ -178,20 +179,19 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 	if s.ablate.NoMemory {
 		mem = nil
 	}
-	opts := natprobe.MergeOptions{VerifiedTargetsOnly: s.c.cfg.VerifiedTargetsOnly}
+	verifiedOnly := s.c.cfg.Targets == TargetsVerifiedOnly
 	for r := range in.reports {
-		key := natprobe.TraitsKey{ClientKey: s.keys[r]}
 		var (
 			err  error
-			diag natprobe.MergeDiag
+			diag nat.MergeDiag
 		)
 		if perr := life.Safe("coord.merge", func() {
-			out.views[r], diag, err = s.handle.MergeWith(roleOf(r), in.reports[r], mem, key, opts)
+			out.views[r], diag, err = s.handle.Merge(roleOf(r), in.reports[r], mem, s.keys[r], verifiedOnly)
 			if err == nil && mem != nil {
 				// The memory's own conclusions must not renew it:
 				// the traits fed back at the end come from this
 				// session's evidence only.
-				out.raw[r], _, err = s.handle.MergeWith(roleOf(r), in.reports[r], nil, key, opts)
+				out.raw[r], _, err = s.handle.Merge(roleOf(r), in.reports[r], nil, s.keys[r], verifiedOnly)
 			}
 		}); perr != nil {
 			out.term = &terminal{code: protocol.ReasonInternal, detail: detailMergePanic}
@@ -210,12 +210,12 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 	// A family no observer covers has nothing verified: it runs on the
 	// clients' own reports in the restricted mode, or not at all. It never
 	// feeds the traits memory.
-	for _, f := range s.unobserved {
+	for _, f := range in.unobserved {
 		for r := range in.reports {
 			out.views[r] = withoutFamily(out.views[r], f)
 			out.pviews[r] = withoutFamily(out.pviews[r], f)
 			out.raw[r] = withoutFamily(out.raw[r], f)
-			if s.c.cfg.DisableUnverifiedFamilies {
+			if s.c.cfg.Targets == TargetsVerifiedOnly {
 				continue
 			}
 			for _, fr := range in.reports[r].Families {
@@ -231,7 +231,7 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 	return true
 }
 
-// selfView is a client's view built from its own report (relay-only mode):
+// selfView is a client's view built from its own report (NoObserver mode):
 // every family's selfFamilyView.
 func selfView(rep protocol.ProbeReport) protocol.PeerView {
 	var v protocol.PeerView
@@ -382,7 +382,7 @@ func cloneClassification(c Classification) Classification {
 }
 
 // pairFacts computes what only a server seeing both clients knows. A shared
-// family is unverified in relay-only mode (every family) or when no
+// family is unverified in NoObserver mode (every family) or when no
 // observer covers it; the pair is on one LAN when it shares the public
 // IP and the LAN prefixes intersect, and shares an overlay when both
 // sides reported overlay addresses: the server cannot tell whether
@@ -396,7 +396,7 @@ func (s *Session) pairFacts(in planIn, out *planOut) protocol.PairFacts {
 			continue
 		}
 		p.SharedFamilies = append(p.SharedFamilies, f)
-		if s.handle == nil || slices.Contains(s.unobserved, f) {
+		if s.handle == nil || slices.Contains(in.unobserved, f) {
 			if p.Unverified == nil {
 				p.Unverified = map[protocol.Family]bool{}
 			}
@@ -432,7 +432,7 @@ func (s *Session) pairFacts(in planIn, out *planOut) protocol.PairFacts {
 		// Elsewhere a LAN-observed side has no verified public address: it
 		// is reached at the global addresses it reported itself, in the
 		// unverified mode, unless the server allows verified targets only.
-		if !s.c.cfg.VerifiedTargetsOnly && !p.LikelySameLAN[f] && (selfReportedOnly(a) || selfReportedOnly(b)) {
+		if s.c.cfg.Targets != TargetsVerifiedOnly && !p.LikelySameLAN[f] && (selfReportedOnly(a) || selfReportedOnly(b)) {
 			if p.Unverified == nil {
 				p.Unverified = map[protocol.Family]bool{}
 			}

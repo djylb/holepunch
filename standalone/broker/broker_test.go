@@ -62,7 +62,7 @@ func (s *signal) revocations() int {
 	return s.revoked
 }
 
-// rig is a broker in relay-only mode (no natprobe) with its results.
+// rig is a broker in NoObserver mode (no natprobe) with its results.
 type rig struct {
 	b       *Broker
 	results chan coord.Result
@@ -72,8 +72,8 @@ func newRig(t *testing.T, mutate func(*Config)) *rig {
 	t.Helper()
 	r := &rig{results: make(chan coord.Result, 16)}
 	cfg := Config{Coord: coord.Config{
-		AllowUnverifiedTargets: true,
-		OnResult:               func(res coord.Result) { r.results <- res },
+		NoObserver: true,
+		OnResult:   func(res coord.Result) { r.results <- res },
 	}}
 	if mutate != nil {
 		mutate(&cfg)
@@ -191,7 +191,7 @@ func TestOpenJoinAttach(t *testing.T) {
 	}
 	s.Abort(protocol.ReasonCanceled, "test")
 	res := r.result(t)
-	if res.SessionID != s.ID() || res.Code != protocol.ReasonCanceled || res.Labels["host_id"] != "office" || res.Labels["dialer_id"] != "laptop" {
+	if res.SessionID != s.ID() || res.Reason != protocol.ReasonCanceled || res.Labels["host_id"] != "office" || res.Labels["dialer_id"] != "laptop" {
 		t.Fatalf("result %+v", res)
 	}
 	if snap := r.b.Snapshot(); snap.Sessions != 0 || snap.Hosts[0].Sessions != 0 {
@@ -214,7 +214,7 @@ func TestAttachAfterClose(t *testing.T) {
 	if err := r.b.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if res := r.result(t); res.Code != protocol.ReasonServerShutdown {
+	if res := r.result(t); res.Reason != protocol.ReasonServerShutdown {
 		t.Fatalf("result %+v", res)
 	}
 	a, b := net.Pipe()
@@ -258,7 +258,7 @@ func TestAttachFailureAborts(t *testing.T) {
 		t.Fatalf("attach: %v", err)
 	}
 	assertClosed(t, b)
-	if res := r.result(t); res.Code != protocol.ReasonInvalidArgument || res.Detail != "attach_failed" {
+	if res := r.result(t); res.Reason != protocol.ReasonInvalidArgument || res.Detail != "attach_failed" {
 		t.Fatalf("result %+v", res)
 	}
 	if err := s.Attach(protocol.RoleResponder, nil, insecure); err == nil {
@@ -301,7 +301,7 @@ func TestTakeover(t *testing.T) {
 		t.Fatal("old link not revoked")
 	}
 	res := r.result(t)
-	if res.SessionID != pending.ID() || res.Code != protocol.ReasonPeerOffline || res.Detail != "host_replaced" {
+	if res.SessionID != pending.ID() || res.Reason != protocol.ReasonPeerOffline || res.Detail != "host_replaced" {
 		t.Fatalf("pending session %+v", res)
 	}
 	if st := joined.Coord().Snapshot().State; st == coord.StateClosed {
@@ -331,7 +331,7 @@ func TestHostClose(t *testing.T) {
 	}
 	h.Close()
 	h.Close()
-	if res := r.result(t); res.SessionID != s.ID() || res.Code != protocol.ReasonPeerOffline || res.Detail != "host_disconnected" {
+	if res := r.result(t); res.SessionID != s.ID() || res.Reason != protocol.ReasonPeerOffline || res.Detail != "host_disconnected" {
 		t.Fatalf("result %+v", res)
 	}
 	if _, err := r.b.Join(s.ID(), sig.last(t).Ticket); !errors.Is(err, ErrSessionNotFound) {
@@ -365,7 +365,7 @@ func TestNotifyFailure(t *testing.T) {
 			if !errors.Is(err, ErrHostNotFound) || errors.As(err, &pe) != (name != "error") {
 				t.Fatalf("open: %v", err)
 			}
-			if res := r.result(t); res.Code != protocol.ReasonPeerOffline || res.Detail != "host_unreachable" {
+			if res := r.result(t); res.Reason != protocol.ReasonPeerOffline || res.Detail != "host_unreachable" {
 				t.Fatalf("result %+v", res)
 			}
 			if snap := r.b.Snapshot(); snap.Sessions != 0 {
@@ -461,11 +461,11 @@ func TestCoordLimits(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	if _, err := New(Config{MaxHosts: -1, Coord: coord.Config{AllowUnverifiedTargets: true}}); err == nil {
+	if _, err := New(Config{MaxHosts: -1, Coord: coord.Config{NoObserver: true}}); err == nil {
 		t.Fatal("negative MaxHosts accepted")
 	}
 	if _, err := New(Config{}); err == nil {
-		t.Fatal("relay-only coordinator without AllowUnverifiedTargets accepted")
+		t.Fatal("relay-only coordinator without NoObserver accepted")
 	}
 }
 
@@ -523,7 +523,7 @@ func TestSecret(t *testing.T) {
 // BenchmarkMatch: one dialer matched with a registered host, joined and
 // ended — the broker's work per session, the coordinator's included.
 func BenchmarkMatch(b *testing.B) {
-	bk, err := New(Config{Coord: coord.Config{AllowUnverifiedTargets: true, Limits: coord.Limits{
+	bk, err := New(Config{Coord: coord.Config{NoObserver: true, Limits: coord.Limits{
 		NewSessions: coord.Rate{PerSec: -1}, InitiatorKeyRate: coord.Rate{PerSec: -1},
 	}}})
 	if err != nil {

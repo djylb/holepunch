@@ -68,8 +68,8 @@
 // # Time and determinism
 //
 // By default the network runs on the real clock, and its single scheduler
-// goroutine, started with life.Group.Go, waits for the earliest event. With
-// [WithClock] and a *clock.Fake (module-internal tests) no goroutine runs:
+// goroutine waits for the earliest event. With [WithClock] and a
+// *clock.Fake no goroutine runs:
 // packets with a delay, pipe data and deadlines move only while the test
 // advances the Fake, which makes a single-goroutine test reproducible packet
 // by packet. Randomness (port allocation, port noise, loss, jitter,

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -97,7 +97,7 @@ type failKind uint8
 
 const (
 	// failEarly: before any punch packet (no common family, a blackholed
-	// probe, UDP blocked), within probe_timeout + failBound of AttachSession.
+	// probe, UDP blocked), within probe_timeout + failBound of Punch.
 	failEarly failKind = iota
 	// failLadder: once the ladder ran (a silent peer), within
 	// handshake_timeout + failBound of the first go and the session
@@ -136,7 +136,7 @@ func (c *cell) passRate() float64 {
 	return -1
 }
 
-// confirmBound is the p95 bound of AttachSession on success.
+// confirmBound is the p95 bound of Punch on success.
 func (c *cell) confirmBound() time.Duration {
 	var b time.Duration
 	switch c.base {

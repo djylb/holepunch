@@ -51,7 +51,7 @@ type Event struct {
 	SessionID string
 	Role      protocol.Role
 	Round     int
-	Code      protocol.Reason
+	Reason    protocol.Reason
 	Detail    string
 	Labels    map[string]string // shared, read only
 	Result    *Result           // EvClosed only

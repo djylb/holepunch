@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/stun"
 )
 
 // stunMsg returns a STUN Binding Request of n attribute bytes (a multiple
@@ -13,36 +15,8 @@ func stunMsg(n int) []byte {
 	b := make([]byte, 20+n)
 	binary.BigEndian.PutUint16(b, 0x0001)
 	binary.BigEndian.PutUint16(b[2:], uint16(n))
-	binary.BigEndian.PutUint32(b[4:], stunMagic)
+	binary.BigEndian.PutUint32(b[4:], stun.MagicCookie)
 	return b
-}
-
-func TestIsSTUN(t *testing.T) {
-	bad := stunMsg(8)
-	bad[7] ^= 1
-	short := stunMsg(8)[:24]
-	odd := stunMsg(8)
-	binary.BigEndian.PutUint16(odd[2:], 6)
-	top := stunMsg(8)
-	top[0] = 0x40 // a QUIC short header's fixed bit
-	for _, c := range []struct {
-		name string
-		b    []byte
-		want bool
-	}{
-		{"binding request", stunMsg(8), true},
-		{"empty attributes", stunMsg(0), true},
-		{"bad cookie", bad, false},
-		{"length beyond the datagram", short, false},
-		{"length not in words", odd, false},
-		{"top bits set", top, false},
-		{"random", []byte("0123456789012345678901234567"), false},
-		{"short", stunMsg(0)[:19], false},
-	} {
-		if got := IsSTUN(c.b); got != c.want {
-			t.Errorf("%s: %v", c.name, got)
-		}
-	}
 }
 
 // TestClassifier checks the outbound protocol classifier: per flow,

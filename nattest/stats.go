@@ -153,7 +153,7 @@ type HostStats struct {
 // per-session view: the first-byte histogram and ConstantOffsets show whether
 // any byte position is constant within the session, and
 // LenHistogram shows the session's length interval, which must differ from
-// one session to the next. STUN messages ([IsSTUN]) are counted apart:
+// one session to the next. STUN messages (stun.IsMessage) are counted apart:
 // their header bytes are the standard's, so the first bytes and the
 // constant offsets cover the other packets only, and the flow counts show
 // where the STUN messages went — first on each flow, as the library's

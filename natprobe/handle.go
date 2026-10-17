@@ -2,7 +2,7 @@ package natprobe
 
 import (
 	"cmp"
-	"net/netip"
+	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -11,44 +11,27 @@ import (
 	"github.com/djylb/holepunch/protocol"
 )
 
-// Handle is a session's registration, held by the coordinator session.
-// Several handles may share one entry (idempotent registration); closing any
-// of them closes the entry.
-type Handle struct {
+// handle is a session's registration, the nat.ProbeHandle the coordinator
+// session holds. Several handles may share one entry (idempotent
+// registration); closing any of them closes the entry.
+type handle struct {
 	r    *Registry
 	e    *entry
 	once sync.Once
 }
 
-// ServerObservation is natprobe's record of one observation slot
-// (role, socket, observer).
-type ServerObservation struct {
-	Socket, Observer uint8
-	Alt              bool           // the observer belongs to the alt (second IP) group
-	LAN              bool           // the observer is advertised on a private address: LAN evidence only
-	Observed         netip.AddrPort // latest value
-	First            netip.AddrPort // first value; ≠ Observed means drift
-	Changes          uint8          // value changes
-	Count            uint8          // accepted probes, retransmissions and keepalives included
-	FirstSeq         uint32         // seq of the slot's first accepted probe
-	Cookie           uint32         // return-path cookie of the current Observed
-	FirstAt, LastAt  time.Time      // Registry clock
-	ExtraSent        uint8          // extra replies sent for the slot
-	AltSent          uint8          // change-IP replies sent for the slot
-}
-
 // Observations returns a copy of role's slots ordered by (socket, observer);
 // nil for a role other than initiator or responder.
-func (h *Handle) Observations(role protocol.Role) []ServerObservation {
+func (h *handle) Observations(role protocol.Role) []nat.Observation {
 	if h == nil || h.e == nil || !role.IsPunch() {
 		return nil
 	}
 	e := h.e
 	rs := &e.roles[role.Code()-1]
 	rs.mu.Lock()
-	out := make([]ServerObservation, 0, len(rs.slots))
+	out := make([]nat.Observation, 0, len(rs.slots))
 	for _, s := range rs.slots {
-		out = append(out, ServerObservation{
+		out = append(out, nat.Observation{
 			Socket: s.sock, Observer: s.obs, Alt: s.flags&slotAlt != 0, LAN: s.flags&slotPrivate != 0,
 			Observed: s.last.addrPort(), First: s.first.addrPort(), Changes: s.changes, Count: s.count,
 			FirstSeq: s.firstSeq, Cookie: s.cookie,
@@ -57,7 +40,7 @@ func (h *Handle) Observations(role protocol.Role) []ServerObservation {
 		})
 	}
 	rs.mu.Unlock()
-	slices.SortFunc(out, func(a, b ServerObservation) int {
+	slices.SortFunc(out, func(a, b nat.Observation) int {
 		return cmp.Or(cmp.Compare(a.Socket, b.Socket), cmp.Compare(a.Observer, b.Observer))
 	})
 	return out
@@ -66,8 +49,8 @@ func (h *Handle) Observations(role protocol.Role) []ServerObservation {
 // ProbesLeft is how many more probes of role the entry accepts in its
 // lifetime (RegistryConfig.ProbeBudgetPerRole): the coordinator asks for
 // an anchor refresh only while two are left. 0
-// for a nil Handle or a role other than initiator or responder.
-func (h *Handle) ProbesLeft(role protocol.Role) int {
+// for a nil handle or a role other than initiator or responder.
+func (h *handle) ProbesLeft(role protocol.Role) int {
 	if h == nil || h.e == nil || !role.IsPunch() {
 		return 0
 	}
@@ -80,8 +63,8 @@ func (h *Handle) ProbesLeft(role protocol.Role) int {
 // Registered returns when the entry was registered, read from the Registry's
 // clock: the origin of the slot times and of Traits.PortAnchorMs that Merge
 // derives from them. Handles of an idempotent registration share the first
-// one's entry and so its time. It is the zero time for a nil Handle.
-func (h *Handle) Registered() time.Time {
+// one's entry and so its time. It is the zero time for a nil handle.
+func (h *handle) Registered() time.Time {
 	if h == nil || h.e == nil {
 		return time.Time{}
 	}
@@ -93,7 +76,7 @@ func (h *Handle) Registered() time.Time {
 // It does nothing after Close or once the registration expired: an expired
 // entry is gone, whether or not a writer already dropped it from its
 // shard. A ttl too large for the clock saturates.
-func (h *Handle) Extend(ttl time.Duration) {
+func (h *handle) Extend(ttl time.Duration) {
 	if h == nil || h.e == nil || h.e.closed.Load() {
 		return
 	}
@@ -104,7 +87,7 @@ func (h *Handle) Extend(ttl time.Duration) {
 // Close ends the registration: from now on the route's packets are dropped
 // silently and no new sandwich sink call starts (a call already running may
 // still be returning). It is idempotent and safe for concurrent use.
-func (h *Handle) Close() {
+func (h *handle) Close() {
 	if h == nil || h.e == nil {
 		return
 	}
@@ -115,11 +98,10 @@ func (h *Handle) Close() {
 	})
 }
 
-// setEventFunc sets the session's sandwich sink. Only coord calls it, through
-// nat.AttachSandwichSink. The events queued before it are
-// delivered here, on coord's goroutine; a panic of the sink is counted in
-// the Registry and reaches ServerStats.Panics.
-func (h *Handle) setEventFunc(sink func(nat.SandwichEvent)) {
+// AttachSandwichSink sets the session's sandwich sink. The events queued
+// before it are delivered here, on coord's goroutine; a panic of the sink is
+// counted in the Registry and reaches ServerStats.Panics.
+func (h *handle) AttachSandwichSink(sink func(nat.SandwichEvent)) {
 	if h == nil || h.e == nil {
 		return
 	}
@@ -128,12 +110,18 @@ func (h *Handle) setEventFunc(sink func(nat.SandwichEvent)) {
 	}
 }
 
-// init installs the natprobe → coord sandwich bridge: the hook is not part
-// of any public API.
+// init installs the natprobe → coord bridge: a session's registration is
+// not part of any public API.
 func init() {
-	nat.AttachSandwichSink = func(h any, sink func(nat.SandwichEvent)) {
-		if hh, ok := h.(*Handle); ok {
-			hh.setEventFunc(sink)
+	nat.RegisterProbe = func(registry any, reg nat.Registration) (nat.ProbeHandle, error) {
+		r, ok := registry.(*Registry)
+		if !ok {
+			return nil, errors.New("natprobe: not a *Registry")
 		}
+		h, err := r.register(reg)
+		if err != nil {
+			return nil, err
+		}
+		return h, nil
 	}
 }

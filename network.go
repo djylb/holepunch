@@ -8,7 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/djylb/holepunch/internal/udpicmp"
+	"github.com/djylb/holepunch/hostaddr"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // Network abstracts every operating-system network access of a session:
@@ -17,6 +18,19 @@ import (
 // such as nattest.Host implements it without importing this package.
 // The library calls these methods outside its locks and inside a recover
 // boundary; a panic is treated as an error of that call.
+//
+// To change one method, embed SystemNetwork and override it — a socket
+// option on every socket, say:
+//
+//	type tunedNetwork struct{ holepunch.Network }
+//
+//	func (n tunedNetwork) ListenPacket(ctx context.Context, network string, laddr netip.AddrPort, purpose string) (net.PacketConn, error) {
+//		c, err := n.Network.ListenPacket(ctx, network, laddr, purpose)
+//		// tune c
+//		return c, err
+//	}
+//
+//	opts.Network = tunedNetwork{holepunch.SystemNetwork()}
 type Network interface {
 	// ListenPacket opens a UDP socket on laddr ("udp4" or "udp6"; a zero
 	// laddr address means every address of the family, port 0 means any).
@@ -28,12 +42,12 @@ type Network interface {
 	// Windows reports on still works.
 	ListenPacket(ctx context.Context, network string, laddr netip.AddrPort, purpose string) (net.PacketConn, error) //holepunch:callback
 	// InterfaceAddrs returns the host's network interfaces and, at the same
-	// index, each one's addresses with their prefixes. Of an interface the
-	// library reads the name and the flags net.FlagUp, net.FlagLoopback and
-	// net.FlagPointToPoint: addresses on tunnel and overlay interfaces
-	// (Tailscale, WireGuard, ZeroTier, tun, utun, point-to-point links) and
-	// in 100.64/10 are overlay candidates, kept apart from the LAN ones
-	// (Options.ExcludeOverlay), and
+	// index, each one's addresses with their prefixes, as
+	// hostaddr.Interfaces does. The library classifies them with
+	// hostaddr.Classify, from the name and the flags net.FlagUp,
+	// net.FlagLoopback and net.FlagPointToPoint: overlay addresses —
+	// Tailscale, WireGuard, ZeroTier, other tunnels, 100.64/10 — are kept
+	// apart from the LAN ones (Options.ExcludeOverlay), and
 	// Options.LocalInterface is looked up by name. On failure — Android 11
 	// and later refuse the netlink request to ordinary apps — the session
 	// runs without LAN and overlay addresses and Diagnostics.Warn carries
@@ -58,16 +72,17 @@ const (
 )
 
 // HopLimiter is the optional TTL / hop-limit capability of a conn returned by
-// Network.ListenPacket. SetHopLimit(0) restores the system default.
+// Network.ListenPacket. SetHopLimit(0) restores the system default, as
+// udpsock.SetHopLimit does.
 //
 // The library prefers this interface; otherwise it sets the option through
 // syscall.Conn. The decision is made by interface, never by the concrete
 // *net.UDPConn type, so wrapping conns keep their
 // behaviour. A conn with neither capability, or one whose setting fails,
 // makes the session send without low TTL: probe_report announces
-// low_ttl=false and Diagnostics.Warn carries low_ttl_unsupported. The value
-// found when the socket was created is restored before the winning socket is
-// handed over.
+// low_ttl=false and Diagnostics.Warn carries low_ttl_unsupported. Before
+// the winning socket is handed over, a HopLimiter is set to 0, and a socket
+// set through syscall.Conn gets back the value it had when it was created.
 type HopLimiter interface {
 	SetHopLimit(hops int) error //holepunch:callback
 }
@@ -99,53 +114,16 @@ func (systemNetwork) ListenPacket(ctx context.Context, network string, laddr net
 	}
 	// Best effort: when the switch fails, the read loop still takes the
 	// reports for the soft signals they are.
-	_ = udpicmp.DisableReports(c)
+	_ = udpsock.DisableICMPReports(c)
 	return c, nil
 }
 
-// InterfaceAddrs lists the OS interfaces with their addresses. An
-// interface whose addresses cannot be read is listed without any.
+// InterfaceAddrs lists the OS interfaces with their addresses
+// (hostaddr.Interfaces).
 //
 //holepunch:netimpl
 func (systemNetwork) InterfaceAddrs() ([]net.Interface, [][]netip.Prefix, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil, nil, err
-	}
-	addrs := make([][]netip.Prefix, len(ifaces))
-	for i := range ifaces {
-		list, err := ifaces[i].Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range list {
-			if p, ok := prefixOf(a); ok {
-				addrs[i] = append(addrs[i], p)
-			}
-		}
-	}
-	return ifaces, addrs, nil
-}
-
-// prefixOf converts an interface address of package net, unmapping an
-// IPv4-mapped one.
-func prefixOf(a net.Addr) (netip.Prefix, bool) {
-	n, ok := a.(*net.IPNet)
-	if !ok {
-		return netip.Prefix{}, false
-	}
-	ip, ok := netip.AddrFromSlice(n.IP)
-	if !ok {
-		return netip.Prefix{}, false
-	}
-	ones, _ := n.Mask.Size()
-	if ip.Is4In6() {
-		ip = ip.Unmap()
-		if ones >= 96 {
-			ones -= 96
-		}
-	}
-	return netip.PrefixFrom(ip, ones), true
+	return hostaddr.Interfaces()
 }
 
 // OutboundAddr learns the route's source address from a connected UDP socket.

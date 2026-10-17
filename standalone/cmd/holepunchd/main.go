@@ -23,6 +23,7 @@ import (
 	"github.com/djylb/holepunch/standalone/cmd/internal/cli"
 	"github.com/djylb/holepunch/standalone/internal/tlsid"
 	"github.com/djylb/holepunch/standalone/server"
+	"github.com/djylb/holepunch/stun"
 )
 
 func main() {
@@ -59,6 +60,14 @@ type options struct {
 	debug         bool
 }
 
+// targets is the coordinator's target policy of the options.
+func (o *options) targets() coord.TargetPolicy {
+	if o.verifiedOnly {
+		return coord.TargetsVerifiedOnly
+	}
+	return coord.TargetsBounded
+}
+
 func parse(args []string) (options, error) {
 	var o options
 	fs := flag.NewFlagSet("holepunchd", flag.ContinueOnError)
@@ -68,8 +77,8 @@ func parse(args []string) (options, error) {
 	fs.StringVar(&o.token, "auth-token", "", "shared token the clients must present")
 	fs.Var(&o.probeIPs, "probe-ip", "public IP of a natprobe observer group, IP or BIND=ADVERTISE; repeatable, one at least")
 	fs.Var(&o.altIPs, "probe-alt-ip", "second public IP for change-IP replies, IP or BIND=ADVERTISE; one per family")
-	var stun cli.StringList
-	fs.Var(&stun, "stun", "HOST:PORT or IP:PORT of a public STUN server the clients also ask, a second view of their mapping; repeatable; "+
+	var stunFlag cli.StringList
+	fs.Var(&stunFlag, "stun", "HOST:PORT or IP:PORT of a public STUN server the clients also ask, a second view of their mapping; repeatable; "+
 		"the clients ask up to 8 of each address family at once, and a slow or blocked one costs them nothing; "+
 		"none turns STUN off (default: a built-in list of servers on several continents, mainland China included)")
 	fs.IntVar(&o.probePort, "probe-port", 3478, "first UDP port of the natprobe observers")
@@ -89,16 +98,16 @@ func parse(args []string) (options, error) {
 		return o, errors.New("at least one -probe-ip is required: natprobe binds each public address explicitly")
 	}
 	switch {
-	case len(stun) == 0:
-		o.stun = natprobe.DefaultSTUNServers()
-	case len(stun) == 1 && stun[0] == stunOff:
+	case len(stunFlag) == 0:
+		o.stun = stun.DefaultServers()
+	case len(stunFlag) == 1 && stunFlag[0] == stunOff:
 	default:
-		for _, v := range stun {
+		for _, v := range stunFlag {
 			if _, port, err := net.SplitHostPort(v); err != nil || port == "" || v == stunOff {
 				return o, fmt.Errorf("-stun %q: want HOST:PORT, IP:PORT or a single %s", v, stunOff)
 			}
 		}
-		o.stun = stun
+		o.stun = stunFlag
 	}
 	if (o.certFile == "") != (o.keyFile == "") {
 		return o, errors.New("-cert and -key go together")
@@ -140,18 +149,18 @@ func run(args []string) error {
 	}
 	ctx, stop := cli.SignalContext()
 	defer stop()
-	stun := &stunList{servers: o.stun, log: log}
+	servers := &stunList{servers: o.stun, log: log}
 	if len(o.stun) > 0 {
-		stun.resolve(ctx)
+		servers.resolve(ctx)
 		g := life.New(ctx)
 		defer func() { _ = g.Close(0) }()
-		g.Go("holepunchd.stun", stun.refresh)
+		g.Go("holepunchd.stun", servers.refresh)
 	}
 	// Every session gets natprobe's live observers and the STUN servers
 	// as last resolved.
 	probeSpec := func(protocol.Role, *coord.SessionOptions) (protocol.ProbeSpec, error) {
 		spec := probe.ProbeSpec()
-		spec.STUN = stun.get()
+		spec.STUN = servers.get()
 		return spec, nil
 	}
 
@@ -253,20 +262,20 @@ func bindAdvertise(v string) (bind, adv netip.Addr, err error) {
 // of every event with -debug).
 func coordConfig(o options, reg *natprobe.Registry, probe coord.ProbeFunc, log *slog.Logger) coord.Config {
 	cfg := coord.Config{
-		Registry:            reg,
-		Probe:               probe,
-		Budget:              coord.BudgetConfig{AllowExtreme: o.allowExtreme},
-		Limits:              coord.Limits{MaxSessions: o.maxSessions},
-		VerifiedTargetsOnly: o.verifiedOnly,
+		Registry: reg,
+		Probe:    probe,
+		Budget:   coord.BudgetConfig{AllowExtreme: o.allowExtreme},
+		Limits:   coord.Limits{MaxSessions: o.maxSessions},
+		Targets:  o.targets(),
 		OnResult: func(r coord.Result) {
 			log.Info("session", "id", r.SessionID, "host", r.Labels["host_id"], "dialer", r.Labels["dialer_id"],
-				"outcome", r.Outcome, "code", r.Code, "detail", r.Detail, "rounds", len(r.Rounds), "pair", r.PairClass)
+				"outcome", r.Outcome, "code", r.Reason, "detail", r.Detail, "rounds", len(r.Rounds), "pair", r.PairClass)
 		},
 	}
 	if o.debug {
 		cfg.Observer = func(e coord.Event) {
 			log.Debug("coord", "event", e.Kind, "session", e.SessionID, "role", e.Role, "round", e.Round,
-				"code", e.Code, "detail", e.Detail, "data", eventData(e.Data))
+				"code", e.Reason, "detail", e.Detail, "data", eventData(e.Data))
 		}
 	}
 	return cfg

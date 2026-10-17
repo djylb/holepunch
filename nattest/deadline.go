@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
 )
 
 // deadline is a resettable read or write deadline in the style of net.Pipe:

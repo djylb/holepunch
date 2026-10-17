@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/leak"
 	"github.com/djylb/holepunch/protocol"
 	"go.uber.org/goleak"

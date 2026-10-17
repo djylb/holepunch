@@ -10,7 +10,7 @@
 // deadline and cannot race a handover.
 //
 // Run is a state machine on one goroutine, driven by one reusable timer of
-// the injected internal/clock.Clock. The primary socket probes
+// the injected clock.Clock. The primary socket probes
 // every main-group observer (WANT_EXTRA; observer 0 WANT_ALT when an alt group
 // exists), retransmits only to observers without an ack at
 // lastSend + T1·2^(k−1), where T1 is 1.5·RTT + 20 ms clamped to

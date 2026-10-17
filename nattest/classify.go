@@ -1,25 +1,9 @@
 package nattest
 
 import (
-	"encoding/binary"
 	"net/netip"
 	"time"
 )
-
-// stunMagic is the magic cookie of RFC 8489, section 5.
-const stunMagic = 0x2112A442
-
-// IsSTUN reports whether payload is a STUN message by its header, the way
-// a protocol classifier recognises one (RFC 8489, section 5): the two top bits
-// clear, the magic cookie at offset 4 and a message length that covers the
-// rest of the datagram in whole 32-bit words.
-func IsSTUN(payload []byte) bool {
-	if len(payload) < 20 || payload[0]&0xC0 != 0 || binary.BigEndian.Uint32(payload[4:]) != stunMagic {
-		return false
-	}
-	n := int(binary.BigEndian.Uint16(payload[2:]))
-	return n%4 == 0 && 20+n == len(payload)
-}
 
 // flowKey is one flow the classifier follows: a translated source endpoint
 // and a destination.

@@ -37,8 +37,8 @@
 //
 // # Concurrency
 //
-// Every method is safe for concurrent use. Each Mapper owns one life.Group,
-// which runs the package's goroutines: the parallel phase of each Map, the
+// Every method is safe for concurrent use. Each Mapper runs the package's
+// goroutines: the parallel phase of each Map, the
 // gateway lookup, one renewal goroutine per mapping that expires, and the
 // background deletes. Close cancels them and joins them. Besides these, only
 // the callbacks of context.AfterFunc that close request sockets and the
@@ -52,7 +52,7 @@
 //
 // Network waits (retransmissions, attempt and release bounds) use real time,
 // because socket deadlines are wall-clock times. The renewal schedule and the
-// gateway cache use the Mapper's clock, which is internal/clock's system clock
+// gateway cache use the Mapper's clock, which is clock.System
 // outside tests.
 //
 // # Resource ownership

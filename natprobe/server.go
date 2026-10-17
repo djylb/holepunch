@@ -7,18 +7,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
 )
-
-// pointSweep is the fault injection point of the standalone sweeper.
-const pointSweep = "natprobe.sweep"
 
 // panicLogInterval rate-limits the log line of recovered panics.
 const panicLogInterval = time.Second
@@ -47,7 +44,7 @@ type Server struct {
 
 	wildcard      atomic.Bool
 	deadListeners atomic.Int64
-	serverPanics  atomic.Uint64 // panics outside the readers: the sweeper, sandwich sinks run by AttachSandwichSink
+	serverPanics  atomic.Uint64 // panics outside the readers: sandwich sinks run by AttachSandwichSink
 	closeTimeouts atomic.Uint64
 	lastPanicLog  atomic.Int64
 
@@ -112,9 +109,6 @@ func (s *Server) Start() (err error) {
 			g.Go(fmt.Sprintf("natprobe/read[%d/%s/%d]", l.id, l.fam, k), func(ctx context.Context) { s.readLoop(ctx, l, st) })
 		}
 	}
-	if s.cfg.SweepInterval > 0 {
-		g.Go("natprobe/sweep", s.sweepLoop)
-	}
 	if s.cfg.Listen == nil {
 		s.checkWildcard()
 	}
@@ -133,31 +127,6 @@ func (s *Server) checkWildcard() {
 		s.wildcard.Store(true)
 		s.log(slog.LevelWarn, "natprobe: wildcard_multi_ip: bind each IP explicitly", "family", string(fam))
 	}
-}
-
-// sweepLoop is the single sweeper when natprobe runs without a coordinator. The
-// ticker is real time: only the expiry decisions use the Registry clock.
-func (s *Server) sweepLoop(ctx context.Context) {
-	t := time.NewTicker(s.cfg.SweepInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if err := life.Safe("natprobe/sweep", s.sweepOnce); err != nil {
-				s.serverPanics.Add(1)
-				s.logPanic(err)
-			}
-		}
-	}
-}
-
-func (s *Server) sweepOnce() {
-	if faultinject.Point(pointSweep) != nil {
-		return
-	}
-	s.reg.Sweep(s.reg.now())
 }
 
 // Close closes every socket, which ends the readers, and joins them for at
@@ -215,7 +184,7 @@ func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec {
 // apart. The caller adds third-party STUN servers, if any:
 //
 //	spec := probe.ProbeSpec()
-//	spec.STUN, _ = natprobe.ResolveSTUN(ctx, nil, natprobe.DefaultSTUNServers())
+//	spec.STUN, _ = natprobe.ResolveSTUN(ctx, nil, stun.DefaultServers())
 //	co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: spec})
 //
 // A ProbeSpec holds at most 16 observers in all, while a server may have 16
@@ -223,6 +192,10 @@ func (s *Server) Observers(f protocol.Family) []protocol.ObserverSpec {
 // has them and gives the rest to the other family, and within a family keeps
 // its first main group's observers, then its alt observer, then its other
 // groups'.
+//
+// An observer of a group without Advertise has a zero Addr: the caller sets
+// it for each session (coord.Config.Probe, coord.AttachOptions.Probe), and a
+// spec with a zero observer address is refused by coord.
 //
 // Call it after Start; before Start, and after Close, the spec has no
 // observers.
@@ -233,6 +206,41 @@ func (s *Server) ProbeSpec() protocol.ProbeSpec {
 	}
 	spec.ExtraReply = !s.cfg.NoExtraReply
 	spec.Observers = specObservers(s.Observers(protocol.FamilyUDP4), s.Observers(protocol.FamilyUDP6))
+	return spec
+}
+
+// ProbeSpecAt is ProbeSpec with the observers of groups without Advertise
+// announced at addrs, one address per family, each at its observer's port:
+// what a session gets whose clients reach this server at an address known
+// only now (a host whose public address changes, the address a client says
+// it reached the server at). Such an observer whose family has no address in
+// addrs is left out; the other observers keep their Advertise.
+func (s *Server) ProbeSpecAt(addrs ...netip.Addr) protocol.ProbeSpec {
+	spec := s.ProbeSpec()
+	if s == nil {
+		return spec
+	}
+	at := func(f protocol.Family, obs []protocol.ObserverSpec) []protocol.ObserverSpec {
+		var addr netip.Addr
+		for _, a := range addrs {
+			if a = a.Unmap(); protocol.FamilyOf(a) == f {
+				addr = a
+				break
+			}
+		}
+		kept := obs[:0]
+		for _, o := range obs {
+			if !o.Addr.Addr().IsValid() {
+				if !addr.IsValid() {
+					continue
+				}
+				o.Addr = netip.AddrPortFrom(addr, o.Addr.Port())
+			}
+			kept = append(kept, o)
+		}
+		return kept
+	}
+	spec.Observers = specObservers(at(protocol.FamilyUDP4, s.Observers(protocol.FamilyUDP4)), at(protocol.FamilyUDP6, s.Observers(protocol.FamilyUDP6)))
 	return spec
 }
 

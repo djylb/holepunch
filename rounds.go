@@ -8,14 +8,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/internal/candidate"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/faultinject"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Round constants.
@@ -189,7 +190,7 @@ func (rt *runtime) punchLoop() (*candidate.Action, error) {
 			}
 		case ab := <-rt.ctl.abortCh:
 			if st.confirmed.Load() {
-				rt.addWarn(warnAbortAfterConfirm) // after Confirm a server abort is only recorded
+				rt.addWarn(protocol.WarnAbortAfterConfirm) // after Confirm a server abort is only recorded
 				continue
 			}
 			return nil, rt.punchAbortFailure(ab.msg)
@@ -200,7 +201,7 @@ func (rt *runtime) punchLoop() (*candidate.Action, error) {
 		case <-ctlDone:
 			ctlDone = nil
 			if st.confirmed.Load() {
-				rt.addWarn(warnControlLostAfterConfirm) // after Confirm a lost control link is only recorded
+				rt.addWarn(protocol.WarnControlLostAfterConfirm) // after Confirm a lost control link is only recorded
 				continue
 			}
 			if ab, ok := rt.ctl.lateAbort(); ok {
@@ -324,7 +325,7 @@ func (rt *runtime) gapDeadline(now, handshakeDeadline time.Time) time.Time {
 }
 
 func abortFailure(ab protocol.Abort) *failure {
-	f := fail(protocol.AbortReason(ab.By, ab.Code), truncDetail(ab.Detail), nil)
+	f := fail(msgframe.AbortReason(ab.By, ab.Reason), truncDetail(ab.Detail), nil)
 	f.abortedBy = ab.By
 	f.retryAfter = time.Duration(ab.RetryAfterMs) * time.Millisecond
 	return f
@@ -511,7 +512,7 @@ func (rt *runtime) outcomes(run *roundRun) []protocol.FamilyOutcome {
 
 // sendRoundResult writes round_result; elapsed_ms runs from the go's read.
 func (rt *runtime) sendRoundResult(run *roundRun, status protocol.RoundStatus, code protocol.Reason, fams []protocol.FamilyOutcome, path *protocol.PathInfo) {
-	rr := protocol.RoundResult{SessionID: rt.start.SessionID, Role: rt.role, Round: run.plan.Round, Status: status, Code: code, Families: fams, Path: path}
+	rr := protocol.RoundResult{SessionID: rt.start.SessionID, Role: rt.role, Round: run.plan.Round, Status: status, Reason: code, Families: fams, Path: path}
 	if run.fired {
 		rr.FireSkewMs = int16(max(min(run.firedAt.Sub(run.fireAt)/time.Millisecond, 32767), -32768))
 	}

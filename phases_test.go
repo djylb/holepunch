@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -70,7 +71,7 @@ func TestControlVersionInStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ping, _ := protocol.Marshal(protocol.Ping{Seq: 1})
+	ping, _ := msgframe.Encode(protocol.Ping{Seq: 1})
 	frames := append(rawFrame(1, byte(controlwire.TypePunchStart), body), rawFrame(1, byte(controlwire.TypePing), ping.Payload)...)
 	if _, err := so.srvEnd.Write(frames); err != nil {
 		t.Fatal(err)
@@ -99,7 +100,7 @@ func TestInvalidStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	pr := so.punchResult()
-	if pr.OK || pr.Code != protocol.ReasonProtocolViolation {
+	if pr.OK || pr.Reason != protocol.ReasonProtocolViolation {
 		t.Fatalf("punch_result %+v", pr)
 	}
 	e := so.wantError(so.result(5*time.Second), protocol.ReasonProtocolViolation)
@@ -117,7 +118,7 @@ func TestNoObservers(t *testing.T) {
 	ps.Probe.Observers = nil
 	so.open().send(ps)
 	pr := so.punchResult()
-	if pr.Code != protocol.ReasonNoProbeEndpoint || pr.Phase != protocol.PhaseProbing {
+	if pr.Reason != protocol.ReasonNoProbeEndpoint || pr.Phase != protocol.PhaseProbing {
 		t.Fatalf("punch_result %+v", pr)
 	}
 	e := so.wantError(so.result(5*time.Second), protocol.ReasonNoProbeEndpoint)
@@ -138,12 +139,12 @@ func TestProbeNoAnswer(t *testing.T) {
 	}
 	so.open().send(ps)
 	pr := so.punchResult()
-	if pr.OK || (pr.Code != protocol.ReasonProbeTimeout && pr.Code != protocol.ReasonUDPBlocked) {
+	if pr.OK || (pr.Reason != protocol.ReasonProbeTimeout && pr.Reason != protocol.ReasonUDPBlocked) {
 		t.Fatalf("punch_result %+v", pr)
 	}
 	r := so.result(5 * time.Second)
 	var e *Error
-	if !errors.As(r.err, &e) || e.Reason != pr.Code {
+	if !errors.As(r.err, &e) || e.Reason != pr.Reason {
 		t.Fatalf("error %v", r.err)
 	}
 }
@@ -156,7 +157,7 @@ func TestBindFailure(t *testing.T) {
 	so.host.FailBinds("", -1)
 	so.start(testTimeouts())
 	pr := so.punchResult()
-	if pr.Code != protocol.ReasonLocalPortBindFailed {
+	if pr.Reason != protocol.ReasonLocalPortBindFailed {
 		t.Fatalf("punch_result %+v", pr)
 	}
 	so.wantFailure(so.result(5*time.Second), protocol.ReasonLocalPortBindFailed)
@@ -201,7 +202,7 @@ func TestAbortBeforeSummary(t *testing.T) {
 		so := newSolo(t, w, nil, nil)
 		so.start(testTimeouts())
 		so.report()
-		so.link.send(protocol.Abort{SessionID: so.s.sid, By: c.by, Code: c.code, Detail: "d", RetryAfterMs: 1500})
+		so.link.send(protocol.Abort{SessionID: so.s.sid, By: c.by, Reason: c.code, Detail: "d", RetryAfterMs: 1500})
 		e := so.wantError(so.result(5*time.Second), c.reason)
 		if e.AbortedBy != c.by || e.RetryAfter != 1500*time.Millisecond || e.Detail != "d" {
 			t.Fatalf("error %+v", e)
@@ -224,7 +225,7 @@ func TestNoCommonFamily(t *testing.T) {
 				Sides: []protocol.FamilySide{{Family: protocol.FamilyUDP4, Role: protocol.SideReplyOnly, Sockets: 1,
 					Stages: []protocol.Stage{{Kind: protocol.StageReplyOnly}}}}}}})
 	pr := so.punchResult()
-	if pr.Code != protocol.ReasonNoCommonFamily {
+	if pr.Reason != protocol.ReasonNoCommonFamily {
 		t.Fatalf("punch_result %+v", pr)
 	}
 	so.wantFailure(so.result(5*time.Second), protocol.ReasonNoCommonFamily)
@@ -363,7 +364,7 @@ func TestGoPlanPlacement(t *testing.T) {
 			}
 			_ = so.link.conn.Send(controlwire.Frame{Type: controlwire.TypePunchGo, Payload: payload})
 			pr := so.punchResult()
-			if pr.OK || pr.Code != protocol.ReasonProtocolViolation || pr.Detail != c.detail {
+			if pr.OK || pr.Reason != protocol.ReasonProtocolViolation || pr.Detail != c.detail {
 				t.Fatalf("punch_result %+v", pr)
 			}
 			e := so.wantError(so.result(5*time.Second), protocol.ReasonProtocolViolation)
@@ -407,7 +408,7 @@ func TestGoAnchorUpdate(t *testing.T) {
 	} else if pr, isPR := m.(*protocol.PunchResult); isPR {
 		t.Fatalf("punch_result %+v", pr)
 	}
-	so.link.send(protocol.Abort{SessionID: so.s.sid, By: protocol.RoleServer, Code: protocol.ReasonCanceled})
+	so.link.send(protocol.Abort{SessionID: so.s.sid, By: protocol.RoleServer, Reason: protocol.ReasonCanceled})
 	e := so.wantError(so.result(5*time.Second), protocol.ReasonCanceled)
 	if len(e.Diagnostics.Rounds) != 1 {
 		t.Fatalf("%d rounds in the diagnostics", len(e.Diagnostics.Rounds))
@@ -443,7 +444,7 @@ func TestGoWindow(t *testing.T) {
 			}
 			g := protocol.PunchGo{SessionID: so.s.sid, Round: c.round, WindowMs: uint16(int(r1.WindowMs) + c.delta)}
 			if c.round == 1 {
-				if _, err := protocol.Marshal(g); err != nil {
+				if _, err := msgframe.Encode(g); err != nil {
 					t.Fatalf("the go is valid on its own: %v", err)
 				}
 				so.link.send(g)
@@ -458,7 +459,7 @@ func TestGoWindow(t *testing.T) {
 				_ = so.link.conn.Send(controlwire.Frame{Type: controlwire.TypePunchGo, Payload: payload})
 			}
 			pr := so.punchResult()
-			if pr.OK || pr.Code != protocol.ReasonProtocolViolation || pr.Detail != "window" {
+			if pr.OK || pr.Reason != protocol.ReasonProtocolViolation || pr.Detail != "window" {
 				t.Fatalf("punch_result %+v", pr)
 			}
 			e := so.wantError(so.result(5*time.Second), protocol.ReasonProtocolViolation)
@@ -508,7 +509,7 @@ func TestPunchingSilentPeerAttribution(t *testing.T) {
 		t.Fatalf("round_result %+v", rr)
 	}
 	pr := so.punchResult()
-	if pr.OK || pr.Code != protocol.ReasonCandidateTimeout {
+	if pr.OK || pr.Reason != protocol.ReasonCandidateTimeout {
 		t.Fatalf("punch_result %+v", pr)
 	}
 	e := so.wantError(so.result(5*time.Second), protocol.ReasonCandidateTimeout)
@@ -572,7 +573,7 @@ func TestAbortWhilePunching(t *testing.T) {
 		t.Fatal("no ready")
 	}
 	so.link.send(protocol.PunchGo{SessionID: so.s.sid, Round: 1, WindowMs: r1.WindowMs})
-	so.link.send(protocol.Abort{SessionID: so.s.sid, By: protocol.RoleServer, Code: protocol.ReasonHardSymmetricRandom})
+	so.link.send(protocol.Abort{SessionID: so.s.sid, By: protocol.RoleServer, Reason: protocol.ReasonHardSymmetricRandom})
 	e := so.wantError(so.result(5*time.Second), protocol.ReasonHardSymmetricRandom)
 	if e.AbortedBy != protocol.RoleServer {
 		t.Fatalf("by %s", e.AbortedBy)
@@ -616,11 +617,11 @@ func TestAbortAfterFatalKeepsUDPBlocked(t *testing.T) {
 			fatal = rr
 		}
 	}
-	if fatal.Code != protocol.ReasonUDPBlocked {
+	if fatal.Reason != protocol.ReasonUDPBlocked {
 		t.Fatalf("round_result %+v", fatal)
 	}
-	so.link.send(protocol.Abort{SessionID: so.s.sid, By: protocol.RoleServer, Code: protocol.ReasonCandidateTimeout, RetryAfterMs: 700})
-	if pr := so.punchResult(); pr.Code != protocol.ReasonUDPBlocked {
+	so.link.send(protocol.Abort{SessionID: so.s.sid, By: protocol.RoleServer, Reason: protocol.ReasonCandidateTimeout, RetryAfterMs: 700})
+	if pr := so.punchResult(); pr.Reason != protocol.ReasonUDPBlocked {
 		t.Fatalf("punch_result %+v", pr)
 	}
 	e := so.wantError(so.result(5*time.Second), protocol.ReasonUDPBlocked)
@@ -650,7 +651,7 @@ func TestOptionChecks(t *testing.T) {
 		{"insecure", c, Options{Network: h}, "insecure_control"},
 		{"bad security", c, Options{Network: h, ControlSecurity: 9}, "control_security"},
 		{"long mode", c, func() Options { o := clientOpts(h); o.TransportMode = "a-very-long-transport-name"; return o }(), "transport_mode"},
-		{"big data", c, func() Options { o := clientOpts(h); o.TransportData = string(make([]byte, 9000)); return o }(), "transport_data"},
+		{"big data", c, func() Options { o := clientOpts(h); o.TransportData = make([]byte, 9000); return o }(), "transport_data"},
 		{"typed nil network", c, Options{ControlSecurity: protocol.ControlSecurityDeclared, Network: nilHost}, "nil_network"},
 		{"too many hops", c, func() Options {
 			o := clientOpts(h)
@@ -664,7 +665,7 @@ func TestOptionChecks(t *testing.T) {
 		}(), "policy.budget.birthday"},
 	}
 	for _, tc := range cases {
-		_, err := AttachSession(context.Background(), tc.control, tc.o)
+		_, err := Punch(context.Background(), tc.control, tc.o)
 		var e *Error
 		if !errors.As(err, &e) || e.Reason != protocol.ReasonInvalidArgument || e.Detail != tc.detail || e.Phase != protocol.PhaseCreated {
 			t.Errorf("%s: %v", tc.name, err)
@@ -684,7 +685,7 @@ func TestDeadlineUnsupported(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = a.Close() }()
 	defer func() { _ = b.Close() }()
-	_, err := AttachSession(context.Background(), noDeadlines{a}, Options{ControlSecurity: protocol.ControlSecurityDeclared})
+	_, err := Punch(context.Background(), noDeadlines{a}, Options{ControlSecurity: protocol.ControlSecurityDeclared})
 	var e *Error
 	if !errors.As(err, &e) || e.Reason != protocol.ReasonInvalidArgument || e.Detail != "deadline_unsupported" {
 		t.Fatalf("got %v", err)
@@ -745,7 +746,7 @@ func TestControlBackpressure(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	sess := w.newSession()
 	res := runClient(context.Background(), c, clientOpts(h))
-	fr, _ := protocol.Marshal(w.startFor(sess, protocol.RoleInitiator, testTimeouts(), nil))
+	fr, _ := msgframe.Encode(w.startFor(sess, protocol.RoleInitiator, testTimeouts(), nil))
 	go func() { _, _ = s.Write(rawFrame(1, byte(fr.Type), fr.Payload)) }()
 	began := time.Now()
 	r := <-res

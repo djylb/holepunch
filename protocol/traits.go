@@ -3,7 +3,7 @@ package protocol
 import "net/netip"
 
 // Traits describes one family's NAT as orthogonal fields with confidences. It
-// is produced by the classifier (internal/nat.Classify), carried in
+// is produced by the NAT classifier, carried in
 // probe_report (client provisional) and probe_summary (server authoritative),
 // and consumed by the planner through the predicates below.
 type Traits struct {

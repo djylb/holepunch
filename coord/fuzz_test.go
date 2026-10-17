@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -120,7 +120,7 @@ func fuzzStep(cx context.Context, r *rig, p *pair, i int, op, arg byte, rest []b
 		}
 	case 12:
 		rr := simclient.RoundEnd(id, role, round, protocol.RoundFatal, fired(1))
-		rr.Code = protocol.ReasonUDPBlocked
+		rr.Reason = protocol.ReasonUDPBlocked
 		sendM(&rr)
 	case 13:
 		_ = p.s.Inject(roleOf(1-i), protocol.Assist{Family: protocol.FamilyUDP4, Targets: []netip.AddrPort{pubR, pubI}})

@@ -11,7 +11,7 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
 )
 
 func TestDelayedDeliveryRealClock(t *testing.T) {

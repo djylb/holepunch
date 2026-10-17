@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
 )

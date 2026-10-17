@@ -11,19 +11,6 @@ import (
 	"github.com/djylb/holepunch/protocol"
 )
 
-// MergeDiag counts what the merge did not take at face value.
-type MergeDiag struct {
-	Unverified        int // client rows claiming an answer the server never recorded (dropped)
-	CookieMissing     int // server-recorded rows whose cookie was not echoed correctly (not verified)
-	Conflicts         int // the client's ack value ≠ the server's record (SNAT proxy, wrong advertised address)
-	RejectedEndpoints int // self-reported STUN and port-mapping addresses that failed the constraints
-	// STUNConflicts counts admitted STUN values that contradict natprobe's
-	// own records (nat.ObsTable.STUNConflicts): STUN is a hint, recorded
-	// but never classified against natprobe.
-	STUNConflicts int
-	MemoryPanics  int // TraitsMemory.Apply panicked; its advice was ignored
-}
-
 // Merge computes the server's authoritative view of role from the role's
 // probe_report:
 //   - natprobe's records replace the client's values, and client rows the
@@ -35,10 +22,10 @@ type MergeDiag struct {
 //     counts, the latter capped by the former;
 //   - self-reported STUN and port-mapping addresses must pass the endpoint
 //     constraints (nat.ObsTable.AdmitReported: on a verified IP, or, for a
-//     LAN-observed family without MergeOptions.VerifiedTargetsOnly, any
+//     LAN-observed family unless verifiedOnly, any
 //     global address); an admitted STUN value is a hint that can neither raise
 //     natprobe's conclusions above Medium nor overturn them; one that
-//     contradicts them is counted (MergeDiag.STUNConflicts), and one
+//     contradicts them is counted (nat.MergeDiag.STUNConflicts), and one
 //     at another port of natprobe's single mapping marks the traits
 //     PathDependent;
 //   - the overlay addresses the client reported become overlay endpoints at
@@ -50,21 +37,26 @@ type MergeDiag struct {
 // complete the key. The report must come from role of this session
 // (protocol.CheckOrigin), else Merge returns that validation error. Merge
 // is safe for concurrent use and never panics.
-func (h *Handle) Merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey) (view protocol.PeerView, diag MergeDiag, err error) {
-	return h.MergeWith(role, rep, mem, key, MergeOptions{})
+//
+// mem is a TraitsMemory or nil; clientKey is TraitsKey.ClientKey, which the
+// family and the public IP of each family complete; verifiedOnly keeps a
+// LAN-observed family to verified endpoints.
+func (h *handle) Merge(role protocol.Role, rep protocol.ProbeReport, mem any, clientKey string, verifiedOnly bool) (protocol.PeerView, nat.MergeDiag, error) {
+	tm, _ := mem.(TraitsMemory)
+	return h.mergeWith(role, rep, tm, TraitsKey{ClientKey: clientKey}, mergeOptions{verifiedOnly: verifiedOnly})
 }
 
-// MergeOptions tunes Merge.
-type MergeOptions struct {
-	// VerifiedTargetsOnly keeps a LAN-observed family (Traits.LANObserved)
-	// to verified endpoints: by default its global STUN and port-mapping
+// mergeOptions tunes merge.
+type mergeOptions struct {
+	// verifiedOnly keeps a LAN-observed family (Traits.LANObserved) to
+	// verified endpoints: otherwise its global STUN and port-mapping
 	// addresses become unverified endpoints, the only public addresses the
-	// peer can aim at (coord.Config.VerifiedTargetsOnly).
-	VerifiedTargetsOnly bool
+	// peer can aim at (coord.TargetsVerifiedOnly).
+	verifiedOnly bool
 }
 
-// MergeWith is Merge with options; Merge uses the zero MergeOptions.
-func (h *Handle) MergeWith(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts MergeOptions) (view protocol.PeerView, diag MergeDiag, err error) {
+// mergeWith is Merge with its arguments typed.
+func (h *handle) mergeWith(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts mergeOptions) (view protocol.PeerView, diag nat.MergeDiag, err error) {
 	if h == nil || h.e == nil {
 		return view, diag, errors.New("natprobe: nil handle")
 	}
@@ -72,13 +64,13 @@ func (h *Handle) MergeWith(role protocol.Role, rep protocol.ProbeReport, mem Tra
 		return view, diag, &protocol.ValidationError{Reason: protocol.ReasonInvalidArgument, Detail: "role", Msg: "merge role must be initiator or responder"}
 	}
 	if perr := life.Safe("natprobe/merge", func() { view, diag, err = h.merge(role, rep, mem, key, opts) }); perr != nil {
-		return protocol.PeerView{}, MergeDiag{}, perr
+		return protocol.PeerView{}, nat.MergeDiag{}, perr
 	}
 	return view, diag, err
 }
 
-func (h *Handle) merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts MergeOptions) (protocol.PeerView, MergeDiag, error) {
-	var diag MergeDiag
+func (h *handle) merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts mergeOptions) (protocol.PeerView, nat.MergeDiag, error) {
+	var diag nat.MergeDiag
 	view := protocol.PeerView{Families: []protocol.FamilyView{}}
 	if err := protocol.CheckOrigin(rep, h.e.id, role); err != nil {
 		return view, diag, err
@@ -100,18 +92,18 @@ type slotKey struct{ sock, obs uint8 }
 
 // familyMerge is the state of merging one reported family.
 type familyMerge struct {
-	h         *Handle
+	h         *handle
 	f         protocol.Family
 	t         *nat.ObsTable
-	srv       []ServerObservation // the role's slots of this family
+	srv       []nat.Observation // the role's slots of this family
 	socks     []nat.SocketMeta
 	alt       map[uint8]bool   // observers of the alt group, as the slots show them
 	answered  map[slotKey]bool // slots the client got an ack for
 	conflicts int              // client ack values that contradict the server's records
-	diag      *MergeDiag
+	diag      *nat.MergeDiag
 }
 
-func (h *Handle) mergeFamily(fr protocol.FamilyReport, obs []ServerObservation, mem TraitsMemory, key TraitsKey, opts MergeOptions, diag *MergeDiag) protocol.FamilyView {
+func (h *handle) mergeFamily(fr protocol.FamilyReport, obs []nat.Observation, mem TraitsMemory, key TraitsKey, opts mergeOptions, diag *nat.MergeDiag) protocol.FamilyView {
 	m := &familyMerge{h: h, f: fr.Family, alt: map[uint8]bool{}, answered: map[slotKey]bool{}, diag: diag}
 	var observers []nat.Observer
 	for _, s := range obs {
@@ -132,7 +124,7 @@ func (h *Handle) mergeFamily(fr protocol.FamilyReport, obs []ServerObservation, 
 		m.socks = append(m.socks, nat.SocketMeta{ID: sr.ID, Kind: sr.Kind, Local: sr.Local})
 	}
 	m.t = nat.NewTable(m.f, m.socks, observers)
-	m.t.SetReportedFallback(!opts.VerifiedTargetsOnly)
+	m.t.SetReportedFallback(!opts.verifiedOnly)
 	m.socks = m.t.Sockets() // the sockets the table accepted
 	m.mergeRows(fr)
 	m.mergeFilters(fr)
@@ -225,18 +217,18 @@ func (m *familyMerge) noteUnanswered(sock uint8, row protocol.RowReport) {
 	m.t.NoteSent(nat.PointKey{Socket: sock, Source: src, Observer: row.Observer}, row.FirstSeq, time.Duration(row.SentMs)*time.Millisecond)
 }
 
-func (m *familyMerge) find(k slotKey) (ServerObservation, bool) {
+func (m *familyMerge) find(k slotKey) (nat.Observation, bool) {
 	for _, s := range m.srv {
 		if s.Socket == k.sock && s.Observer == k.obs {
 			return s, true
 		}
 	}
-	return ServerObservation{}, false
+	return nat.Observation{}, false
 }
 
 // recordSlot adds a slot to the table: its first value and, when it drifted,
 // its latest value, the only one the cookie can verify.
-func (m *familyMerge) recordSlot(s ServerObservation, seq uint32, sent, rtt time.Duration, verified bool) {
+func (m *familyMerge) recordSlot(s nat.Observation, seq uint32, sent, rtt time.Duration, verified bool) {
 	src := nat.SourceServer
 	if s.Alt {
 		src = nat.SourceServerAlt
@@ -324,7 +316,7 @@ func (m *familyMerge) anchorMs(tr protocol.Traits) int64 {
 		}
 		return false
 	}
-	var best *ServerObservation
+	var best *nat.Observation
 	for i := range m.srv {
 		s := &m.srv[i]
 		if s.First.Port() == tr.PortAnchor && sequenced(s.Socket) && (best == nil || s.FirstSeq > best.FirstSeq) {

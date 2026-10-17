@@ -63,7 +63,7 @@ func prepare(sess *client.Session) (holepunch.Result, string, net.PacketConn, er
 	if res.TransportMode != Mode {
 		return res, "", nil, fmt.Errorf("%w: transport mode %q", ErrTransport, res.TransportMode)
 	}
-	pin, err := peerPin(res.TransportData)
+	pin, err := peerPin(res.PeerTransportData)
 	if err != nil {
 		return res, "", nil, err
 	}

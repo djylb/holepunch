@@ -43,7 +43,7 @@ func wantMirrored(t *testing.T, pr *pairRun, n int) {
 	var res [2]Result
 	for i, r := range pr.res {
 		res[i] = r.sess.Result()
-		if len(res[i].ExtraPaths) != n-1 || len(r.sess.ExtraPacketConns()) != n-1 {
+		if len(res[i].ExtraPaths) != n-1 || len(r.sess.PacketConns()) > n {
 			t.Fatalf("client %d: %d extra paths %+v, want %d", i, len(res[i].ExtraPaths), res[i].ExtraPaths, n-1)
 		}
 		if got := pr.script.results[i]; got == nil || len(got.ExtraPaths) != n-1 {
@@ -62,8 +62,8 @@ func wantMirrored(t *testing.T, pr *pairRun, n int) {
 		for _, p := range res[i].ExtraPaths {
 			peers = append(peers, p.RemoteAddr)
 		}
-		if !slices.Equal(r.sess.ResidualFilter().Codec.Peers(), peers) {
-			t.Fatalf("client %d: residual filter bound to %v, want %v", i, r.sess.ResidualFilter().Codec.Peers(), peers)
+		if !slices.Equal(r.sess.codec.Peers(), peers) {
+			t.Fatalf("client %d: residual filter bound to %v, want %v", i, r.sess.codec.Peers(), peers)
 		}
 	}
 	all := func(r Result) []Path { return append([]Path{r.Path}, r.ExtraPaths...) }
@@ -127,7 +127,7 @@ func TestMultiPathLANAndPublic(t *testing.T) {
 		if !slices.Contains(kinds, protocol.PathLAN) || !slices.Contains(kinds, protocol.PathPublic) {
 			t.Fatalf("client %d: kinds %v, want lan and public", i, kinds)
 		}
-		if r.sess.ExtraPacketConns()[0] != r.sess.PacketConn() {
+		if r.sess.Result().ExtraPaths[0].Conn != r.sess.PacketConn() {
 			t.Fatalf("client %d: the two paths of the primary socket are on different conns", i)
 		}
 		if err := tracks[i].CheckOpen(1); err != nil {
@@ -136,7 +136,7 @@ func TestMultiPathLANAndPublic(t *testing.T) {
 	}
 	for i := range 2 {
 		echo(t, pr.res[i].sess.PacketConn(), pr.res[1-i].sess.PacketConn(), pr.res[i].sess.Result().Path.RemoteAddr)
-		echo(t, pr.res[i].sess.ExtraPacketConns()[0], pr.res[1-i].sess.ExtraPacketConns()[0], pr.res[i].sess.Result().ExtraPaths[0].RemoteAddr)
+		echo(t, pr.res[i].sess.Result().ExtraPaths[0].Conn, pr.res[1-i].sess.Result().ExtraPaths[0].Conn, pr.res[i].sess.Result().ExtraPaths[0].RemoteAddr)
 	}
 	pr.closeAll()
 	for i := range 2 {
@@ -198,12 +198,12 @@ func TestMultiPathDualStack(t *testing.T) {
 	wantMirrored(t, pr, 2)
 	for i, r := range pr.res {
 		res := r.sess.Result()
-		if res.Path.Family == res.ExtraPaths[0].Family || r.sess.ExtraPacketConns()[0] == r.sess.PacketConn() {
+		if res.Path.Family == res.ExtraPaths[0].Family || r.sess.Result().ExtraPaths[0].Conn == r.sess.PacketConn() {
 			t.Fatalf("client %d: paths %+v %+v", i, res.Path, res.ExtraPaths[0])
 		}
 	}
 	for i := range 2 {
-		echo(t, pr.res[i].sess.ExtraPacketConns()[0], pr.res[1-i].sess.ExtraPacketConns()[0], pr.res[i].sess.Result().ExtraPaths[0].RemoteAddr)
+		echo(t, pr.res[i].sess.Result().ExtraPaths[0].Conn, pr.res[1-i].sess.Result().ExtraPaths[0].Conn, pr.res[i].sess.Result().ExtraPaths[0].RemoteAddr)
 	}
 }
 
@@ -219,8 +219,8 @@ func TestMaxPathsOne(t *testing.T) {
 		wantSuccess(t, pr)
 		wantMirrored(t, pr, 1)
 		for i, r := range pr.res {
-			if len(r.sess.ExtraPacketConns()) != 0 || len(ps.results[i].ExtraPaths) != 0 {
-				t.Fatalf("MaxPaths %v, client %d: extra conns %v", mp, i, r.sess.ExtraPacketConns())
+			if len(r.sess.PacketConns()) != 1 || len(ps.results[i].ExtraPaths) != 0 {
+				t.Fatalf("MaxPaths %v, client %d: conns %v", mp, i, r.sess.PacketConns())
 			}
 		}
 		if h := pr.res[0].sess.Diagnostics().Timing.Handover; h > 500*time.Millisecond {
@@ -251,7 +251,7 @@ func TestSessionCloseAllPaths(t *testing.T) {
 	}
 	cc := []net.PacketConn{&closeSpy{PacketConn: conns[0], rec: rec, name: "a"}, &closeSpy{PacketConn: conns[1], rec: rec, name: "b"}}
 	relErr := errors.New("release")
-	s := &Session{conn: cc[0], extra: []net.PacketConn{cc[0], cc[1]}, releases: []func() error{
+	s := &Session{conns: []net.PacketConn{cc[0], cc[1]}, releases: []func() error{
 		func() error { rec("release-a"); return relErr },
 		func() error { rec("release-b"); return nil },
 	}}

@@ -6,7 +6,8 @@ import (
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/internal/udpwire"
+	"github.com/djylb/holepunch/stun"
 )
 
 // pointSend is the fault injection point of every probe-class write.
@@ -63,7 +64,7 @@ func (s *runState) sendSTUN(st *stunTarget, now time.Duration) {
 	st.sends++
 	st.last = now
 	s.counters.STUN++
-	if err := writeProbe(s.p.primary, appendSTUNRequest(s.buf[:0], st.txid), st.addr); err != nil {
+	if err := writeProbe(s.p.primary, stun.AppendBindingRequest(s.buf[:0], st.txid), st.addr); err != nil {
 		s.counters.STUNErrors++
 		return
 	}

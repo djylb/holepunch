@@ -114,12 +114,14 @@ type OpenRequest struct {
 	DialerID string // optional, shown to the host
 	Metadata map[string]string
 	// TransportMode and TransportData are this side's transport offer
-	// (holepunch.Options); the host's data arrives in Result.TransportData.
-	TransportMode, TransportData string
+	// (holepunch.Options); the host's data arrives in
+	// Result.PeerTransportData.
+	TransportMode string
+	TransportData []byte
 }
 
 // Open opens a session with the host req.HostID and punches it: it returns
-// once holepunch.AttachSession has, with the punched path. ctx bounds the
+// once holepunch.Punch has, with the punched path. ctx bounds the
 // whole call; the server's answer must come within Config.HandshakeTimeout.
 // Errors: ErrClosed, the server's *proto.Fail, a *holepunch.Error, or a
 // dialing or TLS error.
@@ -231,11 +233,11 @@ func (c *Client) request(ctx context.Context, m proto.Message) (net.Conn, *proto
 }
 
 // attach runs the punch on the stream and closes the stream afterwards:
-// after AttachSession the server has no further part in the session.
-func (c *Client) attach(ctx context.Context, conn net.Conn, info *proto.SessionInfo, role protocol.Role, mode, data string, report func(proto.Transport) error) (*Session, error) {
+// after Punch the server has no further part in the session.
+func (c *Client) attach(ctx context.Context, conn net.Conn, info *proto.SessionInfo, role protocol.Role, mode string, data []byte, report func(proto.Transport) error) (*Session, error) {
 	opts := c.cfg.Session
 	opts.TransportMode, opts.TransportData = mode, data
-	hp, err := holepunch.AttachSession(ctx, conn, opts)
+	hp, err := holepunch.Punch(ctx, conn, opts)
 	_ = conn.Close()
 	if err != nil {
 		return nil, err

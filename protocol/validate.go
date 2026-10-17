@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 )
 
 // Structural limits checked by Validate. Lists over
@@ -234,7 +234,7 @@ func (m Progress) Validate() error {
 }
 
 // Validate implements Message. An empty or unknown code is valid: the client
-// maps it with AbortReason.
+// fails with aborted_by_<by>.
 func (m Abort) Validate() error {
 	if err := checkSessionID(m.SessionID); err != nil {
 		return err
@@ -242,8 +242,8 @@ func (m Abort) Validate() error {
 	if !m.By.Valid() {
 		return violation("by", "unknown role %q", m.By)
 	}
-	if m.Code != "" && !isName(string(m.Code), maxName) {
-		return violation("code", "%q is not a code", m.Code)
+	if m.Reason != "" && !isName(string(m.Reason), maxName) {
+		return violation("code", "%q is not a code", m.Reason)
 	}
 	if len(m.Detail) > maxDetail {
 		return violation("detail", "%d bytes > %d", len(m.Detail), maxDetail)
@@ -264,11 +264,11 @@ func (m RoundResult) Validate() error {
 	default:
 		return violation("status", "unknown status %q", m.Status)
 	}
-	if m.Status == RoundFatal && m.Code == "" {
+	if m.Status == RoundFatal && m.Reason == "" {
 		return violation("code", "required for status fatal")
 	}
-	if m.Code != "" && !m.Code.Known() {
-		return violation("code", "unknown reason %q", m.Code)
+	if m.Reason != "" && !m.Reason.Known() {
+		return violation("code", "unknown reason %q", m.Reason)
 	}
 	if len(m.Families) > maxOutcomes {
 		return violation("families", "%d > %d", len(m.Families), maxOutcomes)
@@ -318,10 +318,10 @@ func (m PunchResult) Validate() error {
 	switch {
 	case m.OK && m.Path == nil:
 		return violation("path", "required when ok")
-	case !m.OK && m.Code == "":
+	case !m.OK && m.Reason == "":
 		return violation("code", "required when not ok")
-	case m.Code != "" && !m.Code.Known():
-		return violation("code", "unknown reason %q", m.Code)
+	case m.Reason != "" && !m.Reason.Known():
+		return violation("code", "unknown reason %q", m.Reason)
 	}
 	if m.Path != nil {
 		if err := m.Path.validate("path", m.OK); err != nil {
@@ -363,7 +363,7 @@ func (m PunchResult) Validate() error {
 		return violation("warn", "%d > %d", len(m.Warn), maxWarn)
 	}
 	for i, w := range m.Warn {
-		if !isName(w, maxName) {
+		if !isName(string(w), maxName) {
 			return violation(fmt.Sprintf("warn[%d]", i), "%q is not a warning name", w)
 		}
 	}
@@ -911,12 +911,26 @@ func checkRound(path string, r uint8) error {
 	return nil
 }
 
-func checkTransport(path, mode, data string) error {
-	if len(mode) > maxTransportMode {
-		return violation(path+".mode", "%d bytes > %d", len(mode), maxTransportMode)
+func checkTransport(path, mode string, data []byte) error {
+	if err := CheckTransportMode(mode); err != nil {
+		return violation(path+".mode", "%v", err)
 	}
 	if len(data) > maxTransportData {
 		return violation(path, "data of %d bytes > %d", len(data), maxTransportData)
+	}
+	return nil
+}
+
+// CheckTransportMode checks a transport mode name: at most 16 bytes of
+// printable ASCII other than the space ("quic", "kcp"), or empty.
+func CheckTransportMode(mode string) error {
+	if len(mode) > maxTransportMode {
+		return fmt.Errorf("%d bytes > %d", len(mode), maxTransportMode)
+	}
+	for i := range len(mode) {
+		if c := mode[i]; c <= ' ' || c > '~' {
+			return fmt.Errorf("byte %#02x at %d is not printable ASCII", c, i)
+		}
 	}
 	return nil
 }

@@ -3,21 +3,15 @@ package coord
 import (
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
-
-// Clock is the time source of the coordinator; every deadline of a session is
-// measured with it. It is the same interface as holepunch.Clock.
-type Clock = clock.Clock
-
-// Timer is a timer created by a Clock.
-type Timer = clock.Timer
 
 // Rate is a token bucket: PerSec tokens per second, at most Burst at once.
 // A negative PerSec removes the limit; a zero field takes the default.
@@ -29,43 +23,48 @@ type Rate struct{ PerSec, Burst int }
 // NewSession.
 type ProbeFunc func(role protocol.Role, opts *SessionOptions) (protocol.ProbeSpec, error)
 
+// TargetPolicy says which peer addresses the clients may aim at
+// (Config.Targets).
+type TargetPolicy uint8
+
+// Target policies.
+const (
+	// TargetsBounded is the default: the clients aim at the addresses the
+	// server verified, and also at self-reported addresses where nothing
+	// could be verified, within tight bounds: Direct stages only, at most 4 IPs and
+	// 8 packets per target and round. That covers a family the server has
+	// no observer for (IPv6 on a v4-only server with two dual-stack
+	// clients) and a client the server saw only at a private address
+	// (protocol.Traits.LANObserved: it reaches the server over a LAN route
+	// or a hairpin without source NAT), which is then reached at the global
+	// addresses its STUN servers and port mapping reported. The summary
+	// marks such a family in pair.unverified and the Result warns
+	// unverified_targets. A client could report a third party's address
+	// there; the bounds keep what that third party receives small.
+	TargetsBounded TargetPolicy = iota
+	// TargetsVerifiedOnly aims only at addresses the server verified, and at
+	// LAN and overlay addresses where both sides share one: a family no
+	// observer covers is left out of the session, and a LAN-observed
+	// client is reached only on the LAN.
+	TargetsVerifiedOnly
+)
+
 // Config configures a Coordinator. Zero fields take the defaults.
 type Config struct {
 	// Registry is the natprobe registry the sessions register their probe
-	// routes with. nil selects the relay-only mode, which needs
-	// AllowUnverifiedTargets.
+	// routes with, shared with the natprobe.Server that observes the
+	// clients. It is required unless NoObserver is set.
 	Registry *natprobe.Registry
-	// AllowUnverifiedTargets enables the relay-only mode: without a Registry
-	// nothing is verified, so the plans may only aim Direct stages at the
-	// peer's self-reported public endpoints (at most 16, 8 packets each per
-	// round), the summary marks every family in pair.unverified and the
-	// Result warns unverified_targets.
-	// It is only valid with a nil Registry.
-	AllowUnverifiedTargets bool
-	// DisableUnverifiedFamilies turns off the restricted mode of a family
-	// the server has no natprobe observer for: by default such a
-	// family (say IPv6 on a v4-only server with two dual-stack clients) still
-	// punches, with Direct stages only, to at most 4 of the peer's
-	// self-reported global unicast addresses and 8 packets per target and
-	// round; the summary marks it in pair.unverified and the Result warns
-	// unverified_targets. Disabled, the family is left out of the session.
-	DisableUnverifiedFamilies bool
-	// VerifiedTargetsOnly makes the clients aim only at addresses the server
-	// verified (and at LAN and overlay addresses where both sides share one).
-	// By default a client the server saw only at private addresses
-	// (protocol.Traits.LANObserved: it reaches the server over a LAN route or
-	// through a hairpin without source NAT), and that therefore has no
-	// verified public address, is reached at the global addresses it
-	// reported itself — its STUN answers and its port mapping — with
-	// Direct stages only, at most 4 IPs and 8 packets per target and round,
-	// as in an unverified family; the summary marks the family in
-	// pair.unverified and the Result warns unverified_targets. A client
-	// could report a third party's address there; the bounds keep what that
-	// third party receives small.
-	VerifiedTargetsOnly bool
-	// DisableRegistrySweep stops the housekeeping from sweeping the Registry
-	// every 10 s; set it on all but one Coordinator sharing a Registry.
-	DisableRegistrySweep bool
+	// NoObserver runs the coordinator without natprobe, with a nil
+	// Registry: nothing is verified, so the plans may only aim Direct
+	// stages at the peer's self-reported public endpoints (at most 16, 8
+	// packets each per round), the summary marks every family in
+	// pair.unverified and the Result warns unverified_targets. It needs
+	// Targets TargetsBounded.
+	NoObserver bool
+	// Targets says whether the clients may aim at addresses the server
+	// could not verify; see TargetPolicy.
+	Targets TargetPolicy
 	// Probe builds each role's ProbeSpec; nil uses DefaultProbe.
 	Probe ProbeFunc
 	// DefaultProbe is the ProbeSpec used when Probe is nil and the session
@@ -87,7 +86,7 @@ type Config struct {
 	Limits Limits
 	// Budget holds the extreme switch.
 	Budget BudgetConfig
-	// Planner plans the rounds; nil uses internal/plan's DefaultPlanner.
+	// Planner plans the rounds; nil uses the built-in planner.
 	Planner Planner
 	// Memory is the cross-session strategy memory; nil uses
 	// NewStrategyMemory(StrategyMemoryConfig{}) and NoMemory{} turns it off.
@@ -120,7 +119,7 @@ type Config struct {
 	// Clock is the time source; nil uses the system clock. A Clock is
 	// infrastructure for tests and simulation, not a callback: it is called
 	// directly, with the session mutex held too, and must not panic.
-	Clock Clock
+	Clock clock.Clock
 	// Rand is the randomness for session ids, tokens, routes, wire lengths
 	// and round seeds; nil uses crypto/rand.
 	Rand io.Reader
@@ -334,7 +333,7 @@ func ms(v uint32) time.Duration { return time.Duration(v) * time.Millisecond }
 type settings struct {
 	cfg        Config
 	limits     Limits
-	clock      Clock
+	clock      clock.Clock
 	rand       io.Reader
 	planner    Planner
 	memory     StrategyMemory
@@ -345,13 +344,17 @@ type settings struct {
 
 func newSettings(cfg Config) (settings, error) {
 	switch {
-	case cfg.Registry == nil && !cfg.AllowUnverifiedTargets:
-		return settings{}, errors.New("coord: a nil Registry needs AllowUnverifiedTargets (relay-only mode)")
-	case cfg.Registry != nil && cfg.AllowUnverifiedTargets:
-		return settings{}, errors.New("coord: AllowUnverifiedTargets is only valid without a Registry")
+	case cfg.Registry == nil && !cfg.NoObserver:
+		return settings{}, errors.New("coord: Config.Registry is required (or NoObserver, which runs without natprobe)")
+	case cfg.Registry != nil && cfg.NoObserver:
+		return settings{}, errors.New("coord: NoObserver needs a nil Registry")
+	case cfg.Targets != TargetsBounded && cfg.Targets != TargetsVerifiedOnly:
+		return settings{}, errors.New("coord: unknown Targets policy")
+	case cfg.NoObserver && cfg.Targets == TargetsVerifiedOnly:
+		return settings{}, errors.New("coord: NoObserver verifies nothing, so it needs Targets TargetsBounded")
 	}
-	if !validMode(cfg.TransportFallback) {
-		return settings{}, errors.New("coord: TransportFallback is longer than 16 bytes")
+	if err := protocol.CheckTransportMode(cfg.TransportFallback); err != nil {
+		return settings{}, fmt.Errorf("coord: TransportFallback: %w", err)
 	}
 	if cfg.Policy != nil {
 		if err := validatePolicy(*cfg.Policy); err != nil {
@@ -379,20 +382,17 @@ func newSettings(cfg Config) (settings, error) {
 		s.planner = plan.DefaultPlanner{}
 	}
 	if s.memory == nil {
-		s.memory = NewStrategyMemory(StrategyMemoryConfig{Clock: s.clock.Now})
+		s.memory = NewStrategyMemory(StrategyMemoryConfig{Clock: s.clock})
 	}
 	switch s.traits.(type) {
 	case nil:
-		s.traits = natprobe.NewTraitsMemory(natprobe.TraitsMemoryConfig{Clock: s.clock.Now})
+		s.traits = natprobe.NewTraitsMemory(natprobe.TraitsMemoryConfig{Clock: s.clock})
 	case NoMemory:
-		// Internally a nil traits memory means "off", as for Handle.Merge.
+		// Internally a nil traits memory means "off", as for the natprobe merge.
 		s.traits = nil
 	}
 	return s, nil
 }
-
-// validMode reports whether m fits transport.mode (<= 16 bytes).
-func validMode(m string) bool { return len(m) <= 16 }
 
 // validatePolicy checks a policy the way punch_start will carry it.
 func validatePolicy(p protocol.Policy) error {

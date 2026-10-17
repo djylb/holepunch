@@ -7,7 +7,7 @@ import "github.com/djylb/holepunch/internal/plan"
 // lock and inside a recover boundary, and it does not trust the output: every
 // decision is clamped to the budget classes, the session and key budgets and
 // the protocol limits, and every target passes admission. A Planner that
-// panics is replaced by internal/plan's DefaultPlanner for the rest of the
+// panics is replaced by the built-in planner for the rest of the
 // session.
 type Planner interface {
 	// Classify runs once, when both probe reports are in.

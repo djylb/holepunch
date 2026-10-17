@@ -69,7 +69,7 @@ func TestFaultAttachPanic(t *testing.T) {
 	c := r.attach(s, protocol.RoleInitiator)
 	expect[protocol.PunchStart](t, c)
 	s.Abort(protocol.ReasonCanceled, "")
-	if res := r.wait(s); res.Code != protocol.ReasonCanceled {
+	if res := r.wait(s); res.Reason != protocol.ReasonCanceled {
 		t.Fatalf("result %+v", res)
 	}
 	if err := r.c.Close(); err != nil {
@@ -88,7 +88,7 @@ func TestFaultHandlers(t *testing.T) {
 		p := r.pair(SessionOptions{})
 		arm(t, fiHandleReport, faultinject.Error(nil), 1)
 		p.report(0)
-		if res := r.wait(p.s); res.Code != protocol.ReasonInternal {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonInternal {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -98,7 +98,7 @@ func TestFaultHandlers(t *testing.T) {
 		arm(t, fiHandleReport, faultinject.Panic(), 1)
 		p.report(0)
 		res := r.wait(p.s)
-		if res.Code != protocol.ReasonInternal || res.Detail == "" {
+		if res.Reason != protocol.ReasonInternal || res.Detail == "" {
 			t.Fatalf("result %+v", res)
 		}
 		if len(r.waitEvents(EvInternalError, 1)) == 0 {
@@ -111,7 +111,7 @@ func TestFaultHandlers(t *testing.T) {
 		sums := p.summaries()
 		arm(t, fiHandleReady, faultinject.CloseConn(), 1)
 		send(t, p.cl[0], simclient.Ready(sums[0], protocol.RoleInitiator, 1))
-		if a := expectAbort(t, p.cl[1]); a.Code != protocol.ReasonPeerOffline || a.By != protocol.RoleInitiator {
+		if a := expectAbort(t, p.cl[1]); a.Reason != protocol.ReasonPeerOffline || a.By != protocol.RoleInitiator {
 			t.Fatalf("abort %+v", a)
 		}
 		r.wait(p.s)
@@ -126,7 +126,7 @@ func TestFaultTimer(t *testing.T) {
 	arm(t, fiTimer, faultinject.Panic(), 1)
 	r.clk.Advance(defBindTimeout)
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonInternal {
+	if res.Reason != protocol.ReasonInternal {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -140,7 +140,7 @@ func TestFaultPlan(t *testing.T) {
 		arm(t, fiPlan, faultinject.Panic(), 0)
 		p.report(0)
 		p.report(1)
-		if res := r.wait(p.s); res.Code != protocol.ReasonInternal {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonInternal {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -150,7 +150,7 @@ func TestFaultPlan(t *testing.T) {
 		p.punching()
 		arm(t, fiPlan, faultinject.Panic(), 1)
 		p.endRound(1, [2]simclient.Outcome{fired(5), fired(5)})
-		if res := r.wait(p.s); res.Code != protocol.ReasonInternal {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonInternal {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -193,7 +193,7 @@ func TestFaultFinishSteps(t *testing.T) {
 				arm(t, step, act.a, 0)
 				p.s.Abort(protocol.ReasonCanceled, "")
 				res := r.wait(p.s)
-				if res.Code != protocol.ReasonCanceled {
+				if res.Reason != protocol.ReasonCanceled {
 					t.Fatalf("result %+v", res)
 				}
 				if n := faultinject.Fired(step); n != 1 {
@@ -287,7 +287,7 @@ func TestFaultClosePanic(t *testing.T) {
 		t.Fatalf("fired %d times", n)
 	}
 	for _, s := range []*Session{idle, p.s} {
-		if res := r.wait(s); res.Code != protocol.ReasonServerShutdown {
+		if res := r.wait(s); res.Reason != protocol.ReasonServerShutdown {
 			t.Fatalf("result %+v", res)
 		}
 	}

@@ -44,7 +44,7 @@ func TestAblationSwitches(t *testing.T) {
 	t.Run("NoSandwich", func(t *testing.T) {
 		r := newRig(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
 		s := r.session(ablated(ablation.Set{NoSandwich: true}))
-		if len(s.Start(protocol.RoleInitiator).Control.Features) != 0 {
+		if len(s.PunchStart(protocol.RoleInitiator).Control.Features) != 0 {
 			t.Fatal("sandwich offered")
 		}
 		s.Abort(protocol.ReasonCanceled, "")
@@ -62,7 +62,7 @@ func TestAblationSwitches(t *testing.T) {
 		}
 		heard := simclient.Outcome{Family: protocol.FamilyUDP4, Sent: 3, SeenFrom: []netip.AddrPort{pubR}}
 		p.endRound(1, [2]simclient.Outcome{heard, fired(3)})
-		if res := r.wait(p.s); len(res.Rounds) != 1 || res.Code != protocol.ReasonOneWayUDPOnly {
+		if res := r.wait(p.s); len(res.Rounds) != 1 || res.Reason != protocol.ReasonOneWayUDPOnly {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -87,7 +87,7 @@ func TestAblationSwitches(t *testing.T) {
 			t.Fatal("ended early")
 		}
 		r.clk.Advance(5 * time.Second)
-		if res := r.wait(p.s); res.Code != protocol.ReasonProbeTimeout || res.FailedRole != protocol.RoleResponder {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonProbeTimeout || res.FailedRole != protocol.RoleResponder {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -102,7 +102,7 @@ func TestAblationSwitches(t *testing.T) {
 			return p.s.st.deferred != nil
 		})
 		r.clk.Advance(5 * time.Second)
-		if res := r.wait(p.s); res.Code != protocol.ReasonTransportMismatch {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonTransportMismatch {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -124,7 +124,7 @@ func TestAblationSwitches(t *testing.T) {
 			t.Fatal("ended early")
 		}
 		r.clk.Advance(time.Minute)
-		if res := r.wait(p.s); res.Code != protocol.ReasonCandidateTimeout {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonCandidateTimeout {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -155,7 +155,7 @@ func TestAblationSwitches(t *testing.T) {
 			}}
 		r := newRig(t, func(c *Config) { c.DefaultProbe = spec })
 		s := r.session(ablated(ablation.Set{SinglePortProbe: true}))
-		got := s.Start(protocol.RoleInitiator).Probe
+		got := s.PunchStart(protocol.RoleInitiator).Probe
 		if len(got.Observers) != 2 || got.ExtraReply || got.SecondSocket || got.Siblings != 0 || got.STUN != nil {
 			t.Fatalf("probe spec %+v", got)
 		}
@@ -184,11 +184,11 @@ func TestProbeSpecSources(t *testing.T) {
 	})
 	over := protocol.ProbeSpec{Siblings: 2}
 	s := r.session(SessionOptions{ResponderProbe: &over, InitiatorProbe: &over})
-	if s.Start(protocol.RoleResponder).Probe.Siblings != 2 || s.Start(protocol.RoleInitiator).Probe.V != protocol.ProbeSpecVersion {
+	if s.PunchStart(protocol.RoleResponder).Probe.Siblings != 2 || s.PunchStart(protocol.RoleInitiator).Probe.V != protocol.ProbeSpecVersion {
 		t.Fatal("options' spec ignored")
 	}
 	s2 := r.session(SessionOptions{})
-	if s2.Start(protocol.RoleInitiator).Probe.Siblings != 1 || calls != 2 {
+	if s2.PunchStart(protocol.RoleInitiator).Probe.Siblings != 1 || calls != 2 {
 		t.Fatalf("Config.Probe not used (%d calls)", calls)
 	}
 	for _, mode := range []string{"fail", "panic"} {

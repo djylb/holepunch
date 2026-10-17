@@ -16,7 +16,6 @@ import (
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Example runs a whole deployment on a simulated Internet: a server with
@@ -59,7 +58,7 @@ func Example() {
 	defer func() { _ = co.Close() }()
 
 	// One session pairs the two clients: each control connection is
-	// attached to it under its role, and each client runs AttachSession on
+	// attached to it under its role, and each client runs Punch on
 	// its end.
 	sess, err := co.NewSession(coord.SessionOptions{})
 	if err != nil {
@@ -88,7 +87,7 @@ func Example() {
 			log.Fatal(err)
 		}
 		wg.Go(func() {
-			sessions[i], errs[i] = holepunch.AttachSession(ctx, clientEnd, holepunch.Options{
+			sessions[i], errs[i] = holepunch.Punch(ctx, clientEnd, holepunch.Options{
 				ControlSecurity: protocol.ControlSecurityInsecureForTesting,
 				Network:         hosts[i],
 			})
@@ -108,8 +107,7 @@ func Example() {
 
 	// The sockets are the caller's now. An upper layer other than QUIC
 	// filters the late handshake packets of the session out first.
-	rf := responder.ResidualFilter()
-	in := udpwire.DropResidual(responder.PacketConn(), rf.Codec, rf.Window)
+	in := responder.FilterResidual(responder.PacketConn())
 	to := net.UDPAddrFromAddrPort(initiator.Result().Path.RemoteAddr)
 	if _, err := initiator.PacketConn().WriteTo([]byte("hello"), to); err != nil {
 		log.Fatal(err)
@@ -127,11 +125,11 @@ func Example() {
 	// responder read "hello"
 }
 
-// ExampleAttachSession is the client side against a real server: the caller
+// ExamplePunch is the client side against a real server: the caller
 // opens and authenticates the control connection, runs the session on it
 // and, when no direct path is found, decides from the error whether and how
 // to try again.
-func ExampleAttachSession() {
+func ExamplePunch() {
 	ctx := context.Background()
 	var d tls.Dialer
 	d.Config = &tls.Config{MinVersion: tls.VersionTLS13, ServerName: "coordinator.example"}
@@ -141,14 +139,14 @@ func ExampleAttachSession() {
 	}
 	// The connection stays the caller's: the library never closes it. Any
 	// application messages before the session (a login, the peer's name) go
-	// here, before AttachSession.
+	// here, before Punch.
 	defer func() { _ = conn.Close() }()
 
-	sess, err := holepunch.AttachSession(ctx, conn, holepunch.Options{})
+	sess, err := holepunch.Punch(ctx, conn, holepunch.Options{})
 	if err != nil {
 		var herr *holepunch.Error
 		if !errors.As(err, &herr) {
-			log.Fatal(err) // AttachSession only returns *holepunch.Error
+			log.Fatal(err) // Punch only returns *holepunch.Error
 		}
 		switch {
 		case herr.Advice == protocol.AdviceRelayOnly:

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/ablation"
-	"github.com/djylb/holepunch/internal/clock"
 	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
@@ -94,7 +94,7 @@ func TestRescueRound(t *testing.T) {
 	}
 	p.endRound(2, [2]simclient.Outcome{heard, fired(3)})
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonOneWayUDPOnly || res.Detail != "initiator_hears_responder" || res.Outcome != OutcomeFailed {
+	if res.Reason != protocol.ReasonOneWayUDPOnly || res.Detail != "initiator_hears_responder" || res.Outcome != OutcomeFailed {
 		t.Fatalf("result %+v", res)
 	}
 	if len(res.Rounds) != 2 || !res.Rounds[1].Rescue || res.Rounds[0].Class != RoundOneWay {
@@ -117,7 +117,7 @@ func TestMaxRounds(t *testing.T) {
 	}
 	p.endRound(2, [2]simclient.Outcome{fired(3), fired(3)})
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonCandidateTimeout || res.Outcome != OutcomeFailed || len(res.Rounds) != 2 {
+	if res.Reason != protocol.ReasonCandidateTimeout || res.Outcome != OutcomeFailed || len(res.Rounds) != 2 {
 		t.Fatalf("result %+v", res)
 	}
 	if !res.Retry.Retryable || res.Retry.After != time.Second {
@@ -142,7 +142,7 @@ func TestBudgetAudit(t *testing.T) {
 	g2 := grantOf(p, 0)
 	p.windowEnd(1, 2, fired(1))
 	p.windowEnd(0, 2, fired(uint32(g2)*2+1))
-	if a := expectAbort(t, p.cl[1]); a.Code != protocol.ReasonProtocolViolation || a.Detail != detailBudgetViolation {
+	if a := expectAbort(t, p.cl[1]); a.Reason != protocol.ReasonProtocolViolation || a.Detail != detailBudgetViolation {
 		t.Fatalf("abort %+v", a)
 	}
 	res := r.wait(p.s)
@@ -172,11 +172,11 @@ func TestUDPBlockedBoth(t *testing.T) {
 	p.punching()
 	for i := range 2 {
 		rr := simclient.RoundEnd(p.s.ID(), roleOf(i), 1, protocol.RoundFatal)
-		rr.Code = protocol.ReasonUDPBlocked
+		rr.Reason = protocol.ReasonUDPBlocked
 		send(t, p.cl[i], &rr)
 	}
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonUDPBlocked || res.Outcome != OutcomeFailed || res.Retry.Retryable {
+	if res.Reason != protocol.ReasonUDPBlocked || res.Outcome != OutcomeFailed || res.Retry.Retryable {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -190,7 +190,7 @@ func TestPacketBudgetExceeded(t *testing.T) {
 	p.punching()
 	p.endRound(1, [2]simclient.Outcome{fired(3), fired(3)})
 	res := r.wait(p.s)
-	if res.Code != protocol.ReasonPacketBudgetExceeded || res.Retry.After != time.Minute {
+	if res.Reason != protocol.ReasonPacketBudgetExceeded || res.Retry.After != time.Minute {
 		t.Fatalf("result %+v", res)
 	}
 }
@@ -206,7 +206,7 @@ func TestRoundClassTable(t *testing.T) {
 	none := protocol.FamilyOutcome{Family: u4, Sent: 3}
 	icmp := protocol.FamilyOutcome{Family: u4, ICMPUnreach: 50}
 	blockedFatal := rr(protocol.RoundFatal, none)
-	blockedFatal.Code = protocol.ReasonUDPBlocked
+	blockedFatal.Reason = protocol.ReasonUDPBlocked
 	cases := []struct {
 		name string
 		a, b *protocol.RoundResult
@@ -451,14 +451,7 @@ func TestFireAtOrigin(t *testing.T) {
 	}{
 		{"same clock", func(clk *clock.Fake, arm *atomic.Bool) *natprobe.Registry {
 			// Register reads the clock 1 ms into a call that lasts 2 ms.
-			return natprobe.NewRegistry(natprobe.RegistryConfig{Clock: func() time.Time {
-				now := clk.Now()
-				if arm.CompareAndSwap(true, false) {
-					clk.Advance(2 * time.Millisecond)
-					return now.Add(time.Millisecond)
-				}
-				return now
-			}})
+			return natprobe.NewRegistry(natprobe.RegistryConfig{Clock: armedClock{clk, arm}})
 		}, time.Millisecond},
 		{"other clock", func(*clock.Fake, *atomic.Bool) *natprobe.Registry {
 			return natprobe.NewRegistry(natprobe.RegistryConfig{}) // the system clock: meaningless on the fake one
@@ -472,7 +465,7 @@ func TestFireAtOrigin(t *testing.T) {
 			r := newRig(t, func(cfg *Config) {
 				cfg.Planner = rp
 				if c.reg != nil {
-					cfg.Registry, cfg.AllowUnverifiedTargets = c.reg(cfg.Clock.(*clock.Fake), &arm), false
+					cfg.Registry, cfg.NoObserver = c.reg(cfg.Clock.(*clock.Fake), &arm), false
 				}
 			})
 			r.clk.Advance(time.Second)
@@ -588,7 +581,7 @@ func TestNoAdmissibleTarget(t *testing.T) {
 		if gos := p.endRound(1, [2]simclient.Outcome{refused, refused}); gos[0] != nil || gos[1] != nil {
 			t.Fatal("a round followed")
 		}
-		if res := r.wait(p.s); res.Code != protocol.ReasonCandidateTimeout || res.Detail != detailNoAdmissible || len(res.Rounds) != 1 {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonCandidateTimeout || res.Detail != detailNoAdmissible || len(res.Rounds) != 1 {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -623,7 +616,7 @@ func TestNoAdmissibleTarget(t *testing.T) {
 			t.Fatal("ended early")
 		}
 		r.clk.Advance(time.Minute)
-		if res := r.wait(p.s); res.Code != protocol.ReasonCandidateTimeout || res.Detail != detailNoAdmissible {
+		if res := r.wait(p.s); res.Reason != protocol.ReasonCandidateTimeout || res.Detail != detailNoAdmissible {
 			t.Fatalf("result %+v", res)
 		}
 	})
@@ -644,7 +637,23 @@ func TestGoneAtRoundEnd(t *testing.T) {
 	})
 	p.windowEnd(0, 1, fired(5))
 	r.clk.Advance(10 * time.Second)
-	if res := r.wait(p.s); res.Code != protocol.ReasonControlInterrupted || res.FailedRole != protocol.RoleResponder {
+	if res := r.wait(p.s); res.Reason != protocol.ReasonControlInterrupted || res.FailedRole != protocol.RoleResponder {
 		t.Fatalf("result %+v", res)
 	}
+}
+
+// armedClock is clk, except that once armed its next Now lasts 2 ms and
+// reads the clock 1 ms into it.
+type armedClock struct {
+	*clock.Fake
+	arm *atomic.Bool
+}
+
+func (c armedClock) Now() time.Time {
+	now := c.Fake.Now()
+	if c.arm.CompareAndSwap(true, false) {
+		c.Fake.Advance(2 * time.Millisecond)
+		return now.Add(time.Millisecond)
+	}
+	return now
 }

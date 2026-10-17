@@ -10,8 +10,8 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch/coord"
-	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/holepunch/stun"
 )
 
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
@@ -52,7 +52,7 @@ func TestSTUNFlag(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{nil, natprobe.DefaultSTUNServers()},
+		{nil, stun.DefaultServers()},
 		{[]string{"-stun", "none"}, nil},
 		{[]string{"-stun", "stun.example:3478", "-stun", "192.0.2.1:3478"}, []string{"stun.example:3478", "192.0.2.1:3478"}},
 	} {
@@ -88,7 +88,7 @@ func TestCoordConfig(t *testing.T) {
 		return protocol.ProbeSpec{V: protocol.ProbeSpecVersion}, nil
 	}
 	cfg := coordConfig(o, nil, probe, nil)
-	if cfg.Probe == nil || !cfg.VerifiedTargetsOnly || !cfg.Budget.AllowExtreme || cfg.Limits.MaxSessions != 7 ||
+	if cfg.Probe == nil || cfg.Targets != coord.TargetsVerifiedOnly || !cfg.Budget.AllowExtreme || cfg.Limits.MaxSessions != 7 ||
 		cfg.Observer == nil || cfg.OnResult == nil {
 		t.Fatalf("%+v", cfg)
 	}

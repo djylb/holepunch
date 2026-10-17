@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -22,7 +23,7 @@ func mkey(ip string) TraitsKey {
 
 func TestMemoryRules(t *testing.T) {
 	clk := newManualClock()
-	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk.Now})
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	if got := mem.Apply(k, eimMedium()); got != eimMedium() {
 		t.Fatal("an empty memory changed the traits")
@@ -183,7 +184,7 @@ func TestMemoryConcurrent(t *testing.T) {
 // EIM is no longer raised (TTL 24 h).
 func TestMemoryNotRenewedWithoutEvidence(t *testing.T) {
 	clk := newManualClock()
-	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk.Now})
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	final := eimMedium()
 	final.MappingConf, final.CrossIP = protocol.ConfHigh, true
@@ -210,7 +211,7 @@ func TestMemoryNoSelfRenewal(t *testing.T) {
 	verified.MappingConf, verified.CrossIP = protocol.ConfHigh, true
 
 	clk := newManualClock()
-	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk.Now})
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	mem.Observe(k, verified, true) // the only cross-IP verification
 	for h := 1; h <= 30; h++ {
@@ -222,7 +223,7 @@ func TestMemoryNoSelfRenewal(t *testing.T) {
 	}
 
 	clk = newManualClock()
-	mem = NewTraitsMemory(TraitsMemoryConfig{Clock: clk.Now})
+	mem = NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	mem.Observe(k, verified, true)
 	var raised []int
 	for i := 1; i <= 10; i++ {
@@ -246,7 +247,7 @@ func TestMemoryNoSelfRenewal(t *testing.T) {
 // conclusion leaves its expiry alone.
 func TestMemoryDirectMeasurementRenews(t *testing.T) {
 	clk := newManualClock()
-	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk.Now})
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	verified := eimMedium()
 	verified.MappingConf, verified.CrossIP = protocol.ConfHigh, true
@@ -289,7 +290,7 @@ func TestMemoryDirectMeasurementRenews(t *testing.T) {
 // conclusion at once.
 func TestMemoryPerConclusionExpiry(t *testing.T) {
 	clk := newManualClock()
-	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk.Now})
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	verified := eimMedium()
 	verified.MappingConf, verified.CrossIP = protocol.ConfHigh, true
@@ -336,7 +337,7 @@ func TestMemorySmallMaxEntries(t *testing.T) {
 // inherit the expired velocity; one measured again replaces it.
 func TestMemoryAllocationRelearned(t *testing.T) {
 	clk := newManualClock()
-	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk.Now})
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	seq := protocol.Traits{Family: protocol.FamilyUDP4, Mapping: protocol.MapAPDM, MappingConf: protocol.ConfHigh,
 		PortAlloc: protocol.AllocSequential, PortAllocConf: protocol.ConfHigh, PortStep: 2, PortVelocity: 40, Hairpin: protocol.TriTrue}
@@ -361,13 +362,7 @@ func TestMemoryAllocationRelearned(t *testing.T) {
 // shard lock, so a Clock that panics once leaves no lock held.
 func TestMemoryClockPanicHoldsNoLock(t *testing.T) {
 	var panicking atomic.Bool
-	clock := func() time.Time {
-		if panicking.Load() {
-			panic("clock")
-		}
-		return time.Now()
-	}
-	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clock})
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: panicClock{panicking: &panicking}})
 	k := mkey("203.0.113.5")
 	final := eimMedium()
 	final.Hairpin = protocol.TriTrue
@@ -393,4 +388,17 @@ func TestMemoryClockPanicHoldsNoLock(t *testing.T) {
 	case <-time.After(waitBound(t)):
 		t.Fatal("a shard lock stayed held after the Clock panicked")
 	}
+}
+
+// panicClock is the system clock, whose Now panics while panicking is set.
+type panicClock struct {
+	clock.System
+	panicking *atomic.Bool
+}
+
+func (c panicClock) Now() time.Time {
+	if c.panicking.Load() {
+		panic("clock")
+	}
+	return time.Now()
 }

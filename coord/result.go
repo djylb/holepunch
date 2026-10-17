@@ -41,14 +41,14 @@ func (o Outcome) String() string {
 type Result struct {
 	SessionID  string
 	Outcome    Outcome
-	Code       protocol.Reason // "" on success, otherwise one of the 26 reasons
-	Detail     string          // human readable, standard details (join_timeout, ...), never a stack
-	FailedRole protocol.Role   // the side that caused the failure; "" for the server or the caller
-	Attached   [2]bool         // [initiator, responder]
-	Confirmed  [2]bool         // the role reported round_result{confirmed} or punch_result{ok}
-	Warn       []string        // peer_result_missing, unverified_targets, clock_skew, ... (<= 8)
-	Winner     *WinnerInfo     // non-nil on success
-	PairClass  string          // the Planner's diagnostic pair class
+	Reason     protocol.Reason    // "" on success, otherwise one of the 26 reasons
+	Detail     string             // human readable, standard details (join_timeout, ...), never a stack
+	FailedRole protocol.Role      // the side that caused the failure; "" for the server or the caller
+	Attached   [2]bool            // [initiator, responder]
+	Confirmed  [2]bool            // the role reported round_result{confirmed} or punch_result{ok}
+	Warn       []protocol.Warning // at most 8: the server's own, such as peer_result_missing and unverified_targets
+	Winner     *WinnerInfo        // non-nil on success
+	PairClass  string             // the Planner's diagnostic pair class
 	// StrategyKey is the hex StrategyKey of the pair ("" when no key was
 	// derived); it contains no plain address.
 	StrategyKey string
@@ -56,7 +56,7 @@ type Result struct {
 	Rounds      []RoundRecord // <= 8, rescue round included
 	RTT         [2]time.Duration
 	ClockOffset [2]time.Duration // diagnostic only (pong.client_unix_ms)
-	Timings     Timings
+	Timing      Timing
 	Counters    Counters
 	Timeline    []StageMark     // the latest <= 32 progress marks
 	Clients     [2]*ClientFinal // the clients' punch_result, nil when none arrived
@@ -92,7 +92,7 @@ type WinnerInfo struct {
 // ClientFinal is a client's punch_result.
 type ClientFinal struct {
 	OK         bool
-	Code       protocol.Reason
+	Reason     protocol.Reason
 	Phase      protocol.Phase
 	Detail     string
 	Path       *protocol.PathInfo
@@ -100,11 +100,11 @@ type ClientFinal struct {
 	Stats      protocol.Stats
 	Timing     protocol.Timing
 	Traits     []protocol.TraitsUpdate
-	Warn       []string
+	Warn       []protocol.Warning
 }
 
-// Timings are the instants of a session's milestones (zero: not reached).
-type Timings struct {
+// Timing are the instants of a session's milestones (zero: not reached).
+type Timing struct {
 	Created      time.Time
 	Attached     [2]time.Time
 	Summary      time.Time

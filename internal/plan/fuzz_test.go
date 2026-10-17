@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -223,7 +224,7 @@ func FuzzRound(f *testing.F) {
 				rp := protocol.RoundPlan{Round: uint8(round), Variant: dec.VariantName, Budget: dec.Budget, WindowMs: uint16(dec.Window / time.Millisecond),
 					Seed: 1, Rescue: dec.Rescue, Sides: dec.Sides[r]}
 				msg, clamped := carrier(rp)
-				if _, err := protocol.Marshal(msg); err != nil {
+				if _, err := msgframe.Encode(msg); err != nil {
 					t.Fatalf("round %d role %d: %v", round, r, err)
 				}
 				if clamped {

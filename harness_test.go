@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
@@ -119,7 +121,7 @@ func newSrvLink(t *testing.T, nc net.Conn) *srvLink {
 
 func (l *srvLink) send(m protocol.Message) {
 	l.t.Helper()
-	fr, err := protocol.Marshal(m)
+	fr, err := msgframe.Encode(m)
 	if err != nil {
 		l.t.Errorf("marshal %T: %v", m, err)
 		return
@@ -140,7 +142,7 @@ func (l *srvLink) next(d time.Duration, types ...protocol.MessageType) (protocol
 			}
 			for _, want := range types {
 				if protocol.MessageType(f.Type) == want {
-					m, err := protocol.Decode(f)
+					m, err := msgframe.Decode(f)
 					if err != nil {
 						l.t.Errorf("decode %v: %v", want, err)
 						return nil, false
@@ -164,12 +166,12 @@ type session struct {
 	sid   string
 	token protocol.Token
 	wire  protocol.WireSpec
-	h     *natprobe.Handle
+	h     nat.ProbeHandle
 }
 
 func (w *world) newSession() *session {
 	s := &session{sid: protocol.NewSessionID(), token: protocol.NewToken(), wire: protocol.NewWireSpec()}
-	h, err := w.reg.Register(natprobe.Registration{SessionID: s.sid, Route: s.wire.RouteID, Token: s.token, TTL: time.Minute})
+	h, err := nat.RegisterProbe(w.reg, nat.Registration{SessionID: s.sid, Route: s.wire.RouteID, Token: s.token, TTL: time.Minute})
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -187,18 +189,18 @@ func (w *world) startFor(s *session, r protocol.Role, to protocol.Timeouts, pol 
 	}
 }
 
-// attachResult is what a client's AttachSession returned.
+// attachResult is what a client's Punch returned.
 type attachResult struct {
 	sess *Session
 	err  error
 	at   time.Time
 }
 
-// runClient starts AttachSession on its own goroutine.
+// runClient starts Punch on its own goroutine.
 func runClient(ctx context.Context, nc net.Conn, o Options) <-chan attachResult {
 	ch := make(chan attachResult, 1)
 	go func() {
-		s, err := AttachSession(ctx, nc, o)
+		s, err := Punch(ctx, nc, o)
 		ch <- attachResult{s, err, time.Now()}
 	}()
 	return ch
@@ -283,10 +285,10 @@ func (ps *pairScript) run(ctx context.Context, ends [2]net.Conn) error {
 		if !isRep {
 			pr := m.(*protocol.PunchResult)
 			ps.results[i] = pr
-			return fmt.Errorf("%s failed probing: %s", roles[i], pr.Code)
+			return fmt.Errorf("%s failed probing: %s", roles[i], pr.Reason)
 		}
 		reports[i] = *rep
-		v, _, err := s.h.Merge(roles[i], *rep, nil, natprobe.TraitsKey{})
+		v, _, err := s.h.Merge(roles[i], *rep, nil, "", false)
 		if err != nil {
 			return err
 		}
@@ -361,7 +363,7 @@ func (ps *pairScript) run(ctx context.Context, ends [2]net.Conn) error {
 				ps.results[ev.idx] = m
 				ended[ev.idx] = true
 				if !m.OK && !ended[1-ev.idx] {
-					links[1-ev.idx].send(protocol.Abort{SessionID: s.sid, By: roles[ev.idx], Code: m.Code})
+					links[1-ev.idx].send(protocol.Abort{SessionID: s.sid, By: roles[ev.idx], Reason: m.Reason})
 				}
 			case *protocol.Assist:
 				if !ps.noRelay {

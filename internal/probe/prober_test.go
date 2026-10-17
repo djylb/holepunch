@@ -11,8 +11,9 @@ import (
 
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/stun"
 )
 
 const ms = time.Millisecond
@@ -963,8 +964,7 @@ func TestDeliverSTUNFromServersOnly(t *testing.T) {
 	o.stun = true
 	s := newSim(t, o)
 	s.p.active.Store(true)
-	txid := [12]byte{7}
-	msg := stunMsg(stunBindingSuccess, txid, stunAttr(attrXORMapped, addrValue(netip.MustParseAddrPort("203.0.113.5:40000"), true, txid)))
+	msg := stun.AppendBindingResponse(nil, stun.TransactionID{7}, netip.MustParseAddrPort("203.0.113.5:40000"))
 	if s.p.DeliverSTUN(0, netip.MustParseAddrPort("192.0.2.51:3478"), msg, time.Time{}) {
 		t.Fatal("a STUN message from another host was queued")
 	}

@@ -1,12 +1,12 @@
 package probe
 
 import (
-	crand "crypto/rand"
 	"net/netip"
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/internal/udpwire"
+	"github.com/djylb/holepunch/stun"
 )
 
 // want is the second reply a probe asks for.
@@ -76,7 +76,7 @@ type stunServer struct {
 // stunTarget is one STUN server of the sub-probe.
 type stunTarget struct {
 	stunServer
-	txid   [12]byte
+	txid   stun.TransactionID
 	sends  int
 	last   time.Duration
 	done   bool // it answered
@@ -164,7 +164,7 @@ func newRunState(p *Prober) *runState {
 	}
 	for _, sv := range p.stunServers {
 		st := &stunTarget{stunServer: sv}
-		_, _ = crand.Read(st.txid[:]) // crypto/rand.Read never fails (Go 1.24+)
+		st.txid = stun.NewTransactionID()
 		s.stun = append(s.stun, st)
 	}
 	return s

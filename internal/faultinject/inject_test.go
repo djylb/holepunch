@@ -23,7 +23,7 @@ var documentedPoints = []string{
 	"progress.deliver",
 	"coord.attach", "coord.handle.report", "coord.handle.ready", "coord.plan", "coord.memory",
 	"coord.timer", "coord.callback", "coord.finish.notify", "coord.close",
-	"natprobe.packet", "natprobe.extra", "natprobe.sweep",
+	"natprobe.packet", "natprobe.extra",
 }
 
 // fresh resets the registry before and after a test.

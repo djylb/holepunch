@@ -62,7 +62,7 @@ func TestSummaryVerdictNeedsMeasuredHigh(t *testing.T) {
 			in.Measured[0] = measured(rndTraits(f), protocol.AllocPool, protocol.ConfLow)
 		}},
 		// the views say Random/High, but nobody measured it: self-reported
-		// traits (relay-only mode, an unobserved family) or a memory
+		// traits (NoObserver mode, an unobserved family) or a memory
 		{"not measured", func(in *ClassifyInput) { in.Measured = [2]protocol.PeerView{} }},
 		{"one side not measured", func(in *ClassifyInput) { in.Measured[1] = protocol.PeerView{} }},
 		{"measured without samples", func(in *ClassifyInput) {

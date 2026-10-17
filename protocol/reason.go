@@ -1,15 +1,10 @@
 package protocol
 
-import (
-	"errors"
-
-	"github.com/djylb/holepunch/controlwire"
-)
-
 // Reason is the single failure-code enumeration of holepunch: the client's
-// *Error.Reason, the coordinator's Result.Code and the wire field code of
+// *Error.Reason, coord.Result.Reason and the wire field code of
 // punch_result, round_result and punch_abort. Only the 26 names below exist on
-// the wire; a receiver treats any other code as unknown (see AbortReason).
+// the wire; a receiver treats any other code as unknown: a punch_abort carrying one
+// fails the client with aborted_by_server or aborted_by_peer.
 // Fine-grained information goes into a separate detail string.
 //
 // Reason is a plain wire code, not an error: errors carry it in a field, such
@@ -118,53 +113,4 @@ func (r Reason) Class() ReasonClass {
 		return ClassCanceled
 	}
 	return ClassNone
-}
-
-// AbortReason is the reason a client fails with on receiving punch_abort{by,
-// code} before it confirmed: the code when it is one of the 26 reasons,
-// otherwise (empty or unknown) aborted_by_<by> — aborted_by_server when the
-// server aborted and aborted_by_peer when the other client did.
-func AbortReason(by Role, code Reason) Reason {
-	if code.Known() {
-		return code
-	}
-	if by == RoleServer {
-		return ReasonAbortedByServer
-	}
-	return ReasonAbortedByPeer
-}
-
-// WireReason maps an error of the wire layer — a frame-layer error of
-// controlwire, a *ValidationError or ErrUnexpectedMessage — to the reason and
-// detail reported for it. ok is false for any
-// other error: the caller classifies it (connection errors, its own
-// cancellation and timers). Callers test for *life.PanicError before calling
-// WireReason, because a panic value can wrap any error.
-func WireReason(err error) (r Reason, detail string, ok bool) {
-	var verr *ValidationError
-	switch {
-	case err == nil:
-		return "", "", false
-	case errors.As(err, &verr):
-		return verr.Reason, verr.Detail, true
-	case errors.Is(err, controlwire.ErrVersion):
-		return ReasonControlVersionMismatch, "frame_version", true
-	case errors.Is(err, controlwire.ErrBadMagic):
-		return ReasonProtocolViolation, "bad_magic", true
-	case errors.Is(err, controlwire.ErrZeroType):
-		return ReasonProtocolViolation, "zero_type", true
-	case errors.Is(err, controlwire.ErrFrameTooLarge):
-		return ReasonProtocolViolation, "frame_too_large", true
-	case errors.Is(err, controlwire.ErrTooManyUnknown):
-		return ReasonProtocolViolation, "unknown_frames", true
-	case errors.Is(err, controlwire.ErrFlood):
-		return ReasonProtocolViolation, "control_flood", true
-	case errors.Is(err, ErrUnexpectedMessage):
-		return ReasonProtocolViolation, "unexpected_message", true
-	case errors.Is(err, controlwire.ErrDeadlineUnsupported):
-		return ReasonInvalidArgument, "deadline_unsupported", true
-	case errors.Is(err, controlwire.ErrNilConn):
-		return ReasonInvalidArgument, "nil_control", true
-	}
-	return "", "", false
 }

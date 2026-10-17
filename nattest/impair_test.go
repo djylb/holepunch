@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/internal/clock"
+	"github.com/djylb/holepunch/clock"
 )
 
 // linkPair builds, on a fake clock, a host behind a NAT whose uplink

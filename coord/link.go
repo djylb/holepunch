@@ -7,8 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -47,6 +48,7 @@ type link struct {
 	ping      pingState
 	attachAt  time.Duration
 	insecure  bool
+	probe     *protocol.ProbeSpec // AttachOptions.Probe, normalized
 	readyFams []protocol.Family
 }
 
@@ -81,7 +83,7 @@ func (l *link) close() {
 
 // send queues m without blocking.
 func (l *link) send(m protocol.Message) error {
-	f, err := protocol.Marshal(m)
+	f, err := msgframe.Encode(m)
 	if err != nil {
 		return err
 	}
@@ -133,7 +135,7 @@ func classifyLoss(err error) linkLoss {
 	if errors.As(err, &pe) {
 		return linkLoss{code: protocol.ReasonInternal, detail: panicDetail(pe), kind: lossInternal}
 	}
-	if r, d, ok := protocol.WireReason(err); ok {
+	if r, d, ok := msgframe.Reason(err); ok {
 		return linkLoss{code: r, detail: d, kind: lossProtocol}
 	}
 	if errors.Is(err, os.ErrDeadlineExceeded) {

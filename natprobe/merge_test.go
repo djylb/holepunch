@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 func reportFor(id string, role protocol.Role, f protocol.Family, local string, rows []protocol.RowReport) protocol.ProbeReport {
@@ -25,7 +26,7 @@ func reportFor(id string, role protocol.Role, f protocol.Family, local string, r
 type session struct {
 	t    *testing.T
 	r    *rig
-	h    *Handle
+	h    *handle
 	c    *client
 	role protocol.Role
 	rows map[[2]uint8]*protocol.RowReport
@@ -105,12 +106,12 @@ func (s *session) report(f protocol.Family, locals map[uint8]string, kinds map[u
 	return rep
 }
 
-func mustMerge(t *testing.T, h *Handle, role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory) (protocol.FamilyView, MergeDiag) {
+func mustMerge(t *testing.T, h *handle, role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory) (protocol.FamilyView, nat.MergeDiag) {
 	t.Helper()
 	if err := rep.Validate(); err != nil {
 		t.Fatalf("report invalid: %v", err)
 	}
-	view, diag, err := h.Merge(role, rep, mem, TraitsKey{ClientKey: "client-1"})
+	view, diag, err := h.mergeTest(role, rep, mem, TraitsKey{ClientKey: "client-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func TestMergeVerified(t *testing.T) {
 		tr.Samples != 3 || tr.Observed != srcA || tr.NoNAT != protocol.TriFalse {
 		t.Fatalf("traits %+v", tr)
 	}
-	if diag != (MergeDiag{}) {
+	if diag != (nat.MergeDiag{}) {
 		t.Fatalf("diag %+v", diag)
 	}
 	want := []protocol.Endpoint{{Addr: srcA, Source: protocol.EndpointServer, Socket: 0, Verified: true},
@@ -332,19 +333,19 @@ func TestMergeErrors(t *testing.T) {
 	s.probe(0, 0, srcA, false, false)
 	rep := s.report(protocol.FamilyUDP4, local4, nil)
 	var verr *protocol.ValidationError
-	if _, _, err := s.h.Merge(protocol.RoleResponder, rep, nil, TraitsKey{}); !errors.As(err, &verr) || verr.Detail != "role_mismatch" {
+	if _, _, err := s.h.mergeTest(protocol.RoleResponder, rep, nil, TraitsKey{}); !errors.As(err, &verr) || verr.Detail != "role_mismatch" {
 		t.Fatalf("role mismatch: %v", err)
 	}
 	other := rep
 	other.SessionID = "other"
-	if _, _, err := s.h.Merge(protocol.RoleInitiator, other, nil, TraitsKey{}); !errors.As(err, &verr) || verr.Detail != "session_mismatch" {
+	if _, _, err := s.h.mergeTest(protocol.RoleInitiator, other, nil, TraitsKey{}); !errors.As(err, &verr) || verr.Detail != "session_mismatch" {
 		t.Fatalf("session mismatch: %v", err)
 	}
-	if _, _, err := s.h.Merge(protocol.RoleServer, rep, nil, TraitsKey{}); err == nil {
+	if _, _, err := s.h.mergeTest(protocol.RoleServer, rep, nil, TraitsKey{}); err == nil {
 		t.Fatal("server role accepted")
 	}
-	var nilH *Handle
-	if _, _, err := nilH.Merge(protocol.RoleInitiator, rep, nil, TraitsKey{}); err == nil {
+	var nilH *handle
+	if _, _, err := nilH.mergeTest(protocol.RoleInitiator, rep, nil, TraitsKey{}); err == nil {
 		t.Fatal("nil handle")
 	}
 	// junk inside an otherwise matching report never panics
@@ -355,7 +356,7 @@ func TestMergeErrors(t *testing.T) {
 			STUN: []protocol.RowReport{{Observed: netip.MustParseAddrPort("[2001:db8::1]:5")}}, PortMap: &protocol.PortMapReport{}},
 		{Family: protocol.FamilyUDP4},
 	}
-	view, _, err := s.h.Merge(protocol.RoleInitiator, junk, nil, TraitsKey{})
+	view, _, err := s.h.mergeTest(protocol.RoleInitiator, junk, nil, TraitsKey{})
 	if err != nil || len(view.Families) != 1 {
 		t.Fatalf("junk: %v %+v", err, view)
 	}
@@ -429,7 +430,7 @@ func TestMergeLostProbeKeepsOrder(t *testing.T) {
 // correction) makes session 2's single-IP EIM an ADM/Medium.
 func TestMergeWithMemory(t *testing.T) {
 	r := newRig(t, rigOpts{})
-	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: r.clk.Now})
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: r.clk})
 	run := func(id string, b byte) protocol.Traits {
 		s := newSession(t, r, id, protocol.RoleInitiator, b)
 		for i := range 3 {
@@ -478,7 +479,7 @@ func TestSummarySize(t *testing.T) {
 				ProbeRTTMs:    map[protocol.Role]uint32{protocol.RoleInitiator: 123, protocol.RoleResponder: 456},
 				ClockOffsetMs: map[protocol.Role]int64{protocol.RoleInitiator: -1234, protocol.RoleResponder: 5678}},
 			Transport: protocol.TransportPick{Mode: "quic"}, Timeouts: protocol.DefaultTimeouts(), Plan: plan}
-		f, err := protocol.Marshal(sum)
+		f, err := msgframe.Encode(sum)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -516,4 +517,9 @@ func TestMergeOverlay(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("endpoints %+v", fv.Endpoints)
 	}
+}
+
+// mergeTest is Merge with a typed memory and key and the default options.
+func (h *handle) mergeTest(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey) (protocol.PeerView, nat.MergeDiag, error) {
+	return h.mergeWith(role, rep, mem, key, mergeOptions{})
 }

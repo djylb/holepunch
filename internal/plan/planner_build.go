@@ -29,7 +29,7 @@ import (
 const (
 	maxDirectTargets     = 8  // Direct targets of a side and round
 	maxUnverifiedTargets = 4  // an unverified family's targets per side and round
-	maxRelayOnlyTargets  = 16 // the same with every family unverified (relay-only mode)
+	maxRelayOnlyTargets  = 16 // the same with every family unverified (NoObserver mode)
 	maxUnverifiedRepeats = 8  // packets per unverified target and round
 	maxLANTargets        = 4  // LAN targets of a side and round
 	maxOverlayTargets    = 2  // overlay targets of a side and round

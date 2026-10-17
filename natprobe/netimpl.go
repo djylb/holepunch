@@ -5,7 +5,7 @@ import (
 	"net"
 	"net/netip"
 
-	"github.com/djylb/holepunch/internal/udpicmp"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // The only places where natprobe reaches the operating system's network
@@ -24,7 +24,7 @@ func defaultListen(network string, laddr netip.AddrPort) (net.PacketConn, error)
 	if err != nil {
 		return nil, err // never a typed-nil *UDPConn in the interface
 	}
-	_ = udpicmp.DisableReports(c)
+	_ = udpsock.DisableICMPReports(c)
 	return c, nil
 }
 

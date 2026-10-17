@@ -11,14 +11,20 @@ import (
 
 	"go.uber.org/goleak"
 
+	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 
-// manualClock is a settable clock for registry tests.
-type manualClock struct{ ns atomic.Int64 }
+// manualClock is a settable clock for registry tests; its timers are the
+// system's.
+type manualClock struct {
+	clock.System
+	ns atomic.Int64
+}
 
 func newManualClock() *manualClock {
 	c := &manualClock{}
@@ -97,7 +103,7 @@ type rigOpts struct {
 func newRig(t *testing.T, o rigOpts) *rig {
 	t.Helper()
 	r := &rig{t: t, clk: newManualClock()}
-	o.reg.Clock = r.clk.Now
+	o.reg.Clock = r.clk
 	r.reg = NewRegistry(o.reg)
 	if o.srcRate == (Rate{}) {
 		o.srcRate = Rate{PerSec: -1}
@@ -190,9 +196,9 @@ func (c *client) open(b []byte) (udpwire.Header, udpwire.TLVs, bool) {
 	return h, tl, true
 }
 
-func register(t *testing.T, reg *Registry, id string, token protocol.Token, route protocol.RouteID) *Handle {
+func register(t *testing.T, reg *Registry, id string, token protocol.Token, route protocol.RouteID) *handle {
 	t.Helper()
-	h, err := reg.Register(Registration{SessionID: id, Route: route, Token: token, TTL: time.Minute})
+	h, err := reg.register(nat.Registration{SessionID: id, Route: route, Token: token, TTL: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,9 +9,9 @@ import (
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/netaddr"
-	"github.com/djylb/holepunch/internal/udpicmp"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
+	"github.com/djylb/holepunch/udpsock"
 )
 
 // sendClass is the budget class of a packet.
@@ -621,8 +621,8 @@ func (s *sender) account(ctx context.Context, sock *udpSock, o *sendOpt, wrapped
 			return err
 		}
 		fc.drop(dropSendErr)
-		noRoute := udpicmp.IsNoRoute(err)
-		if !noRoute && udpicmp.IsReport(err) {
+		noRoute := udpsock.IsNoRoute(err)
+		if !noRoute && udpsock.IsICMPReport(err) {
 			s.rt.noteICMP(sock)
 			return err
 		}

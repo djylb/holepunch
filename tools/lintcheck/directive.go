@@ -20,9 +20,9 @@ const (
 )
 
 // netImplPackages are the packages (module-relative) allowed to contain
-// //holepunch:netimpl functions: the root package's SystemNetwork and
-// natprobe's default Listen.
-func netImplPackages() []string { return []string{"", "natprobe"} }
+// //holepunch:netimpl functions: the root package's SystemNetwork,
+// natprobe's default Listen and hostaddr's interface list.
+func netImplPackages() []string { return []string{"", "natprobe", "hostaddr"} }
 
 // callbacks are the names annotated with //holepunch:callback.
 type callbacks struct {
@@ -177,5 +177,5 @@ func (c *checker) registerNetImpl(p *pkg, fd *ast.FuncDecl) string {
 			return ""
 		}
 	}
-	return directivePrefix + dirNetImpl + " is only allowed in the root package and natprobe"
+	return directivePrefix + dirNetImpl + " is only allowed in the root package, natprobe and hostaddr"
 }

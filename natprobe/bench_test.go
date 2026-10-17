@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 type discardConn struct{}
@@ -27,7 +28,7 @@ type benchPath struct {
 	reg  *Registry
 	rd   *reader
 	n    int
-	last *Handle
+	last *handle
 }
 
 func newBenchPath() *benchPath {
@@ -44,7 +45,7 @@ func (bp *benchPath) chunk(tb testing.TB, n int, extra, wrap bool) [][]byte {
 	bp.n++
 	token, route := protocol.NewToken(), protocol.NewRouteID()
 	bp.last.Close()
-	h, err := bp.reg.Register(Registration{SessionID: fmt.Sprint("b", bp.n), Route: route, Token: token, TTL: time.Hour})
+	h, err := bp.reg.register(nat.Registration{SessionID: fmt.Sprint("b", bp.n), Route: route, Token: token, TTL: time.Hour})
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -286,7 +287,7 @@ func BenchmarkRegistryLookupParallel(b *testing.B) {
 	routes := make([]protocol.RouteID, 4096)
 	for i := range routes {
 		routes[i] = protocol.NewRouteID()
-		if _, err := reg.Register(Registration{SessionID: fmt.Sprint("s", i), Route: routes[i], Token: tok(1), TTL: time.Hour}); err != nil {
+		if _, err := reg.register(nat.Registration{SessionID: fmt.Sprint("s", i), Route: routes[i], Token: tok(1), TTL: time.Hour}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -301,7 +302,7 @@ func BenchmarkRegistryLookupParallel(b *testing.B) {
 			if i%1000 == 0 { // ≈ 0.1 % writes: register and close a session
 				r[15]++
 				id := writes.Add(1)
-				if h, err := reg.Register(Registration{SessionID: fmt.Sprint("w", id), Route: r, Token: tok(2), TTL: time.Hour}); err == nil {
+				if h, err := reg.register(nat.Registration{SessionID: fmt.Sprint("w", id), Route: r, Token: tok(2), TTL: time.Hour}); err == nil {
 					h.Close()
 				}
 				continue
@@ -316,7 +317,7 @@ func BenchmarkRegistryLookupParallel(b *testing.B) {
 func BenchmarkRegisterClose(b *testing.B) {
 	reg := NewRegistry(RegistryConfig{})
 	for i := range 4096 { // a realistic table: the copy-on-write cost scales with the shard
-		if _, err := reg.Register(Registration{SessionID: fmt.Sprint("s", i), Route: protocol.NewRouteID(), Token: tok(1), TTL: time.Hour}); err != nil {
+		if _, err := reg.register(nat.Registration{SessionID: fmt.Sprint("s", i), Route: protocol.NewRouteID(), Token: tok(1), TTL: time.Hour}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -327,7 +328,7 @@ func BenchmarkRegisterClose(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
-		h, err := reg.Register(Registration{SessionID: "x", Route: routes[i%len(routes)], Token: tok(3), TTL: time.Hour})
+		h, err := reg.register(nat.Registration{SessionID: "x", Route: routes[i%len(routes)], Token: tok(3), TTL: time.Hour})
 		if err != nil {
 			b.Fatal(err)
 		}

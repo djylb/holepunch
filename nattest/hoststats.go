@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/djylb/holepunch/stun"
 )
 
 const (
@@ -193,16 +195,16 @@ func (s *hostCounters) recordSend(n *Network, r *socketRecord, dst netip.AddrPor
 	r.packets++
 	r.bytes += uint64(len(data))
 	r.lens[len(data)]++
-	stun := IsSTUN(data)
+	isSTUN := stun.IsMessage(data)
 	plain, known := r.flows[dst]
 	switch {
-	case !known && !stun:
+	case !known && !isSTUN:
 		r.plainFirst++
-	case stun && plain:
+	case isSTUN && plain:
 		r.stunAfterPlain++
 	}
-	r.flows[dst] = plain || !stun
-	if stun {
+	r.flows[dst] = plain || !isSTUN
+	if isSTUN {
 		// A STUN header is the standard's, the same in every STUN packet
 		// of the Internet: the packet shape (first bytes, constant offsets)
 		// is judged on the other packets.

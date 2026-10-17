@@ -10,6 +10,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -91,7 +92,7 @@ func (rt *runtime) progress(ev progressEvent) {
 		p.Meta = map[string]string{"insecure": "1"}
 	}
 	if accepted && wireOK {
-		if fr, err := protocol.Marshal(p); err == nil {
+		if fr, err := msgframe.Encode(p); err == nil {
 			_ = rt.ctl.conn.SendCoalesced(fr, ev.stage)
 		}
 	} else if accepted {
@@ -128,9 +129,9 @@ func truncProgressDetail(s string) string {
 // goroutine, in order. The queue holds 256 events and drops the oldest when
 // full. A panicking callback is recovered and counted; the session goes on.
 // When the session ends, delivery continues for at most 100 ms and the rest
-// is dropped, so the callback is never called after AttachSession returns.
+// is dropped, so the callback is never called after Punch returns.
 // A callback that blocks past the join bound of the cleanup leaves the
-// goroutine running when AttachSession returns; the sink is closed by then,
+// goroutine running when Punch returns; the sink is closed by then,
 // and that goroutine calls the callback no more.
 type progressSink struct {
 	rt     *runtime
@@ -229,7 +230,7 @@ func (s *progressSink) deliver(p protocol.Progress) {
 // sendAssist queues a punch_assist (P2; when the queue is full the newest
 // is dropped, which controlwire reports as ErrQueueFull).
 func (rt *runtime) sendAssist(a protocol.Assist) {
-	fr, err := protocol.Marshal(a)
+	fr, err := msgframe.Encode(a)
 	if err != nil {
 		return
 	}

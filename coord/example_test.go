@@ -12,12 +12,13 @@ import (
 	"github.com/djylb/holepunch/coord"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/holepunch/stun"
 )
 
 // Example is a minimal server on real sockets: natprobe observes the
 // clients' NATs on the server's public IP, and a TLS listener pairs the
 // clients two by two, the first of a pair as the initiator. Each client
-// dials the listener and calls holepunch.AttachSession on its connection.
+// dials the listener and calls holepunch.Punch on its connection.
 //
 // A real server authenticates the clients and pairs them by its own
 // matchmaking, usually with a few application messages on the same stream
@@ -43,7 +44,7 @@ func Example() {
 	// Public STUN servers give the clients a second view of their mapping,
 	// and a public address to a client on this server's own LAN.
 	spec := probe.ProbeSpec()
-	spec.STUN, err = natprobe.ResolveSTUN(context.Background(), nil, natprobe.DefaultSTUNServers())
+	spec.STUN, err = natprobe.ResolveSTUN(context.Background(), nil, stun.DefaultServers())
 	if err != nil {
 		log.Print(err) // the servers that resolved are kept
 	}
@@ -51,7 +52,7 @@ func Example() {
 		Registry:     reg,
 		DefaultProbe: spec,
 		OnResult: func(r coord.Result) {
-			log.Printf("session %s %s %s", r.SessionID, r.Outcome, r.Code)
+			log.Printf("session %s %s %s", r.SessionID, r.Outcome, r.Reason)
 		},
 	})
 	if err != nil {

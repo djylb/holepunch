@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // openerRig is a gate rig whose packets land on a listening public host of

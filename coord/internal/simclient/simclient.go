@@ -18,7 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -61,13 +62,13 @@ func (c *Client) intercept(cw *controlwire.Conn, f controlwire.Frame) bool {
 	if c.noPong.Load() {
 		return true
 	}
-	p, err := protocol.Unmarshal[protocol.Ping](f)
+	p, err := msgframe.Unmarshal[protocol.Ping](f)
 	if err != nil {
 		return true
 	}
 	at := f.At
 	_ = cw.SendFunc(controlwire.TypePong, func(now time.Time) ([]byte, error) {
-		fr, err := protocol.Marshal(protocol.PongFor(p, at, now))
+		fr, err := msgframe.Encode(protocol.PongFor(p, at, now))
 		return fr.Payload, err
 	})
 	return true
@@ -86,7 +87,7 @@ func (c *Client) Next(ctx context.Context) (protocol.Message, time.Time, error) 
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	m, err := protocol.Decode(f)
+	m, err := msgframe.Decode(f)
 	return m, f.At, err
 }
 
@@ -108,7 +109,7 @@ func Expect[T any](ctx context.Context, c *Client) (*T, error) {
 
 // Send writes m and waits until it is written.
 func (c *Client) Send(ctx context.Context, m protocol.Message) error {
-	f, err := protocol.Marshal(m)
+	f, err := msgframe.Encode(m)
 	if err != nil {
 		return err
 	}
@@ -240,5 +241,5 @@ func Success(sessionID string, role protocol.Role, p *protocol.PathInfo) protoco
 
 // Failure builds punch_result{ok: false, code}.
 func Failure(sessionID string, role protocol.Role, code protocol.Reason, phase protocol.Phase) protocol.PunchResult {
-	return protocol.PunchResult{SessionID: sessionID, Role: role, Code: code, Phase: phase}
+	return protocol.PunchResult{SessionID: sessionID, Role: role, Reason: code, Phase: phase}
 }

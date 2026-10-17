@@ -101,7 +101,7 @@ func unpark(tb testing.TB, c *Coordinator, ps []parkedSession) {
 func checkIdle(tb testing.TB, n int, idle time.Duration) (goroutinesPerSession float64, heapPerSession float64) {
 	// The longest ready timeout keeps the first parked sessions from ending
 	// (and reading) while the last are parked, on a slow or loaded machine.
-	c, err := New(Config{AllowUnverifiedTargets: true, Limits: Limits{NewSessions: Rate{PerSec: -1}, MaxPending: -1},
+	c, err := New(Config{NoObserver: true, Limits: Limits{NewSessions: Rate{PerSec: -1}, MaxPending: -1},
 		TTL: TTLConfig{ReadyTimeout: maxReady}})
 	if err != nil {
 		tb.Fatal(err)
@@ -150,7 +150,7 @@ func BenchmarkCoordinator1000(b *testing.B) {
 // BenchmarkSessionLifecycle measures one session from NewSession to a
 // confirmed success over pipes, with the scripted clients.
 func BenchmarkSessionLifecycle(b *testing.B) {
-	c, err := New(Config{AllowUnverifiedTargets: true, Limits: Limits{NewSessions: Rate{PerSec: -1}}})
+	c, err := New(Config{NoObserver: true, Limits: Limits{NewSessions: Rate{PerSec: -1}}})
 	if err != nil {
 		b.Fatal(err)
 	}

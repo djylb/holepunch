@@ -11,8 +11,8 @@ import (
 
 	"go.uber.org/goleak"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
-	"github.com/djylb/holepunch/internal/clock"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -48,9 +48,9 @@ func newRig(t *testing.T, opts ...rigOpt) *rig {
 	t.Helper()
 	r := &rig{t: t, clk: clock.NewFake(t, time.Time{}), results: make(chan Result, 64)}
 	cfg := Config{
-		AllowUnverifiedTargets: true,
-		Clock:                  r.clk,
-		OnResult:               func(res Result) { r.results <- res },
+		NoObserver: true,
+		Clock:      r.clk,
+		OnResult:   func(res Result) { r.results <- res },
 		Observer: func(ev Event) {
 			r.evMu.Lock()
 			r.events = append(r.events, ev)

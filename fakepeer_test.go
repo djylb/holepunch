@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // udpPeer plays the other client over raw UDP with the session's keys, so a
@@ -240,7 +240,7 @@ func TestHandoverTimeout(t *testing.T) {
 	}()
 	defer close(stop)
 	pr := so.punchResult()
-	if pr.Code != protocol.ReasonHandoverTimeout || pr.Phase != protocol.PhaseHandover {
+	if pr.Reason != protocol.ReasonHandoverTimeout || pr.Phase != protocol.PhaseHandover {
 		t.Fatalf("punch_result %+v", pr)
 	}
 	e := so.wantError(so.result(5*time.Second), protocol.ReasonHandoverTimeout)

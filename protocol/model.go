@@ -160,14 +160,14 @@ type ClockSample struct {
 
 // Transport is the client's upper-layer transport offer.
 type Transport struct {
-	Mode string `json:"mode"`           // a name of <= 16 B, or empty
-	Data string `json:"data,omitempty"` // opaque, <= 8 KiB (a QUIC certificate, for example)
+	Mode string `json:"mode"`           // a token of <= 16 printable ASCII bytes, or empty
+	Data []byte `json:"data,omitempty"` // opaque bytes, <= 8 KiB (a certificate digest, for example); base64 on the wire
 }
 
 // TransportPick is the server's transport decision, the same on both sides.
 type TransportPick struct {
 	Mode     string `json:"mode"`
-	PeerData string `json:"peer_data,omitempty"` // the peer's Transport.Data, verbatim
+	PeerData []byte `json:"peer_data,omitempty"` // the peer's Transport.Data, verbatim
 }
 
 // ---- server views ----
@@ -341,7 +341,7 @@ type Stage struct {
 	// wrapping inside [1024, 65535] — exactly where the peer's sequential NAT
 	// allocates the mappings of the peer's own paired stage — sent in an order
 	// both sides draw from the initiator's spray seed of the round, so that
-	// their mappings target each other in pairs (internal/plan.ExpandPaired).
+	// their mappings target each other in pairs.
 	// Only a predict stage may be paired.
 	Pair bool `json:"pair,omitempty"`
 }
@@ -515,18 +515,34 @@ type Timing struct {
 	HandoverMs    uint32 `json:"handover_ms"`
 }
 
-// Warning values of punch_result.warn and coord results (open: unknown
-// names are kept).
+// Warning is a non-fatal condition a session recorded: in punch_result.warn,
+// holepunch.Diagnostics.Warn and coord.Result.Warn. The set is open: a
+// name this version does not know is kept as it is.
+type Warning string
+
+// Warnings.
 const (
-	WarnClockSkew                 = "clock_skew"
-	WarnGoroutineJoinTimeout      = "goroutine_join_timeout"
-	WarnLowTTLUnsupported         = "low_ttl_unsupported"
-	WarnPeerResultMissing         = "peer_result_missing"
-	WarnUnverifiedTargets         = "unverified_targets"
-	WarnInsecureControlForTesting = "insecure_control_for_testing"
-	WarnInterfaceListUnavailable  = "interface_list_unavailable" // no LAN addresses this session
+	WarnClockSkew                 Warning = "clock_skew"                   // the client clock is far from the server's (diagnostic only)
+	WarnGoroutineJoinTimeout      Warning = "goroutine_join_timeout"       // cleanup gave up waiting for a goroutine stuck in user code
+	WarnLowTTLUnsupported         Warning = "low_ttl_unsupported"          // the sockets cannot send with a low TTL
+	WarnPeerResultMissing         Warning = "peer_result_missing"          // a client's punch_result never arrived
+	WarnUnverifiedTargets         Warning = "unverified_targets"           // some targets were self-reported, not verified by the server
+	WarnInsecureControlForTesting Warning = "insecure_control_for_testing" // a control link ran with ControlSecurityInsecureForTesting
+	WarnInterfaceListUnavailable  Warning = "interface_list_unavailable"   // no LAN or overlay addresses this session
 	// WarnLANObserved means the server saw a client only at private addresses
 	// (Traits.LANObserved), a deployment where clients reach the server
 	// over a LAN route or a hairpin without source NAT.
-	WarnLANObserved = "lan_observed"
+	WarnLANObserved Warning = "lan_observed"
+	// WarnControlUnreturnable means the control connection could not be
+	// handed back clean after the session — its reader did not stop within
+	// its bound — and its state is unknown. The usual cause is a stream
+	// whose SetReadDeadline does not interrupt a blocked Read (a deadline
+	// in the past must make it return a timeout at once).
+	WarnControlUnreturnable Warning = "control_unreturnable"
+	// WarnAbortAfterConfirm means a punch_abort arrived after this side had
+	// confirmed the path; the path was kept.
+	WarnAbortAfterConfirm Warning = "abort_after_confirm"
+	// WarnControlLostAfterConfirm means the control link ended after this
+	// side had confirmed the path; the path was kept.
+	WarnControlLostAfterConfirm Warning = "control_lost_after_confirm"
 )

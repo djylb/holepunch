@@ -1,6 +1,6 @@
 package protocol
 
-import "github.com/djylb/holepunch/controlwire"
+import "github.com/djylb/holepunch/internal/controlwire"
 
 // Feature is an optional client behaviour offered in punch_start.control and
 // echoed (accepted subset) in probe_report.control. Syntax
@@ -21,11 +21,11 @@ func (f Feature) Valid() bool { return isName(string(f), maxFeatureName) }
 // probe_report.control (client echo of the accepted subset). There is no
 // version range: Version must equal the frame header major exactly.
 type ControlSpec struct {
-	Version  uint8     `json:"version"`            // = controlwire.Version
+	Version  uint8     `json:"version"`            // the control protocol's major version, 1
 	Features []Feature `json:"features,omitempty"` // server: offered; client: accepted
 }
 
-// DefaultControlSpec is what a server offers: version controlwire.Version and
+// DefaultControlSpec is what a server offers: the protocol's version and
 // every supported feature.
 func DefaultControlSpec() ControlSpec {
 	return ControlSpec{Version: controlwire.Version, Features: SupportedFeatures()}

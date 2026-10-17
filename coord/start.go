@@ -9,12 +9,13 @@ import (
 	"slices"
 	"time"
 
-	"github.com/djylb/holepunch/controlwire"
 	"github.com/djylb/holepunch/internal/ablation"
+	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
-	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Identity sizes.
@@ -109,7 +110,7 @@ func (c *Coordinator) newSession(opts SessionOptions) (*Session, error) {
 			Mode:      opts.Mode,
 		}
 		s.starts[r].Timeouts.SummaryWaitMs = summaryWaitMs(t.bind, to, t)
-		if _, err := protocol.Marshal(s.starts[r]); err != nil {
+		if _, err := msgframe.Encode(s.starts[r]); err != nil {
 			return nil, fmt.Errorf("coord: punch_start for %s: %w (%w)", roleOf(r), argumentError("punch_start", "the options make an invalid punch_start"), err)
 		}
 	}
@@ -117,7 +118,7 @@ func (c *Coordinator) newSession(opts SessionOptions) (*Session, error) {
 	q, dim, err := c.limiter.reserve(now, opts.ClientKeys)
 	if err != nil {
 		c.ctr.rateLimited.Add(1)
-		c.emit(Event{Kind: EvRateLimited, At: now, SessionID: id, Code: protocol.ReasonServerBusy,
+		c.emit(Event{Kind: EvRateLimited, At: now, SessionID: id, Reason: protocol.ReasonServerBusy,
 			Labels: opts.Labels, Data: RateLimitedData{Dimension: dim, Key: limitedKey(dim, opts.ClientKeys)}})
 		return nil, err
 	}
@@ -131,7 +132,7 @@ func (c *Coordinator) newSession(opts SessionOptions) (*Session, error) {
 	if reg := c.cfg.Registry; reg != nil {
 		s.unobserved = unobservedFamilies(probes)
 		before := c.set.clock.Now()
-		h, err := reg.Register(natprobe.Registration{
+		h, err := nat.RegisterProbe(reg, nat.Registration{
 			SessionID: id,
 			Route:     wire.RouteID,
 			Token:     token,

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/djylb/holepunch/controlwire"
+	"github.com/djylb/holepunch/internal/controlwire"
 )
 
 // FuzzDecodeMessage covers all twelve message types: any
@@ -18,7 +18,7 @@ import (
 // encode gives the same bytes) whenever the re-encoding fits the type's cap.
 func FuzzDecodeMessage(f *testing.F) {
 	for _, m := range sampleMessages() {
-		fr, err := Marshal(m)
+		fr, err := marshalFrame(m)
 		if err != nil {
 			f.Fatal(err)
 		}
@@ -46,14 +46,14 @@ func FuzzDecodeMessage(f *testing.F) {
 	f.Add(uint8(MsgPunchGo), []byte(`{"session_id":"a","round":2,"window_ms":9,"plan":{"round":2,"variant":"v","budget":"light","window_ms":9,"sides":[{"family":"udp4","role":"both","sockets":1,"stages":[{"kind":"direct","ttl":1,"targets":["1.2.3.4:5"]}]}]}}`))
 	f.Add(uint8(MsgAssist), []byte(`{"session_id":"a","role":"initiator","from":"server","kind":"peer_targets","round":1,"family":"udp4","source":"x"}`))
 	f.Fuzz(func(t *testing.T, typ uint8, payload []byte) {
-		m, err := Decode(controlwire.Frame{Type: controlwire.Type(typ), Payload: payload})
+		m, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(typ), Payload: payload})
 		if err != nil {
 			var verr *ValidationError
 			if !errors.As(err, &verr) && !errors.Is(err, ErrUnexpectedMessage) {
 				t.Fatalf("Decode error %v (%T) is neither a ValidationError nor ErrUnexpectedMessage", err, err)
 			}
-			if r, _, ok := WireReason(err); !ok || (r != ReasonProtocolViolation && r != ReasonControlVersionMismatch) {
-				t.Fatalf("Decode error maps to %q", r)
+			if verr != nil && verr.Reason != ReasonProtocolViolation && verr.Reason != ReasonControlVersionMismatch {
+				t.Fatalf("Decode error has reason %q", verr.Reason)
 			}
 			return
 		}
@@ -76,18 +76,18 @@ func FuzzDecodeMessage(f *testing.F) {
 		if normalize(t, m) {
 			t.Fatalf("%s: Normalize is not idempotent", m.MessageType())
 		}
-		f1, err := Marshal(m)
+		f1, err := marshalFrame(m)
 		if err != nil {
-			if errors.Is(err, controlwire.ErrFrameTooLarge) {
+			if verr, ok := errors.AsType[*ValidationError](err); ok && verr.Detail == "frame_too_large" {
 				return // escaping or explicit fields made the re-encoding larger than the cap
 			}
 			t.Fatalf("Marshal of a valid %s: %v", m.MessageType(), err)
 		}
-		m2, err := Decode(f1)
+		m2, err := decodeFrame(f1)
 		if err != nil {
 			t.Fatalf("re-decode %s: %v\n%s", m.MessageType(), err, f1.Payload)
 		}
-		f2, err := Marshal(m2)
+		f2, err := marshalFrame(m2)
 		if err != nil || !bytes.Equal(f1.Payload, f2.Payload) {
 			t.Fatalf("unstable encoding of %s: %v\n%s\n%s", m.MessageType(), err, f1.Payload, f2.Payload)
 		}

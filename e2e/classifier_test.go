@@ -1,9 +1,7 @@
 package e2e
 
 import (
-	"encoding/binary"
 	"fmt"
-	"net"
 	"net/netip"
 	"strings"
 	"sync"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/ablation"
 	"github.com/djylb/holepunch/nattest"
+	"github.com/djylb/holepunch/stun"
 )
 
 // Cells of situations measured on real networks:
@@ -184,32 +183,7 @@ func (w *world) stunServer(t testing.TB) netip.AddrPort {
 	go func() {
 		defer w.helpers.Done()
 		defer func() { _ = pc.Close() }()
-		buf := make([]byte, 2048)
-		for {
-			n, from, err := pc.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			if n < 20 || binary.BigEndian.Uint16(buf) != 0x0001 || binary.BigEndian.Uint32(buf[4:]) != 0x2112A442 {
-				continue
-			}
-			ua, ok := from.(*net.UDPAddr)
-			if !ok {
-				continue
-			}
-			src := ua.AddrPort()
-			resp := make([]byte, 32)
-			binary.BigEndian.PutUint16(resp, 0x0101)
-			binary.BigEndian.PutUint16(resp[2:], 12)
-			copy(resp[4:20], buf[4:20])
-			binary.BigEndian.PutUint16(resp[20:], 0x0020)
-			binary.BigEndian.PutUint16(resp[22:], 8)
-			resp[25] = 1
-			binary.BigEndian.PutUint16(resp[26:], src.Port()^0x2112)
-			ip := src.Addr().Unmap().As4()
-			binary.BigEndian.PutUint32(resp[28:], binary.BigEndian.Uint32(ip[:])^0x2112A442)
-			_, _ = pc.WriteTo(resp, from)
-		}
+		_ = stun.Serve(pc)
 	}()
 	return addr
 }

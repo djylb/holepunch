@@ -9,8 +9,8 @@ import (
 	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/netaddr"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Assist constants.

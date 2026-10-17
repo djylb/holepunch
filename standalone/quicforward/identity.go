@@ -44,11 +44,11 @@ func NewIdentity() (*Identity, error) {
 
 // TransportData returns the TransportData that announces the identity's pin
 // to the peer.
-func (id *Identity) TransportData() string { return pinPrefix + id.pin }
+func (id *Identity) TransportData() []byte { return []byte(pinPrefix + id.pin) }
 
 // peerPin extracts the peer's pin from its TransportData.
-func peerPin(data string) (string, error) {
-	p, ok := strings.CutPrefix(data, pinPrefix)
+func peerPin(data []byte) (string, error) {
+	p, ok := strings.CutPrefix(string(data), pinPrefix)
 	if !ok {
 		return "", ErrTransport
 	}

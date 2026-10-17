@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -152,7 +153,7 @@ func TestRescueReplyOnly(t *testing.T) {
 	}
 	rp := protocol.RoundPlan{Round: 2, Variant: dec.VariantName, Budget: dec.Budget, WindowMs: uint16(dec.Window / time.Millisecond), Seed: 1, Rescue: true, Sides: dec.Sides[1]}
 	pg := protocol.PunchGo{SessionID: "s1", Round: 2, WindowMs: rp.WindowMs, Plan: &rp}
-	if _, err := protocol.Marshal(pg); err != nil {
+	if _, err := msgframe.Encode(pg); err != nil {
 		t.Fatalf("rescue silent side does not marshal: %v", err)
 	}
 }

@@ -9,8 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
-	"github.com/djylb/holepunch/udpwire"
 )
 
 // Registry defaults and bounds.
@@ -28,8 +30,8 @@ const (
 	maxSandwichQueue     = 1024
 	defaultTTL           = 60 * time.Second // the library's fallback; coord passes BindTimeout+probe+ReportSlack+5 s
 	shardCount           = 64
-	sweepBatch           = 4096
 	maxSessionID         = 64 // protocol session ids are 1..64 bytes
+	fullSweepGap         = time.Second
 )
 
 // tokenTagDomain separates the token digest kept for idempotent
@@ -38,32 +40,31 @@ const tokenTagDomain = "holepunch/1 natprobe token tag"
 
 // RegistryConfig configures a Registry; zero fields take the defaults.
 type RegistryConfig struct {
-	MaxEntries         int              // live sessions, default 16384; when full the target shard is swept, then ErrRegistryFull
-	SlotsPerRole       int              // observation slots (socket, observer) per role, default 24, at most 64
-	ProbeBudgetPerRole uint16           // probes accepted per (session, role) in its lifetime, default 96
-	ExtraQuotaPerRole  uint8            // extra replies per (session, role), default 8
-	AltQuotaPerRole    uint8            // change-IP replies per (session, role), default 2
-	SessionRate        Rate             // per (session, role), default {16, 32}
-	SandwichQueue      int              // undelivered sandwich events per session, default 8; more are dropped
-	Clock              func() time.Time // nil means time.Now; the clock of every expiry and rate decision
-}
-
-// Registration registers a session's probe route.
-type Registration struct {
-	SessionID string           // 1..64 bytes, the protocol session id
-	Route     protocol.RouteID // punch_start.wire.route_id
-	Token     protocol.Token   // the session token (HKDF IKM); only a digest is kept
-	TTL       time.Duration    // coord: BindTimeout + probe_timeout + ReportSlack + 5 s; ≤ 0 means 60 s
+	MaxEntries         int         // live sessions, default 16384; when full the expired entries are dropped, then ErrRegistryFull
+	SlotsPerRole       int         // observation slots (socket, observer) per role, default 24, at most 64
+	ProbeBudgetPerRole uint16      // probes accepted per (session, role) in its lifetime, default 96
+	ExtraQuotaPerRole  uint8       // extra replies per (session, role), default 8
+	AltQuotaPerRole    uint8       // change-IP replies per (session, role), default 2
+	SessionRate        Rate        // per (session, role), default {16, 32}
+	SandwichQueue      int         // undelivered sandwich events per session, default 8; more are dropped
+	Clock              clock.Clock // nil means the system clock; the clock of every expiry and rate decision
 }
 
 // Registry holds the registered probe routes. It is safe for concurrent use,
-// starts no goroutine and needs no Close. Several Servers may share one.
+// starts no goroutine and needs no Close or upkeep: closed entries leave the
+// table at once, and expired ones whenever a registration rewrites their
+// shard, or all of them when the table is full (at most once a second). Several Servers and
+// Coordinators may share one.
 type Registry struct {
 	cfg    RegistryConfig
 	now    func() time.Time
 	epoch  time.Time // origin of the monotonic nanoseconds of expiry and rate state
 	shards [shardCount]shard
 	live   atomic.Int64 // entries in the shard maps, expired ones not yet removed included
+	// swept is when the last full sweep ran (registry monotonic ns): a full
+	// table is swept at most once per fullSweepGap, so that a table full of
+	// live entries does not make every registration scan all of them.
+	swept atomic.Int64
 
 	// sinkPanics counts sandwich sink panics recovered on the coordinator's
 	// goroutine (AttachSandwichSink delivering the queued events). The
@@ -100,9 +101,9 @@ func NewRegistry(cfg RegistryConfig) *Registry {
 	if cfg.SessionRate.Burst <= 0 {
 		cfg.SessionRate.Burst = max(cfg.SessionRate.PerSec*2, 1)
 	}
-	now := cfg.Clock
-	if now == nil {
-		now = time.Now
+	now := time.Now
+	if cfg.Clock != nil {
+		now = cfg.Clock.Now
 	}
 	r := &Registry{cfg: cfg, now: now}
 	r.epoch = now()
@@ -132,20 +133,21 @@ func (r *Registry) lookup(route protocol.RouteID) *entry {
 	return r.shards[route[0]%shardCount].load()[route]
 }
 
-// Register registers reg and returns its Handle:
+// register registers reg and returns its handle:
 //   - the same SessionID, route and token as a live entry: an idempotent
 //     renewal to max(old, now+TTL) and a new Handle on the same entry, with
 //     the observations kept, so a visitor that probes before the provider
 //     joins loses nothing;
 //   - the route is held by another session: ErrRouteInUse;
 //   - the same route and SessionID with another token: ErrConflict;
-//   - MaxEntries live entries after the target shard's expired ones are
-//     dropped: ErrRegistryFull.
+//   - MaxEntries live entries after the expired ones are dropped (all of
+//     them at most once a second, the target shard's always):
+//     ErrRegistryFull.
 //
 // It never replaces a live entry. Session ids are not indexed (a session
-// keeps its *Handle), so a session that registers again under a new route
+// keeps its handle), so a session that registers again under a new route
 // gets a second entry.
-func (r *Registry) Register(reg Registration) (*Handle, error) {
+func (r *Registry) register(reg nat.Registration) (*handle, error) {
 	if r == nil {
 		return nil, errors.New("natprobe: nil registry")
 	}
@@ -161,6 +163,15 @@ func (r *Registry) Register(reg Registration) (*Handle, error) {
 	if ttl <= 0 {
 		ttl = defaultTTL
 	}
+	h, err := r.registerOnce(reg, ttl)
+	if errors.Is(err, ErrRegistryFull) && r.claimSweep() && r.sweep(r.now()) > 0 {
+		h, err = r.registerOnce(reg, ttl)
+	}
+	return h, err
+}
+
+// registerOnce is one attempt of register, under the target shard's lock.
+func (r *Registry) registerOnce(reg nat.Registration, ttl time.Duration) (*handle, error) {
 	now := r.now()
 	mono := r.mono(now)
 	tag := tokenTag(reg.Token)
@@ -176,7 +187,7 @@ func (r *Registry) Register(reg Registration) (*Handle, error) {
 			return nil, ErrConflict
 		}
 		if e.extendAlive(mono, addSat(mono, int64(ttl))) {
-			return &Handle{r: r, e: e}, nil
+			return &handle{r: r, e: e}, nil
 		}
 	}
 	// The shard is copied anyway: leave its dead entries behind, then
@@ -205,7 +216,7 @@ func (r *Registry) Register(reg Registration) (*Handle, error) {
 	e.expiresAt.Store(addSat(mono, int64(ttl)))
 	next[reg.Route] = e
 	sh.m.Store(&next)
-	return &Handle{r: r, e: e}, nil
+	return &handle{r: r, e: e}, nil
 }
 
 // reserve takes one of the MaxEntries places; writers of different shards
@@ -224,35 +235,36 @@ func tokenTag(token protocol.Token) [16]byte {
 	return [16]byte(sum[:16])
 }
 
-// Sweep removes closed and expired entries, at most 4096 per call, and
-// returns how many it removed. The single sweeper calls it.
-func (r *Registry) Sweep(now time.Time) (removed int) {
-	if r == nil {
-		return 0
-	}
+// claimSweep reports whether a full sweep may run now: one per fullSweepGap,
+// the first caller of a gap winning it.
+func (r *Registry) claimSweep() bool {
+	now := r.mono(r.now())
+	last := r.swept.Load()
+	return (last == 0 || now-last >= int64(fullSweepGap)) && r.swept.CompareAndSwap(last, now)
+}
+
+// sweep removes every closed and expired entry and returns how many it
+// removed: Register calls it when the table is full, holding no shard lock.
+func (r *Registry) sweep(now time.Time) (removed int) {
 	mono := r.mono(now)
 	for i := range r.shards {
-		if removed >= sweepBatch {
-			break
-		}
 		sh := &r.shards[i]
-		if !hasDead(sh.load(), mono) {
-			continue
+		if hasDead(sh.load(), mono) {
+			removed += r.sweepShard(sh, mono)
 		}
-		removed += r.sweepShard(sh, mono, sweepBatch-removed)
 	}
 	return removed
 }
 
-// sweepShard removes at most limit dead entries of sh.
-func (r *Registry) sweepShard(sh *shard, mono int64, limit int) int {
+// sweepShard removes the dead entries of sh.
+func (r *Registry) sweepShard(sh *shard, mono int64) int {
 	sh.wmu.Lock()
 	defer sh.wmu.Unlock()
 	cur := sh.load()
 	next := make(map[protocol.RouteID]*entry, len(cur))
 	n := 0
 	for k, v := range cur {
-		if !v.alive(mono) && n < limit {
+		if !v.alive(mono) {
 			n++
 			continue
 		}
@@ -284,7 +296,7 @@ func (r *Registry) Len() int {
 }
 
 // remove deletes e from its shard if it is still there; a concurrent
-// Register or Sweep may have removed it already, and then nothing is
+// register or sweep may have removed it already, and then nothing is
 // counted twice.
 func (r *Registry) remove(e *entry) {
 	sh := &r.shards[e.route[0]%shardCount]
