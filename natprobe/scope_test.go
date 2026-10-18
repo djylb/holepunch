@@ -138,7 +138,14 @@ func TestWildcardRepliesFromProbedAddress(t *testing.T) {
 			t.Fatalf("observer %d at %v: %d replies", o.ID, o.Addr, len(reps))
 		}
 		for _, r := range reps {
-			if r.from.Addr() != o.Addr.Addr() {
+			switch {
+			case r.from.Addr() == o.Addr.Addr():
+			case o.Addr.Addr() != lo4 && s.Stats().SourceRefused > 0:
+				// 127.0.0.2 receives but is no interface address: some
+				// systems (Windows) refuse it as a source, and the reply
+				// leaves from the routed address instead, counted.
+				t.Logf("observer %d at %v: source refused, a reply from %v", o.ID, o.Addr, r.from)
+			default:
 				t.Fatalf("observer %d at %v: a reply from %v", o.ID, o.Addr, r.from)
 			}
 		}

@@ -64,6 +64,12 @@ func TestDstAddr(t *testing.T) {
 					t.Fatalf("destination %v %v, want %v", got, ok, dst.Addr())
 				}
 				if _, _, err := srv.WriteMsgUDPAddrPort([]byte("pong"), AppendSrcAddr(nil, got), from); err != nil {
+					if to != c.to[0] {
+						// 127.0.0.2 receives but is no interface address:
+						// some systems (Windows) refuse it as a source.
+						t.Logf("%v as a source: %v (refused here)", got, err)
+						continue
+					}
 					t.Fatal(err)
 				}
 				_ = cli.SetReadDeadline(time.Now().Add(2 * time.Second))
