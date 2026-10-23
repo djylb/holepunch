@@ -16,6 +16,7 @@ import (
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone/broker"
 	"github.com/djylb/holepunch/standalone/client"
+	"github.com/djylb/holepunch/standalone/internal/testkit"
 	"github.com/djylb/holepunch/standalone/internal/testworld"
 	"github.com/djylb/holepunch/standalone/proto"
 	"github.com/djylb/holepunch/standalone/server"
@@ -89,17 +90,6 @@ func failCode(err error) proto.Code {
 	return ""
 }
 
-func waitFor(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not met in time")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
 // TestOpenServe: a dialer opens a session with a registered host and the
 // two exchange datagrams over the punched path through the residual filter;
 // both see the server's description of the session.
@@ -123,7 +113,7 @@ func TestOpenServe(t *testing.T) {
 			}
 			echo(ctx, s)
 		})
-	waitFor(t, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 
 	dialC := w.Client(w.NATHost(nattest.PortRestricted()), nil)
 	s, err := dialC.Open(context.Background(), client.OpenRequest{HostID: "office", DialerID: "laptop", Metadata: map[string]string{"user": "ann"}, TransportMode: echoMode})
@@ -182,7 +172,7 @@ func TestCloseStuckHandler(t *testing.T) {
 		<-release // ignores its context
 		returned.Store(true)
 	})
-	waitFor(t, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 	dialC := w.Client(w.NATHost(nattest.FullCone()), nil)
 	s, err := dialC.Open(context.Background(), client.OpenRequest{HostID: "office"})
 	if err != nil {
@@ -212,7 +202,7 @@ func TestCloseStuckHandler(t *testing.T) {
 		t.Fatal("Serve did not return after Close")
 	}
 	close(release)
-	waitFor(t, returned.Load)
+	testkit.WaitFor(t, "the released handler to return", returned.Load)
 	if _, err := hostC.Open(context.Background(), client.OpenRequest{HostID: "office"}); !errors.Is(err, client.ErrClosed) {
 		t.Fatalf("Open after Close: %v", err)
 	}
@@ -231,7 +221,7 @@ func TestCloseCancelsHandler(t *testing.T) {
 		close(entered)
 		<-ctx.Done()
 	})
-	waitFor(t, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 	dialC := w.Client(w.NATHost(nattest.FullCone()), nil)
 	s, err := dialC.Open(context.Background(), client.OpenRequest{HostID: "office"})
 	if err != nil {
@@ -279,7 +269,7 @@ func TestServeReregisters(t *testing.T) {
 	rd := &recordingDial{dial: w.Dial(h)}
 	hostC := w.Client(h, func(c *client.Config) { c.Dial = rd.Dial })
 	serve(t, hostC, client.Registration{HostID: "office", TransportMode: echoMode}, func(ctx context.Context, s *client.Session) { echo(ctx, s) })
-	waitFor(t, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 	dialC := w.Client(w.NATHost(nattest.FullCone()), nil)
 	session := func(msg string) {
 		s, err := dialC.Open(context.Background(), client.OpenRequest{HostID: "office", TransportMode: echoMode})
@@ -291,7 +281,7 @@ func TestServeReregisters(t *testing.T) {
 	}
 	session("first") // the host reads its link: the Incoming came through
 	rd.first().Blackhole()
-	waitFor(t, func() bool { return w.Server.Stats().Registered == 2 && len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register again after its link went silent", func() bool { return w.Server.Stats().Registered == 2 && len(w.Broker.Snapshot().Hosts) == 1 })
 	session("again")
 }
 
@@ -317,7 +307,7 @@ func TestServeErrors(t *testing.T) {
 
 	good := w.Client(h, func(c *client.Config) { c.AuthToken = " secret " })
 	serve(t, good, client.Registration{HostID: "office"}, func(context.Context, *client.Session) {})
-	waitFor(t, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 	if err := good.Serve(context.Background(), client.Registration{HostID: "other"}, func(context.Context, *client.Session) {}); !errors.Is(err, client.ErrServing) {
 		t.Fatalf("second Serve: %v", err)
 	}

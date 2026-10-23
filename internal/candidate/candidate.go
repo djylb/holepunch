@@ -40,6 +40,19 @@ func (k Kind) String() string {
 	return "invalid"
 }
 
+// PathKind is the kind of network a pair of kind k runs over as far as the
+// kind tells: lan or overlay for those kinds, public otherwise.
+func (k Kind) PathKind() protocol.PathKind {
+	switch k {
+	case KindLAN:
+		return protocol.PathLAN
+	case KindOverlay:
+		return protocol.PathOverlay
+	default:
+		return protocol.PathPublic
+	}
+}
+
 // Base scores, one tier per kind. Responsive adds respBoost, which lifts any
 // candidate above every non-responsive one. Two different tiers differ by at
 // least 50, more than the 32-point selection hysteresis, and a

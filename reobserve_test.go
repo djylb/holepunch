@@ -225,10 +225,10 @@ func TestAdoptRemap(t *testing.T) {
 			t.Fatalf("%v adopted", a)
 		}
 	}
-	for p := range maxRemapped + 4 {
+	for p := range protocol.MaxDrifted + 4 {
 		w.adoptRemap(netipAP("198.51.100.79", 20000+p))
 	}
-	if n := len(*w.remapped.Load()); n != maxRemapped {
+	if n := len(*w.remapped.Load()); n != protocol.MaxDrifted {
 		t.Fatalf("%d remapped kept", n)
 	}
 }

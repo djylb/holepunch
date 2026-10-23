@@ -4,10 +4,12 @@ import (
 	"context"
 	"net"
 	"testing"
+
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 func BenchmarkParseHeader(b *testing.B) {
-	h := [HeaderSize]byte{'h', 'p', Version, byte(TypePunchGo), 0, 0, 1, 0}
+	h := [HeaderSize]byte{'h', 'p', wiretype.Version, byte(wiretype.PunchGo), 0, 0, 1, 0}
 	for b.Loop() {
 		if _, _, err := ParseHeader(h, nil); err != nil {
 			b.Fatal(err)
@@ -20,7 +22,7 @@ func BenchmarkAppendFrame(b *testing.B) {
 	buf := make([]byte, 0, 512)
 	b.ReportAllocs()
 	for b.Loop() {
-		buf, _ = AppendFrame(buf[:0], Frame{Type: TypeAssist, Payload: payload})
+		buf, _ = AppendFrame(buf[:0], Frame{Type: wiretype.Assist, Payload: payload})
 	}
 }
 
@@ -34,7 +36,7 @@ func BenchmarkControlFrameRoundTrip(b *testing.B) {
 	ctx := context.Background()
 	b.ReportAllocs()
 	for b.Loop() {
-		if err := client.Send(Frame{Type: TypeAssist, Payload: payload}); err != nil {
+		if err := client.Send(Frame{Type: wiretype.Assist, Payload: payload}); err != nil {
 			b.Fatal(err)
 		}
 		if _, err := server.ReadFrame(ctx); err != nil {

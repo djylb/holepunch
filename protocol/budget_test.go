@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 func TestBudgetConstants(t *testing.T) {
@@ -298,7 +298,7 @@ func TestIdentities(t *testing.T) {
 		}
 	}
 	c := DefaultControlSpec()
-	if c.Version != controlwire.Version || !slices.Equal(c.Features, []Feature{"sandwich"}) {
+	if c.Version != wiretype.Version || !slices.Equal(c.Features, []Feature{"sandwich"}) {
 		t.Fatalf("DefaultControlSpec = %+v", c)
 	}
 	// Unknown features (including names no implementation offers) are ignored.
@@ -380,15 +380,20 @@ func TestTraitsPredicates(t *testing.T) {
 }
 
 // TestDependencyRules checks the import rules of this module's packages:
-// protocol → std + internal/controlwire; internal/controlwire → std +
-// internal/life; internal/life and the standalone tool packages (stun,
-// udpsock, hostaddr, clock) → std.
+// protocol → std + internal/wiretype + internal/netaddr;
+// internal/controlwire → std + internal/wiretype + internal/life +
+// internal/faultinject; internal/life → std + internal/trunc;
+// internal/wiretype, internal/trunc, internal/netaddr and the standalone
+// tool packages (stun, udpsock, hostaddr, clock) → std.
 func TestDependencyRules(t *testing.T) {
 	const module = "github.com/djylb/holepunch"
 	allowed := map[string][]string{
-		"protocol":             {module + "/internal/controlwire"},
-		"internal/controlwire": {module + "/internal/life", module + "/internal/faultinject"},
-		"internal/life":        nil,
+		"protocol":             {module + "/internal/wiretype", module + "/internal/netaddr"},
+		"internal/controlwire": {module + "/internal/wiretype", module + "/internal/life", module + "/internal/faultinject"},
+		"internal/wiretype":    nil,
+		"internal/life":        {module + "/internal/trunc"},
+		"internal/trunc":       nil,
+		"internal/netaddr":     nil,
 		"stun":                 nil,
 		"udpsock":              nil,
 		"hostaddr":             nil,
@@ -484,5 +489,22 @@ func TestBackgroundMode(t *testing.T) {
 	}
 	if SessionMode("lazy").Valid() || Advice("retry").Valid() || !Advice("").Valid() || !AdviceRelayOnly.Valid() {
 		t.Error("closed sets")
+	}
+}
+
+func TestClassOfRank(t *testing.T) {
+	for r, want := range map[int]BudgetClass{-1: BudgetLight, 0: BudgetLight, 1: BudgetLight, 2: BudgetBalanced, 3: BudgetHeavy, 4: BudgetExtreme, 9: BudgetExtreme} {
+		if got := ClassOfRank(r); got != want {
+			t.Errorf("ClassOfRank(%d) = %s, want %s", r, got, want)
+		}
+	}
+	for _, c := range []BudgetClass{BudgetLight, BudgetBalanced, BudgetHeavy, BudgetExtreme} {
+		if ClassOfRank(c.Rank()) != c {
+			t.Errorf("%s does not round-trip", c)
+		}
+	}
+	if BudgetHeavy.Min(BudgetBalanced) != BudgetBalanced || BudgetLight.Min(BudgetExtreme) != BudgetLight ||
+		BudgetHeavy.Min(BudgetBackground) != BudgetHeavy || BudgetBackground.Min(BudgetHeavy) != BudgetBackground {
+		t.Error("Min")
 	}
 }

@@ -405,25 +405,24 @@ func TestMemoryBounds(t *testing.T) {
 	defer s.mu.Unlock()
 	st := &s.st
 	u4 := protocol.FamilyUDP4
-	var drift [2][]nat.Observation
+	var drift [2][]nat.Drift
 	for i := range 40 {
-		drift[0] = append(drift[0], nat.Observation{Socket: nat.SocketID(u4, nat.IndexPrimary),
-			Observed: netip.AddrPortFrom(pubI.Addr(), uint16(1000+i)), Changes: 1})
+		drift[0] = append(drift[0], nat.Drift{Family: u4, Observed: netip.AddrPortFrom(pubI.Addr(), uint16(1000+i))})
 	}
 	for range 6 {
 		s.takeDriftLocked(drift)
-		if len(st.pending[1]) > maxQueuedAssists || len(st.drifted) > maxDrifted {
-			t.Fatalf("%d drift targets queued, %d drifted", len(st.pending[1]), len(st.drifted))
+		if len(st.rounds.pending[1]) > maxQueuedAssists || len(st.rounds.drifted) > protocol.MaxDrifted {
+			t.Fatalf("%d drift targets queued, %d drifted", len(st.rounds.pending[1]), len(st.rounds.drifted))
 		}
-		st.pending[1] = nil // what a go does
+		st.rounds.pending[1] = nil // what a go does
 	}
-	if len(st.drifted) != maxDrifted {
-		t.Fatalf("%d drifted", len(st.drifted))
+	if len(st.rounds.drifted) != protocol.MaxDrifted {
+		t.Fatalf("%d drifted", len(st.rounds.drifted))
 	}
-	st.pair.SamePublicIP = map[protocol.Family]bool{u4: true}
-	st.portmap[1] = make([]protocol.Assist, maxQueuedAssists)
+	st.adm.pair.SamePublicIP = map[protocol.Family]bool{u4: true}
+	st.rounds.portmap[1] = make([]protocol.Assist, maxQueuedAssists)
 	s.latePortMapLocked(0, u4, protocol.PortMapReport{External: mustAP("100.64.1.1:4000")}, 0)
-	if len(st.portmap[1]) != maxQueuedAssists {
-		t.Fatalf("%d port mappings queued", len(st.portmap[1]))
+	if len(st.rounds.portmap[1]) != maxQueuedAssists {
+		t.Fatalf("%d port mappings queued", len(st.rounds.portmap[1]))
 	}
 }

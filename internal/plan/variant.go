@@ -1,15 +1,14 @@
 package plan
 
-import "github.com/djylb/holepunch/protocol"
+import (
+	api "github.com/djylb/holepunch/plan"
+	"github.com/djylb/holepunch/protocol"
+)
 
-// VariantID identifies a round template within the whole catalogue (at most
-// 32, so StrategyMemory can index scores by it).
-// The variant's name travels on the wire as RoundPlan.variant.
-type VariantID uint8
-
-// The catalogue ids. 0 is invalid; each ladder is a fixed sequence of these.
+// The catalogue ids (plan.VariantID, at most 32, so StrategyMemory can index
+// scores by them). 0 is invalid; each ladder is a fixed sequence of these.
 const (
-	VInvalid VariantID = iota
+	VInvalid api.VariantID = iota
 
 	vEasy1
 	vEasy2
@@ -75,7 +74,7 @@ const (
 
 // backgroundLadder is pdf_x_rnd in a Background session: the cheap round,
 // then the slow birthday instead of the bursty one-sided birthday rounds.
-func backgroundLadder() []VariantID { return []VariantID{vPDFRnd1, vPDFRndSlow} }
+func backgroundLadder() []api.VariantID { return []api.VariantID{vPDFRnd1, vPDFRndSlow} }
 
 // birthdaySide marks which canonical side of a birthday variant performs the
 // gated spray, so Round can check that side's opensBirthday.
@@ -126,7 +125,7 @@ type sideTmpl struct {
 
 // variant is one round template.
 type variant struct {
-	id       VariantID
+	id       api.VariantID
 	name     string
 	budget   protocol.BudgetClass // template ceiling class
 	windowMs uint16               // base window; extended by extendWindow
@@ -252,30 +251,30 @@ func slow(s sideTmpl, newPerSec, openPerSec uint16) sideTmpl {
 
 // ladderFor returns the ladder (ids, cheap to expensive) for a pair class.
 // v6_direct reuses the first three easy rounds.
-func ladderFor(pairClass string) []VariantID {
+func ladderFor(pairClass string) []api.VariantID {
 	switch pairClass {
 	case PairEasy:
-		return []VariantID{vEasy1, vEasy2, vEasy3, vEasy4, vEasy5}
+		return []api.VariantID{vEasy1, vEasy2, vEasy3, vEasy4, vEasy5}
 	case PairV6Direct:
-		return []VariantID{vEasy1, vEasy2, vEasy3}
+		return []api.VariantID{vEasy1, vEasy2, vEasy3}
 	case PairOpenEDM:
-		return []VariantID{vOpenEDM1, vOpenEDM2, vOpenEDM3, vOpenEDM4}
+		return []api.VariantID{vOpenEDM1, vOpenEDM2, vOpenEDM3, vOpenEDM4}
 	case PairPDFSeq:
-		return []VariantID{vPDFSeq1, vPDFSeq2, vPDFSeq3, vPDFSeq4, vPDFSeq5}
+		return []api.VariantID{vPDFSeq1, vPDFSeq2, vPDFSeq3, vPDFSeq4, vPDFSeq5}
 	case PairPDFRnd:
-		return []VariantID{vPDFRnd1, vPDFRnd2, vPDFRnd3, vPDFRnd4}
+		return []api.VariantID{vPDFRnd1, vPDFRnd2, vPDFRnd3, vPDFRnd4}
 	case PairSeqSeq:
-		return []VariantID{vSeqSeq1, vSeqSeq2, vSeqSeq3}
+		return []api.VariantID{vSeqSeq1, vSeqSeq2, vSeqSeq3}
 	case PairSeqRnd:
-		return []VariantID{vSeqRnd1, vSeqRnd2, vSeqRnd3}
+		return []api.VariantID{vSeqRnd1, vSeqRnd2, vSeqRnd3}
 	case PairRndRnd:
-		return []VariantID{vRndRnd1, vRndRnd2, vRndRnd3}
+		return []api.VariantID{vRndRnd1, vRndRnd2, vRndRnd3}
 	case PairPDFPres:
 		// The fresh rounds first; the birthday rungs stay behind them for a
 		// NAT that did not keep the drawn ports after all.
-		return []VariantID{vPres1, vPres2, vPDFRnd2, vPDFRnd3, vPDFRnd4}
+		return []api.VariantID{vPres1, vPres2, vPDFRnd2, vPDFRnd3, vPDFRnd4}
 	case PairPresPres:
-		return []VariantID{vPres1, vPres2, vRndRnd2, vRndRnd3}
+		return []api.VariantID{vPres1, vPres2, vRndRnd2, vRndRnd3}
 	}
 	return nil
 }
@@ -289,7 +288,7 @@ var variants = newCatalogue()
 
 // variantOf returns the variant id, and false for an id outside the
 // catalogue.
-func variantOf(id VariantID) (variant, bool) {
+func variantOf(id api.VariantID) (variant, bool) {
 	if id == VInvalid || int(id) >= len(variants) {
 		return variant{}, false
 	}
@@ -304,7 +303,7 @@ func variantOf(id VariantID) (variant, bool) {
 func newCatalogue() [numVariants]variant {
 	const L, B, H, X, BG = protocol.BudgetLight, protocol.BudgetBalanced, protocol.BudgetHeavy, protocol.BudgetExtreme, protocol.BudgetBackground
 	const both, send, recv = protocol.SideBoth, protocol.SideSender, protocol.SideReceiver
-	v := func(id VariantID, name string, bc protocol.BudgetClass, win uint16, a, b sideTmpl) variant {
+	v := func(id api.VariantID, name string, bc protocol.BudgetClass, win uint16, a, b sideTmpl) variant {
 		return variant{id: id, name: name, budget: bc, windowMs: win, a: a, b: b}
 	}
 	var m [numVariants]variant
@@ -433,7 +432,7 @@ func newCatalogue() [numVariants]variant {
 	}
 
 	// Birthday annotations.
-	annotate := func(id VariantID, tier protocol.BirthdayTier, extend bool, spr birthdaySide) {
+	annotate := func(id api.VariantID, tier protocol.BirthdayTier, extend bool, spr birthdaySide) {
 		m[id].reqTier = tier
 		m[id].extendWindow = extend
 		m[id].sprayer = spr
@@ -471,14 +470,9 @@ func newCatalogue() [numVariants]variant {
 	return m
 }
 
-// variantClasses returns the per-variant BudgetClass for a ladder, used by
-// Classification.Budgets.
-func variantClasses(ladder []VariantID) map[VariantID]protocol.BudgetClass {
-	out := make(map[VariantID]protocol.BudgetClass, len(ladder))
-	for _, id := range ladder {
-		if vr, ok := variantOf(id); ok {
-			out[id] = vr.budget
-		}
-	}
-	return out
+// VariantClass is the budget class of variant id, and whether the
+// catalogue has it.
+func VariantClass(id api.VariantID) (protocol.BudgetClass, bool) {
+	vr, ok := variantOf(id)
+	return vr.budget, ok
 }

@@ -12,24 +12,7 @@ import (
 // written, nor anything it shares: a slice, map or pointed-to value that
 // changes is copied first, and a truncated list keeps no spare capacity, so
 // that appending to the copy cannot write the receiver's elements either.
-const (
-	maxDelayMs       = 2000
-	maxSendDelayMs   = 3000
-	maxRoundsMax     = 6
-	maxStages        = 8
-	maxStageTargets  = 16
-	maxSteps         = 3
-	maxSpanCount     = 4096
-	maxRepeats       = 8
-	minLowTTL        = 2
-	maxLowTTL        = 64
-	maxSideSockets   = 256
-	maxAssistTargets = 16
-	maxSiblings      = 2
-	maxProgressMap   = 16
-	maxAssistMeta    = 8
-	maxDropKeys      = 16
-)
+// The ranges are in limits.go.
 
 // Normalize clamps the wire range and the timeouts, the sibling count and the
 // policy (budget to CeilingBudget, low-TTL hops to [2,32]).
@@ -37,8 +20,8 @@ func (m PunchStart) Normalize() (PunchStart, bool) {
 	var c bool
 	m.Wire, c = m.Wire.Normalize()
 	c = normalizeTimeouts(&m.Timeouts) || c
-	if m.Probe.Siblings > maxSiblings {
-		m.Probe.Siblings, c = maxSiblings, true
+	if m.Probe.Siblings > MaxSiblings {
+		m.Probe.Siblings, c = MaxSiblings, true
 	}
 	if m.Policy != nil {
 		p := *m.Policy
@@ -61,8 +44,8 @@ func (m Pong) Normalize() (Pong, bool) { return m, false }
 
 // Normalize clamps caps.max_sockets to 256.
 func (m ProbeReport) Normalize() (ProbeReport, bool) {
-	if m.Caps.MaxSockets > maxSideSockets {
-		m.Caps.MaxSockets = maxSideSockets
+	if m.Caps.MaxSockets > MaxSideSockets {
+		m.Caps.MaxSockets = MaxSideSockets
 		return m, true
 	}
 	return m, false
@@ -84,8 +67,8 @@ func (m PunchReady) Normalize() (PunchReady, bool) { return m, false }
 // no plan and is never a background round — and the plan.
 func (m PunchGo) Normalize() (PunchGo, bool) {
 	c := false
-	if m.DelayMs > maxDelayMs {
-		m.DelayMs, c = maxDelayMs, true
+	if m.DelayMs > MaxDelayMs {
+		m.DelayMs, c = MaxDelayMs, true
 	}
 	limit := uint16(maxWindowMs)
 	if m.Plan != nil {
@@ -116,9 +99,9 @@ func (m Assist) Normalize() (Assist, bool) {
 	if len(m.Targets) > maxAssistTargets {
 		m.Targets, c = m.Targets[:maxAssistTargets:maxAssistTargets], true
 	}
-	if w := m.Window; w != nil && w.Hi > w.Lo && w.Hi-w.Lo > maxPortWindowWidth {
+	if w := m.Window; w != nil && w.Hi > w.Lo && w.Hi-w.Lo > MaxPortWindowWidth {
 		win := *w
-		win.Hi = win.Lo + maxPortWindowWidth
+		win.Hi = win.Lo + MaxPortWindowWidth
 		m.Window, c = &win, true
 	}
 	var mc bool
@@ -165,7 +148,7 @@ func (r RoundPlan) Normalize() (RoundPlan, bool) {
 	}
 	limits, ok := r.Budget.Limits()
 	if !ok {
-		limits = ClassLimits{MaxPackets: CeilingBudget().MaxPackets, MaxPPS: CeilingBudget().MaxPPS, MaxDistinctPorts: CeilingBudget().MaxDistinctTargets, MaxSockets: maxSideSockets}
+		limits = ClassLimits{MaxPackets: CeilingBudget().MaxPackets, MaxPPS: CeilingBudget().MaxPPS, MaxDistinctPorts: CeilingBudget().MaxDistinctTargets, MaxSockets: MaxSideSockets}
 	}
 	r.Sides = slices.Clone(r.Sides)
 	for i := range r.Sides {
@@ -177,15 +160,15 @@ func (r RoundPlan) Normalize() (RoundPlan, bool) {
 }
 
 func (s FamilySide) normalize(l ClassLimits) (FamilySide, bool) {
-	c := clampTo(&s.SendDelayMs, maxSendDelayMs)
-	c = clampTo(&s.Sockets, min(maxSideSockets, l.MaxSockets)) || c
+	c := clampTo(&s.SendDelayMs, MaxSendDelayMs)
+	c = clampTo(&s.Sockets, min(MaxSideSockets, l.MaxSockets)) || c
 	c = clampTo(&s.MaxPackets, min(CeilingBudget().MaxPackets, l.MaxPackets)) || c
 	c = clampTo(&s.MaxPPS, min(CeilingBudget().MaxPPS, l.MaxPPS)) || c
 	c = clampTo(&s.MaxNewPerSec, CeilingBudget().MaxNewPerSec) || c
 	c = clampTo(&s.MaxDistinctPorts, l.MaxDistinctPorts) || c
 	c = clampTo(&s.OpenPerSec, CeilingBudget().MaxNewPerSec) || c
-	if len(s.Stages) > maxStages {
-		s.Stages, c = s.Stages[:maxStages], true
+	if len(s.Stages) > MaxStages {
+		s.Stages, c = s.Stages[:MaxStages], true
 	}
 	s.Stages = slices.Clone(s.Stages)
 	for i := range s.Stages {
@@ -193,7 +176,7 @@ func (s FamilySide) normalize(l ClassLimits) (FamilySide, bool) {
 		s.Stages[i], sc = s.Stages[i].normalize()
 		c = sc || c
 	}
-	out, fc := s.clampFresh(min(maxSideSockets, int(l.MaxSockets)))
+	out, fc := s.clampFresh(min(MaxSideSockets, int(l.MaxSockets)))
 	return out, fc || c
 }
 
@@ -224,20 +207,20 @@ func (s FamilySide) clampFresh(limit int) (FamilySide, bool) {
 
 func (s Stage) normalize() (Stage, bool) {
 	c := false
-	if len(s.Targets) > maxStageTargets {
-		s.Targets, c = s.Targets[:maxStageTargets:maxStageTargets], true
+	if len(s.Targets) > MaxStageTargets {
+		s.Targets, c = s.Targets[:MaxStageTargets:MaxStageTargets], true
 	}
-	if len(s.Steps) > maxSteps {
-		s.Steps, c = s.Steps[:maxSteps:maxSteps], true
+	if len(s.Steps) > MaxSteps {
+		s.Steps, c = s.Steps[:MaxSteps:MaxSteps], true
 	}
-	c = clampTo(&s.Span, maxSpanCount) || c
-	c = clampTo(&s.Count, maxSpanCount) || c
-	c = clampTo(&s.Repeats, maxRepeats) || c
+	c = clampTo(&s.Span, MaxSpanCount) || c
+	c = clampTo(&s.Count, MaxSpanCount) || c
+	c = clampTo(&s.Repeats, MaxRepeats) || c
 	switch {
 	case s.TTL == 1:
-		s.TTL, c = minLowTTL, true
-	case s.TTL > maxLowTTL:
-		s.TTL, c = maxLowTTL, true
+		s.TTL, c = MinLowTTL, true
+	case s.TTL > MaxLowTTL:
+		s.TTL, c = MaxLowTTL, true
 	}
 	return s, c
 }

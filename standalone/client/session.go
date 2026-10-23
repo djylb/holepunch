@@ -1,7 +1,6 @@
 package client
 
 import (
-	"maps"
 	"strings"
 
 	"github.com/djylb/holepunch"
@@ -36,16 +35,7 @@ func (s *Session) ID() string { return s.info.SessionID }
 func (s *Session) Role() protocol.Role { return s.role }
 
 // Info returns the server's description of the session.
-func (s *Session) Info() proto.SessionInfo {
-	info := s.info
-	info.HostMetadata = maps.Clone(info.HostMetadata)
-	info.DialerMetadata = maps.Clone(info.DialerMetadata)
-	info.Policy.Targets = append([]string(nil), info.Policy.Targets...)
-	if len(info.Policy.Targets) == 0 {
-		info.Policy.Targets = nil
-	}
-	return info
-}
+func (s *Session) Info() proto.SessionInfo { return s.info.Clone() }
 
 // Result returns the punch's result: addresses, transport decision and
 // peer data, keepalive advice.

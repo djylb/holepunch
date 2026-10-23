@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
-	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -132,7 +132,7 @@ collect:
 func stunPick(addrs []netip.Addr, port uint16) (v4, v6 netip.AddrPort) {
 	for _, a := range addrs {
 		a = a.Unmap().WithZone("")
-		if nat.ScopeOf(a) != nat.ScopeGlobal {
+		if !netaddr.Public(a) {
 			continue
 		}
 		switch {

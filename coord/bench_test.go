@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/coord/internal/faultconn"
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/faultconn"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -65,7 +66,7 @@ func park(tb testing.TB, c *Coordinator, n int) []parkedSession {
 }
 
 func ctxTB(tb testing.TB) context.Context {
-	c, cancel := context.WithTimeout(context.Background(), waitLimit)
+	c, cancel := context.WithTimeout(context.Background(), testkit.WaitBound(tb))
 	tb.Cleanup(cancel)
 	return c
 }
@@ -75,7 +76,7 @@ func ctxTB(tb testing.TB) context.Context {
 func serverReads(ps []parkedSession) (reads, deadlines int64) {
 	for _, p := range ps {
 		for _, fc := range p.srv {
-			reads += fc.Reads()
+			reads += fc.ReadReturns()
 			deadlines += fc.ReadDeadlines()
 		}
 	}

@@ -1,28 +1,14 @@
 package holepunch
 
 import (
-	"context"
 	"net/netip"
 	"slices"
 	"sync/atomic"
-	"time"
 
-	"github.com/djylb/holepunch/internal/controlwire"
-	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/protocol"
-)
-
-// Admission limits.
-const (
-	maxLANTargets        = 4
-	lanPacketsPerRound   = 2
-	unverifiedTargets    = 4
-	unverifiedPacketsMax = 8
-	maxRemapped          = 16 // the server pushes at most 16 drifted mappings a session
-	prepareLimit         = 2 * time.Second
-	clockSkewWarn        = 300 * time.Second
 )
 
 // worker is one family's punching state, built from probe_summary: the
@@ -64,30 +50,101 @@ type worker struct {
 // packets per round), or, in a family the server could not verify, to the
 // peer's self-reported global addresses (direct only, at most eight packets per
 // round). Special addresses never pass, nor do this host's own addresses unless
-// the peer runs on this host (sameHost); a private verified address is a direct
-// target only; a low or sensitive port only when it is exactly a known peer
-// endpoint.
+// the peer runs on this host (sameHost); a target of any other kind than
+// Direct passes admitIP; a low or sensitive port only when it is exactly a
+// known peer endpoint.
 func (w *worker) admit(rt *runtime, ap netip.AddrPort, kind protocol.StageKind) (ok bool, perTarget int) {
 	ap = netaddr.Canon(ap)
+	if kind != protocol.StageDirect {
+		return ap.Port() != 0 && w.admitIP(rt, ap.Addr()), 0
+	}
 	a := ap.Addr()
-	if !w.fam.Matches(a) || netaddr.Unusable(a) || ap.Port() == 0 || rt.isLocal(a) && !w.sameHost(rt, ap, kind) {
+	if !w.fam.UsableTarget(ap) || rt.isLocal(a) && !w.sameHost(rt, ap) {
 		return false, 0
 	}
-	if kind == protocol.StageDirect && (ap.Port() < 1024 || plan.SensitivePort(ap.Port())) && !w.endpoints[ap] && !w.isRemapped(ap) {
+	if (ap.Port() < 1024 || plan.SensitivePort(ap.Port())) && !w.endpoints[ap] && !w.isRemapped(ap) {
 		return false, 0
 	}
 	switch {
 	case w.verifiedIP(a):
-		if netaddr.Private(a) && kind != protocol.StageDirect {
-			return false, 0
-		}
 		return true, 0
-	case (w.lan[a] || w.overlay[a]) && kind == protocol.StageDirect:
-		return true, lanPacketsPerRound
-	case w.unverified && w.reported[a] && kind == protocol.StageDirect:
-		return true, unverifiedPacketsMax
+	case w.lan[a] || w.overlay[a]:
+		return true, protocol.LANRepeats
+	case w.unverified && w.reported[a]:
+		return true, protocol.UnverifiedRepeats
 	}
 	return false, 0
+}
+
+// admitIP is the admission of an IP the side sprays ports of — a predict,
+// random, fresh or fresh_peer stage's, or a pushed port window's: a verified
+// IP of the peer that is not private and not one of this host's.
+func (w *worker) admitIP(rt *runtime, a netip.Addr) bool {
+	a = a.Unmap().WithZone("")
+	return w.fam.Matches(a) && !netaddr.Unusable(a) && !rt.isLocal(a) && w.verifiedIP(a) && !netaddr.Private(a)
+}
+
+// stageAdmission is what admission leaves of one stage of a side.
+type stageAdmission struct {
+	ip       netip.Addr       // the admitted IP of a predict, random, fresh_peer or fresh stage; invalid when it has none
+	targets  []admittedTarget // the admitted targets of a Direct or fresh stage
+	rejected int              // targets and IPs refused
+}
+
+// admittedTarget is an admitted Direct target: its canonical address, its
+// index in the stage and its per-round packet cap (0: none).
+type admittedTarget struct {
+	to    netip.AddrPort
+	index int
+	per   int
+}
+
+// admitStage applies admission to stage st of side: the one rule behind
+// punch_ready.rejected and round_result.rejected. A reply-only side initiates
+// nothing, so nothing of it is admitted or refused. A Direct stage keeps the
+// targets admit passes; a predict, random or fresh_peer stage needs its IP
+// to pass admitIP; a fresh stage keeps the targets admit passes and needs
+// its IP, when set, to pass admitIP, or it sends nothing. Under the
+// NoPrediction ablation and in a family the server could not verify, the
+// stages that predict where the peer's mappings will be — predict, random,
+// fresh and fresh_peer — are refused whole, each counting once.
+func (w *worker) admitStage(rt *runtime, side protocol.FamilySide, st protocol.Stage) stageAdmission {
+	var adm stageAdmission
+	if side.Role == protocol.SideReplyOnly {
+		return adm
+	}
+	direct := func() {
+		for i, t := range st.Targets {
+			if ok, per := w.admit(rt, t, protocol.StageDirect); ok {
+				adm.targets = append(adm.targets, admittedTarget{to: netaddr.Canon(t), index: i, per: per})
+			} else {
+				adm.rejected++
+			}
+		}
+	}
+	switch st.Kind {
+	case protocol.StageDirect:
+		direct()
+	case protocol.StagePredict, protocol.StageRandom, protocol.StageFreshPeer, protocol.StageFresh:
+		if rt.abl.NoPrediction || w.unverified {
+			adm.rejected = 1
+			return adm
+		}
+		if st.Kind == protocol.StageFresh {
+			direct()
+			if !st.IP.IsValid() {
+				return adm
+			}
+		}
+		if w.admitIP(rt, st.IP) {
+			adm.ip = st.IP.Unmap().WithZone("")
+		} else {
+			adm.targets = nil
+			adm.rejected++
+		}
+	case protocol.StageReplyOnly:
+	}
+	return adm
 }
 
 // verifiedIP reports whether the server verified a as an IP of the peer: in
@@ -115,10 +172,10 @@ func (w *worker) isRemapped(ap netip.AddrPort) bool {
 // observed it in natprobe and the peer echoed its cookie, as for the
 // summary's endpoints. A new IP is taken only when it is global and not
 // private; a drifted port on an IP the summary verified is taken as it is.
-// At most maxRemapped are kept.
+// At most protocol.MaxDrifted are kept.
 func (w *worker) adoptRemap(ap netip.AddrPort) {
 	a := ap.Addr()
-	if !w.verified[a] && (!a.IsGlobalUnicast() || netaddr.Private(a)) {
+	if !w.verified[a] && !netaddr.Public(a) {
 		return
 	}
 	for {
@@ -127,7 +184,7 @@ func (w *worker) adoptRemap(ap netip.AddrPort) {
 		if cur != nil {
 			list = *cur
 		}
-		if len(list) >= maxRemapped || slices.Contains(list, ap) {
+		if len(list) >= protocol.MaxDrifted || slices.Contains(list, ap) {
 			return
 		}
 		next := append(slices.Clip(list), ap)
@@ -137,13 +194,26 @@ func (w *worker) adoptRemap(ap netip.AddrPort) {
 	}
 }
 
-// sameHost reports whether a target on one of this host's addresses is the
-// peer itself, running on this host: a LAN
-// address of the peer, a Direct target, at a port no socket of this session
-// holds. The port rule and the role check keep the session from punching
-// itself.
-func (w *worker) sameHost(rt *runtime, ap netip.AddrPort, kind protocol.StageKind) bool {
-	return kind == protocol.StageDirect && w.lan[ap.Addr()] && !rt.socks.ownsPort(w.fam, ap.Port())
+// sameHost reports whether a Direct target on one of this host's addresses
+// is the peer itself, running on this host: a LAN address of the peer at a
+// port no socket of this session holds. The port rule and the role check
+// keep the session from punching itself.
+func (w *worker) sameHost(rt *runtime, ap netip.AddrPort) bool {
+	return w.lan[ap.Addr()] && !rt.socks.ownsPort(w.fam, ap.Port())
+}
+
+// addrKind is the candidate kind k of a pair toward the peer's address a,
+// as the summary's addresses refine it: overlay toward one of the peer's
+// overlay addresses, lan toward one of its LAN addresses unless k says
+// overlay.
+func (w *worker) addrKind(a netip.Addr, k candidate.Kind) candidate.Kind {
+	switch {
+	case w.overlay[a]:
+		return candidate.KindOverlay
+	case w.lan[a] && k != candidate.KindOverlay:
+		return candidate.KindLAN
+	}
+	return k
 }
 
 // isLocal reports whether a is one of this host's addresses.
@@ -188,15 +258,15 @@ func newWorker(rt *runtime, fs *famState, sum *protocol.ProbeSummary) *worker {
 		}
 		switch {
 		case e.Source == protocol.EndpointOverlay:
-			if overlay && len(w.overlay) < maxOverlayAddrs {
+			if overlay && len(w.overlay) < protocol.MaxOverlayTargets {
 				w.overlay[a] = true
 			}
 		case e.Verified:
 			w.verified[a] = true
 			w.allow[ap.Port()] = struct{}{}
-		case e.Source == protocol.EndpointLAN && sameLAN && len(w.lan) < maxLANTargets && netaddr.Private(a):
+		case e.Source == protocol.EndpointLAN && sameLAN && len(w.lan) < protocol.MaxLANTargets && netaddr.Private(a):
 			w.lan[a] = true
-		case w.unverified && a.IsGlobalUnicast() && !netaddr.Private(a) && len(w.reported) < unverifiedTargets:
+		case w.unverified && netaddr.Public(a) && len(w.reported) < protocol.MaxReportedIPs:
 			w.reported[a] = true
 		}
 	}
@@ -211,171 +281,6 @@ func newWorker(rt *runtime, fs *famState, sum *protocol.ProbeSummary) *worker {
 func (w *worker) admitUpstream(rt *runtime, ap netip.AddrPort) bool {
 	ap = netaddr.Canon(ap)
 	a := ap.Addr()
-	return w.samePublic && w.fam.Matches(a) && netaddr.Private(a) && !netaddr.Unusable(a) &&
+	return w.samePublic && w.fam.UsableTarget(ap) && netaddr.Private(a) &&
 		ap.Port() >= 1024 && !plan.SensitivePort(ap.Port()) && !rt.isLocal(a)
-}
-
-// prepare handles probe_summary, from the summary wait to the go wait: it
-// applies the tighter timeouts
-// and the session budget, builds a worker per shared family, pre-binds the
-// first round's sockets, admits its targets and writes punch_ready — or
-// punch_result{no_common_family} when no family is left.
-func (rt *runtime) prepare(sum stamped[protocol.ProbeSummary]) error {
-	s, clamped := sum.msg.Normalize()
-	rt.summary, rt.summaryAt = s, sum.at
-	rt.timing.summaryWait = sum.at.Sub(rt.startAt) - rt.timing.probe
-	rt.timeouts = s.Timeouts.Within(rt.start.Timeouts)
-	rt.computeWaits()
-	rt.transport = s.Transport
-	var startBudget, localBudget protocol.Budget
-	if rt.start.Policy != nil {
-		startBudget = rt.start.Policy.Budget
-	}
-	if rt.opts.Policy != nil {
-		localBudget = rt.opts.Policy.Budget
-	}
-	rt.sessBudget = protocol.TightenBudget(startBudget, s.Plan.Budget, localBudget)
-	rt.sender.setBudget(rt.sessBudget)
-	rt.socks.setLimit(int(rt.sessBudget.MaxSockets))
-	rt.phases.note(stageSummaryReceived)
-	rt.progress(progressEvent{stage: stageSummaryReceived, status: protocol.StatusInfo})
-
-	for _, f := range s.Pair.SharedFamilies {
-		if s.Pair.Unverified[f] {
-			rt.addWarn(protocol.WarnUnverifiedTargets)
-		}
-	}
-	if off, lim := s.Pair.ClockOffsetMs[rt.role], clockSkewWarn.Milliseconds(); off > lim || off < -lim {
-		rt.addWarn(protocol.WarnClockSkew)
-	}
-	for _, f := range s.Pair.SharedFamilies {
-		fs := rt.fam(f)
-		if fs.primary == nil || !fs.probed && !s.Pair.Unverified[f] {
-			continue
-		}
-		fs.worker = newWorker(rt, fs, &s)
-		rt.workers = append(rt.workers, fs.worker)
-	}
-	if len(rt.workers) == 0 {
-		return fail(protocol.ReasonNoCommonFamily, "", nil)
-	}
-
-	r1, normalized := s.Plan.Round1.Normalize()
-	r1, tightened := r1.ClampTo(rt.sessBudget)
-	clamped = clamped || normalized || tightened
-	rt.pg = life.New(rt.g.Context())
-	rt.startPunching()
-
-	var fams []protocol.FamilyReady
-	for _, side := range r1.Sides {
-		w := rt.fam(side.Family).worker
-		if w == nil {
-			continue
-		}
-		rejected := rt.countRejected(w, side)
-		socks, _ := rt.socks.roundSockets(rt.g.Context(), w.primary, socketsBeforeFiring(side), roundPurpose(side))
-		fr := protocol.FamilyReady{Family: side.Family, Sockets: uint16(len(socks)), Clamped: clamped, Rejected: uint16(min(rejected, 0xFFFF))}
-		if w.fs.mapping != nil {
-			fr.PortMap = w.fs.mapping.takeReport()
-		}
-		fams = append(fams, fr)
-	}
-	if len(fams) == 0 {
-		return fail(protocol.ReasonNoCommonFamily, "round1", nil)
-	}
-	for _, w := range rt.workers {
-		if s.Pair.SamePublicIP[w.fam] && w.fs.prober.Load() != nil {
-			rt.startHairpin(w)
-		}
-	}
-	now := rt.clk.Now()
-	if now.Sub(sum.at) > prepareLimit {
-		return fail(protocol.ReasonInternal, "prepare_timeout", nil)
-	}
-	for _, w := range rt.workers {
-		rt.phases.advanceFamily(w.fam, protocol.PhasePlanned, "summary_received", now)
-	}
-	summaryAt := sum.at
-	ready := protocol.PunchReady{SessionID: rt.start.SessionID, Role: rt.role, Families: fams}
-	if err := rt.ctl.sendBuilt(controlwire.TypePunchReady, func(at time.Time) protocol.Message {
-		r := ready
-		r.ElapsedMs = elapsedMs(summaryAt, at)
-		return r
-	}); err != nil {
-		return rt.ctl.sendFailure("punch_ready", err)
-	}
-	rt.readyAt = rt.clk.Now()
-	rt.phases.advance(protocol.PhaseReady, stageReadySent, rt.readyAt)
-	rt.progress(progressEvent{stage: stageReadySent, status: protocol.StatusInfo})
-	return nil
-}
-
-// countRejected counts the targets of a side that admission refuses.
-func (rt *runtime) countRejected(w *worker, side protocol.FamilySide) int {
-	n := 0
-	for _, st := range side.Stages {
-		switch st.Kind {
-		case protocol.StageDirect:
-			for _, t := range st.Targets {
-				if ok, _ := w.admit(rt, t, st.Kind); !ok {
-					n++
-				}
-			}
-		case protocol.StagePredict, protocol.StageRandom, protocol.StageFreshPeer:
-			if ok, _ := w.admit(rt, netip.AddrPortFrom(st.IP, 1024), st.Kind); !ok {
-				n++
-			}
-		case protocol.StageFresh:
-			for _, t := range st.Targets {
-				if ok, _ := w.admit(rt, t, protocol.StageDirect); !ok {
-					n++
-				}
-			}
-			if ok, _ := w.admit(rt, netip.AddrPortFrom(st.IP, 1024), st.Kind); st.IP.IsValid() && !ok {
-				n++
-			}
-		}
-	}
-	return n
-}
-
-// roundPurpose names the extra sockets of a side: warmup when they pre-open
-// mappings with a low TTL, birthday otherwise.
-func roundPurpose(side protocol.FamilySide) string {
-	for _, st := range side.Stages {
-		if st.TTL > 0 {
-			return PurposeWarmup
-		}
-	}
-	return PurposeBirthday
-}
-
-// sandwichOK reports whether this session negotiated the sandwich feature
-// and may run it.
-func (rt *runtime) sandwichOK() bool {
-	if rt.abl.NoSandwich {
-		return false
-	}
-	for _, f := range rt.features {
-		if f == protocol.FeatureSandwich {
-			return true
-		}
-	}
-	return false
-}
-
-// startHairpin runs the hairpin self-test of a family behind the same public
-// IP as its peer. It runs in the punching group, so the handover
-// ends it before the winning socket changes hands.
-func (rt *runtime) startHairpin(w *worker) {
-	pr := w.fs.prober.Load()
-	rt.pg.Go("hairpin:"+string(w.fam), func(ctx context.Context) {
-		v := pr.Hairpin(ctx)
-		w.hairpinOK.Store(v == protocol.TriTrue)
-		status := protocol.StatusOK
-		if v != protocol.TriTrue {
-			status = protocol.StatusFail
-		}
-		rt.progress(progressEvent{stage: stageHairpinResult, status: status, detail: v.String(), family: w.fam})
-	})
 }

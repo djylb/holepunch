@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"slices"
 
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -166,7 +167,7 @@ func classifyMapping(tr *protocol.Traits, samples []sample, xs []Row, secondVari
 
 // classifyFilteringLocked applies the filtering rules to the primary
 // socket's evidence at observers of the classification scope.
-func (t *ObsTable) classifyFilteringLocked(tr *protocol.Traits, p SocketMeta, scope Scope) {
+func (t *ObsTable) classifyFilteringLocked(tr *protocol.Traits, p SocketMeta, scope netaddr.Scope) {
 	var ed, es, ad, as int
 	for _, f := range t.filters {
 		if f.Socket != p.ID {
@@ -197,30 +198,30 @@ func (t *ObsTable) classifyFilteringLocked(tr *protocol.Traits, p SocketMeta, sc
 
 // classScopeLocked is global when any main-group observer is global,
 // otherwise private when any is private (a LAN-only deployment), else global.
-func (t *ObsTable) classScopeLocked() Scope {
+func (t *ObsTable) classScopeLocked() netaddr.Scope {
 	private := false
 	for _, o := range t.observers {
 		if o.Alt {
 			continue
 		}
 		switch o.Scope {
-		case ScopeGlobal:
-			return ScopeGlobal
-		case ScopePrivate:
+		case netaddr.ScopeGlobal:
+			return netaddr.ScopeGlobal
+		case netaddr.ScopePrivate:
 			private = true
-		case ScopeNone:
+		case netaddr.ScopeNone:
 			// An observer without a usable address decides nothing.
 		}
 	}
 	if private {
-		return ScopePrivate
+		return netaddr.ScopePrivate
 	}
-	return ScopeGlobal
+	return netaddr.ScopeGlobal
 }
 
 // firstValuesLocked returns, for socket sock, the first value each main-group
 // observer of the scope saw, ordered by first send seq (ties by observer id).
-func (t *ObsTable) firstValuesLocked(sock uint8, scope Scope) []sample {
+func (t *ObsTable) firstValuesLocked(sock uint8, scope netaddr.Scope) []sample {
 	var out []sample
 	for _, o := range t.observers {
 		if o.Alt || o.Scope != scope {
@@ -261,7 +262,7 @@ func (t *ObsTable) firstValueLocked(k PointKey) (Row, bool) {
 // anyDriftLocked reports and which must not turn a consistent EIM into ADM or
 // MultiExit. The first value is the one the classification of the main group
 // uses too (firstValuesLocked).
-func (t *ObsTable) crossRowsLocked(sock uint8, scope Scope, sources ...Source) []Row {
+func (t *ObsTable) crossRowsLocked(sock uint8, scope netaddr.Scope, sources ...Source) []Row {
 	var xs []Row
 	for _, r := range t.rows {
 		if r.Key.Socket != sock || !r.Observed.IsValid() || !slices.Contains(sources, r.Key.Source) {
@@ -275,7 +276,7 @@ func (t *ObsTable) crossRowsLocked(sock uint8, scope Scope, sources ...Source) [
 		if slices.ContainsFunc(xs, func(x Row) bool { return x.Key == r.Key }) {
 			continue
 		}
-		if first, _ := t.firstValueLocked(r.Key); ScopeOf(first.Observed.Addr()) == scope {
+		if first, _ := t.firstValueLocked(r.Key); netaddr.ScopeOf(first.Observed.Addr()) == scope {
 			xs = append(xs, first)
 		}
 	}
@@ -304,7 +305,7 @@ func (t *ObsTable) STUNConflicts() int {
 // stunConflictsLocked counts the contradicting STUN points of primary socket
 // p (STUNConflicts) and reports whether one of them saw another port of a
 // public IP natprobe saw: a path-dependent mapping.
-func (t *ObsTable) stunConflictsLocked(p SocketMeta, scope Scope) (n int, otherPort bool) {
+func (t *ObsTable) stunConflictsLocked(p SocketMeta, scope netaddr.Scope) (n int, otherPort bool) {
 	var server []netip.AddrPort
 	for _, s := range t.firstValuesLocked(p.ID, scope) {
 		server = append(server, s.Observed)
@@ -351,7 +352,7 @@ func (t *ObsTable) anyDriftLocked() bool {
 
 // multiHomedLocked reports a sibling whose public IP differs from the
 // primary's (same scope).
-func (t *ObsTable) multiHomedLocked(pub netip.Addr, scope Scope) bool {
+func (t *ObsTable) multiHomedLocked(pub netip.Addr, scope netaddr.Scope) bool {
 	for _, s := range t.sockets {
 		if s.Kind != protocol.SocketSibling {
 			continue
@@ -367,7 +368,7 @@ func (t *ObsTable) multiHomedLocked(pub netip.Addr, scope Scope) bool {
 
 // secondVariesLocked reports whether the second socket also saw different
 // ports at different observers.
-func (t *ObsTable) secondVariesLocked(scope Scope) bool {
+func (t *ObsTable) secondVariesLocked(scope netaddr.Scope) bool {
 	s, ok := t.socketOfKindLocked(protocol.SocketSecond)
 	if !ok {
 		return false
@@ -392,13 +393,13 @@ func (t *ObsTable) cgnatLocked(p SocketMeta, pub netip.Addr) protocol.Tri {
 			mapped = append(mapped, r.Observed.Addr())
 		}
 	}
-	publicSeen := pub.IsValid() && ScopeOf(pub) == ScopeGlobal
+	publicSeen := netaddr.Public(pub)
 	for _, ext := range mapped {
-		if publicSeen && ScopeOf(ext) == ScopePrivate {
+		if publicSeen && netaddr.ScopeOf(ext) == netaddr.ScopePrivate {
 			return protocol.TriTrue
 		}
 	}
-	if IsCGN(p.Local.Addr()) {
+	if netaddr.IsCGN(p.Local.Addr()) {
 		return protocol.TriTrue
 	}
 	if pub.IsValid() && slices.Contains(mapped, pub) {
@@ -410,12 +411,12 @@ func (t *ObsTable) cgnatLocked(p SocketMeta, pub netip.Addr) protocol.Tri {
 // lanObserved reports whether public observers (scope global) saw the
 // primary socket at private addresses only: a client that reaches the server
 // over a LAN route or through a hairpin without source NAT.
-func lanObserved(samples []sample, scope Scope) bool {
-	if scope != ScopeGlobal || len(samples) == 0 {
+func lanObserved(samples []sample, scope netaddr.Scope) bool {
+	if scope != netaddr.ScopeGlobal || len(samples) == 0 {
 		return false
 	}
 	for _, s := range samples {
-		if ScopeOf(s.Observed.Addr()) != ScopePrivate {
+		if netaddr.ScopeOf(s.Observed.Addr()) != netaddr.ScopePrivate {
 			return false
 		}
 	}
@@ -443,9 +444,9 @@ func (t *ObsTable) lanObservedLocked() bool {
 // noNAT: every server value equals the local address, which is global (or
 // private in a private-scope deployment) → true; a mix → unknown (the
 // contradiction has no confidence field to lower); none → false.
-func noNAT(p SocketMeta, samples []sample, scope Scope) protocol.Tri {
+func noNAT(p SocketMeta, samples []sample, scope netaddr.Scope) protocol.Tri {
 	local := p.Local
-	localOK := local.IsValid() && (ScopeOf(local.Addr()) == ScopeGlobal || scope == ScopePrivate)
+	localOK := local.IsValid() && (netaddr.Public(local.Addr()) || scope == netaddr.ScopePrivate)
 	all, some := true, false
 	for _, s := range samples {
 		if s.Observed == local {

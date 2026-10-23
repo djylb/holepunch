@@ -10,6 +10,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -133,10 +134,7 @@ func (ct *control) fault(f *failure) {
 }
 
 func (ct *control) violation(err error) {
-	r, d, ok := msgframe.Reason(err)
-	if !ok {
-		r, d = protocol.ReasonProtocolViolation, "decode"
-	}
+	r, d := msgframe.ReasonOr(err, protocol.ReasonProtocolViolation, "decode")
 	ct.fault(fail(r, d, err))
 }
 
@@ -165,7 +163,7 @@ func (ct *control) onPing(c *controlwire.Conn, f controlwire.Frame) {
 }
 
 func sendPong(c *controlwire.Conn, p protocol.Ping, at time.Time) {
-	_ = c.SendFunc(controlwire.TypePong, func(now time.Time) ([]byte, error) {
+	_ = c.SendFunc(wiretype.Pong, func(now time.Time) ([]byte, error) {
 		fr, err := msgframe.Encode(protocol.PongFor(p, at, now))
 		return fr.Payload, err
 	})
@@ -338,6 +336,44 @@ func (ct *control) onAbort(f controlwire.Frame) {
 	}
 }
 
+// woke says what ended a waitControl that the control link did not end.
+type woke uint8
+
+const (
+	wokeValue  woke = iota // the awaited value arrived
+	wokeTick               // the tick fired
+	wokeAssist             // an assist arrived and was handled
+)
+
+// waitControl is the orchestrator's wait on the control link before
+// punching: for a value on want, or for tick (nil: none), while every way the
+// link can end the session ends the wait with its failure — a control fault,
+// a punch_abort, the link's end, and ctx. When onAssist is set, a relayed
+// assist is handed to it and ends the wait too.
+func waitControl[T any](ct *control, ctx context.Context, want <-chan T, tick <-chan time.Time, onAssist func(stamped[protocol.Assist])) (v T, w woke, err error) {
+	var assists <-chan stamped[protocol.Assist]
+	if onAssist != nil {
+		assists = ct.assistCh
+	}
+	select {
+	case v = <-want:
+		return v, wokeValue, nil
+	case <-tick:
+		return v, wokeTick, nil
+	case a := <-assists:
+		onAssist(a)
+		return v, wokeAssist, nil
+	case f := <-ct.faultCh:
+		return v, 0, f
+	case ab := <-ct.abortCh:
+		return v, 0, abortFailure(ab.msg)
+	case <-ct.conn.Done():
+		return v, 0, ct.lost()
+	case <-ctx.Done():
+		return v, 0, context.Cause(ctx)
+	}
+}
+
 // confirm makes every later control fault, abort and stale frame harmless:
 // after local Confirm the session no longer depends on the control link.
 func (ct *control) confirm() {
@@ -355,14 +391,20 @@ func (ct *control) send(m protocol.Message) error {
 	return ct.conn.Send(fr)
 }
 
-// sendBuilt queues a reliable frame whose payload is built right before it
-// is written, so that elapsed_ms covers the queueing too (each message's
-// elapsed_ms is an RTT sample). The message is validated once up front.
-func (ct *control) sendBuilt(t controlwire.Type, build func(now time.Time) protocol.Message) error {
+// sendElapsed queues the reliable frame of m, whose elapsed_ms runs from
+// `from`: set stamps a copy of m with it right before the frame is written,
+// so that it covers the queueing too (each message's elapsed_ms is an RTT
+// sample). The message is validated once up front.
+func sendElapsed[M protocol.Message](ct *control, m M, from time.Time, set func(*M, uint32)) error {
+	build := func(now time.Time) protocol.Message {
+		c := m
+		set(&c, elapsedMs(from, now))
+		return c
+	}
 	if _, err := msgframe.Encode(build(ct.rt.clk.Now())); err != nil {
 		return err
 	}
-	return ct.conn.SendFunc(t, func(now time.Time) ([]byte, error) {
+	return ct.conn.SendFunc(wiretype.Type(m.MessageType()), func(now time.Time) ([]byte, error) {
 		fr, err := msgframe.Encode(build(now))
 		return fr.Payload, err
 	})
@@ -444,8 +486,6 @@ func ctlCause(err error) *failure {
 	case errors.Is(err, net.ErrClosed):
 		return fail(protocol.ReasonCanceled, "control_closed", ErrClosed)
 	}
-	if r, d, ok := msgframe.Reason(err); ok {
-		return fail(r, d, err)
-	}
-	return fail(protocol.ReasonControlInterrupted, "", err)
+	r, d := msgframe.ReasonOr(err, protocol.ReasonControlInterrupted, "")
+	return fail(r, d, err)
 }

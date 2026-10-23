@@ -1,6 +1,9 @@
 package plan
 
-import "github.com/djylb/holepunch/protocol"
+import (
+	api "github.com/djylb/holepunch/plan"
+	"github.com/djylb/holepunch/protocol"
+)
 
 // icmpUnreachThreshold is the per-round aggregate at which ICMP soft-signals
 // mark a blocked path.
@@ -13,7 +16,7 @@ const icmpUnreachThreshold = 50
 // result. The pair-class specific refinement (hard_symmetric_random only when
 // both sides are RND) is applied by the caller via TerminalReason, so Attribute
 // never hard-codes a terminal code.
-func Attribute(ev Evidence) protocol.Reason {
+func Attribute(ev api.Evidence) protocol.Reason {
 	r, _ := AttributeDetail(ev)
 	return r
 }
@@ -21,7 +24,7 @@ func Attribute(ev Evidence) protocol.Reason {
 // AttributeDetail returns the Reason and the detail string (the one-way
 // direction, icmp_unreachable, ...). Evidence is indexed by role
 // (0 = initiator, 1 = responder).
-func AttributeDetail(ev Evidence) (protocol.Reason, string) {
+func AttributeDetail(ev api.Evidence) (protocol.Reason, string) {
 	// Both sides report a blocked UDP path (local write failures).
 	if ev.Fatal[0] == protocol.ReasonUDPBlocked && ev.Fatal[1] == protocol.ReasonUDPBlocked {
 		return protocol.ReasonUDPBlocked, ""
@@ -73,7 +76,7 @@ func AttributeDetail(ev Evidence) (protocol.Reason, string) {
 // TerminalReason is the stop reason once a ladder is exhausted: Attribute
 // from the evidence, except that the plain
 // candidate_timeout becomes hard_symmetric_random only when both sides are RND.
-func TerminalReason(ev Evidence, bothRND bool) protocol.Reason {
+func TerminalReason(ev api.Evidence, bothRND bool) protocol.Reason {
 	r, detail := AttributeDetail(ev)
 	if r == protocol.ReasonCandidateTimeout && detail == "" && bothRND {
 		return protocol.ReasonHardSymmetricRandom

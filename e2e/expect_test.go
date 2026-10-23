@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch"
-	"github.com/djylb/holepunch/coord"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/nattest"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -158,19 +158,19 @@ func (cr *cellRun) measure() {
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
-func roundClassName(c coord.RoundClass) string {
+func roundClassName(c plan.RoundClass) string {
 	switch c {
-	case coord.RoundNoReport:
+	case plan.RoundNoReport:
 		return "no_report"
-	case coord.RoundConfirmed:
+	case plan.RoundConfirmed:
 		return "confirmed"
-	case coord.RoundConfirmLost:
+	case plan.RoundConfirmLost:
 		return "confirm_lost"
-	case coord.RoundOneWay:
+	case plan.RoundOneWay:
 		return "one_way"
-	case coord.RoundNoContact:
+	case plan.RoundNoContact:
 		return "no_contact"
-	case coord.RoundBlocked:
+	case plan.RoundBlocked:
 		return "blocked"
 	}
 	return fmt.Sprintf("class_%d", c)

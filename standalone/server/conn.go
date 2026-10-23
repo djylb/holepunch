@@ -13,9 +13,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/djylb/holepunch/coord"
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone/broker"
+	"github.com/djylb/holepunch/standalone/internal/life"
 	"github.com/djylb/holepunch/standalone/proto"
 )
 
@@ -61,8 +61,8 @@ func (s *Server) serve(ctx context.Context, st *stream) {
 	if err != nil {
 		s.handshakeFailed.Add(1)
 		s.log.Debug("first request failed", "remote", st.remote, "err", err)
-		if errors.Is(err, proto.ErrInvalid) || errors.Is(err, proto.ErrType) || errors.Is(err, proto.ErrVersion) {
-			s.refuse(st, proto.CodeInvalidRequest, err.Error())
+		if detail := malformed(err); detail != "" {
+			s.refuse(st, proto.CodeInvalidRequest, detail)
 		}
 		return
 	}
@@ -161,14 +161,32 @@ func (s *Server) authorize(st *stream, req AuthRequest) error {
 
 var errUnauthorized = errors.New("server: unauthorized")
 
-// refuseErr answers a broker or coordinator error.
+// malformed is the Fail detail of a first request that failed to decode —
+// "version", "type" or "message" — or "" for a read that failed otherwise.
+func malformed(err error) string {
+	switch {
+	case errors.Is(err, proto.ErrVersion):
+		return "version"
+	case errors.Is(err, proto.ErrType):
+		return "type"
+	case errors.Is(err, proto.ErrInvalid):
+		return "message"
+	}
+	return ""
+}
+
+// refuseErr answers a broker or coordinator error with its code and, for a
+// refused argument, the field the coordinator named; the error's text goes
+// to the log only.
 func (s *Server) refuseErr(st *stream, err error) {
 	code := codeOf(err)
-	msg := ""
-	if code != proto.CodeInternal {
-		msg = err.Error()
+	s.log.Debug("request refused", "remote", st.remote, "code", code, "err", err)
+	detail := ""
+	var ve *protocol.ValidationError
+	if code == proto.CodeInvalidRequest && !life.IsPanic(err) && errors.As(err, &ve) {
+		detail = ve.Detail
 	}
-	s.refuse(st, code, msg)
+	s.refuse(st, code, detail)
 }
 
 // refuse answers Fail; the stream is closed by handle afterwards.
@@ -180,10 +198,9 @@ func (s *Server) refuse(st *stream, code proto.Code, msg string) {
 // codeOf maps an error of the broker or the coordinator to a Fail code. A
 // recovered panic is tested first, since it may wrap any error.
 func codeOf(err error) proto.Code {
-	var pe *life.PanicError
 	var ve *protocol.ValidationError
 	switch {
-	case errors.As(err, &pe):
+	case life.IsPanic(err):
 		return proto.CodeInternal
 	case errors.Is(err, broker.ErrClosed), errors.Is(err, coord.ErrClosed):
 		return proto.CodeShutdown

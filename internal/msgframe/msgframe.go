@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -16,7 +17,7 @@ func Encode(m protocol.Message) (controlwire.Frame, error) {
 	if err != nil {
 		return controlwire.Frame{}, err
 	}
-	return controlwire.Frame{Type: controlwire.Type(m.MessageType()), Payload: p}, nil
+	return controlwire.Frame{Type: wiretype.Type(m.MessageType()), Payload: p}, nil
 }
 
 // Unmarshal decodes f into the message type T (protocol.Unmarshal).
@@ -44,6 +45,15 @@ func AbortReason(by protocol.Role, code protocol.Reason) protocol.Reason {
 		return protocol.ReasonAbortedByServer
 	}
 	return protocol.ReasonAbortedByPeer
+}
+
+// ReasonOr is Reason's reason and detail for err, or r and detail when
+// Reason does not classify it.
+func ReasonOr(err error, r protocol.Reason, detail string) (protocol.Reason, string) {
+	if wr, wd, ok := Reason(err); ok {
+		return wr, wd
+	}
+	return r, detail
 }
 
 // Reason maps an error of the wire layer — a frame-layer error of

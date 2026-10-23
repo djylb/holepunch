@@ -15,6 +15,8 @@ import (
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
@@ -268,10 +270,7 @@ func TestDispatchDrops(t *testing.T) {
 	fc := fakeClock(t)
 	_, h := simHost(t)
 	rt := newTestRuntime(t, fc, h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openPrimary(t, rt)
 	from := netipAP("198.51.100.7", 4000)
 	rt.dispatch(s, []byte{1, 2, 3}, from)
 	rt.dispatch(s, append([]byte{0x40}, make([]byte, 80)...), from)
@@ -293,10 +292,10 @@ func TestDispatchDrops(t *testing.T) {
 	// STUN goes to the prober only
 	rt.dispatch(s, []byte{0, 1, 0, 0, 0x21, 0x12, 0xA4, 0x42, 0, 0, 0, 0}, from)
 	// ICMP becomes round evidence once punching
-	rt.punch.active.Store(true)
+	rt.punch.activate()
 	rt.punch.newRound(1, []protocol.Family{protocol.FamilyUDP4})
 	rt.noteICMP(s)
-	if rt.punch.icmpMax != 1 {
+	if rt.punch.evidence().icmpMax != 1 {
 		t.Fatal("icmp not counted")
 	}
 	// pre-AEAD rate limit
@@ -312,6 +311,37 @@ func TestDispatchDrops(t *testing.T) {
 	}
 }
 
+// The primary path handed over carries the minimum RTT its pair measured
+// up to the handover, not only the samples Confirm had: a pair confirmed
+// before its first success reply still reports the RTT that reply showed.
+func TestPrimaryPathRTTAtHandover(t *testing.T) {
+	_, h := simHost(t)
+	rt := newTestRuntime(t, fakeClock(t), h)
+	s := openPrimary(t, rt)
+	remote := netipAP("198.51.100.7", 4000)
+	c := candidate.Candidate{Local: s.local, Remote: remote, Family: protocol.FamilyUDP4, Kind: candidate.KindObserved}
+	a := candidate.Action{Kind: candidate.HandOver, Local: s.local, Remote: remote, Family: protocol.FamilyUDP4,
+		ConfirmedBy: protocol.ConfirmedByAck}
+	rt.onConfirm(candidate.Action{Kind: candidate.Confirm, Local: s.local, Remote: remote, Family: protocol.FamilyUDP4}, c, rt.clk.Now())
+	if got := rt.punch.path().RTTMs; got != 0 {
+		t.Fatalf("round_result path rtt %d ms before any sample", got)
+	}
+	c.MinRTT = 7 * time.Millisecond
+	rt.onHandOver(a, c, nil)
+	ho := rt.handoffOf(&a)
+	if ho == nil {
+		t.Fatal("no handoff for the handed-over action")
+	}
+	primary, _ := rt.confirmedPaths(&a, ho)
+	rt.primaryPath = primary
+	if primary.RTTMs != 7 || primary.ConfirmedBy != protocol.ConfirmedByAck {
+		t.Fatalf("punch_result path %+v", primary)
+	}
+	if got := rt.result(ho.primary).Path.RTT; got != 7*time.Millisecond {
+		t.Fatalf("Result.Path.RTT %v", got)
+	}
+}
+
 // The state machine's own handover-timeout Fail action ends the session as
 // well.
 func TestHandoverFailedAction(t *testing.T) {
@@ -322,7 +352,7 @@ func TestHandoverFailedAction(t *testing.T) {
 		t.Fatal("fail not recorded")
 	}
 	select {
-	case <-rt.punch.wake:
+	case <-rt.punch.woken():
 	default:
 		t.Fatal("orchestrator not woken")
 	}
@@ -389,10 +419,7 @@ func TestConfirmBeforeGo(t *testing.T) {
 	// runs past it.
 	fc.AdvanceTo(keepalive.Add(-time.Second))
 	st := rt.punch
-	st.mu.Lock()
-	st.confirmAt = fc.Now()
-	st.mu.Unlock()
-	st.confirmed.Store(true)
+	st.confirm(fc.Now(), protocol.PathInfo{})
 	st.notify()
 	handover := fc.Now().Add(time.Duration(rt.timeouts.HandoverTimeoutMs) * time.Millisecond)
 	if !handover.After(keepalive) {
@@ -439,7 +466,7 @@ func runPunchLoop(t *testing.T, rt *runtime) <-chan error {
 // deadline. origin is the instant failures report the deadline from.
 func waitArmed(t *testing.T, fc *clock.Fake, origin time.Time, want func(time.Time) bool) time.Time {
 	t.Helper()
-	limit := time.Now().Add(5 * time.Second)
+	limit := time.Now().Add(testkit.WaitBound(t))
 	for {
 		next, ok := fc.Next()
 		if ok && want(next) {
@@ -457,13 +484,10 @@ func TestKeepaliveProbes(t *testing.T) {
 	_, h := simHost(t)
 	rt := newTestRuntime(t, fakeClock(t), h)
 	fs := rt.fam(protocol.FamilyUDP4)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openPrimary(t, rt)
 	fs.primary = s
 	fs.siblings = []*udpSock{s}
-	fs.observers = []protocol.ObserverSpec{{ID: 0, Addr: netipAP("198.51.100.1", 3478)}}
+	fs.observers = nat.Observers(protocol.FamilyUDP4, []protocol.ObserverSpec{{ID: 0, Addr: netipAP("198.51.100.1", 3478)}})
 	rt.sendKeepalive()
 	if got := fs.cnt.byStage[txProbe].Load(); got != 2 {
 		t.Fatalf("keepalives %d", got)
@@ -489,10 +513,7 @@ func (panicHop) SetHopLimit(int) error { panic("hop limiter") }
 func TestConnPanicsCounted(t *testing.T) {
 	_, h := simHost(t)
 	rt := newTestRuntime(t, fakeClock(t), panicConnNet{h})
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil || s == nil {
-		t.Fatalf("open: %v", err)
-	}
+	openPrimary(t, rt)
 	if got := rt.cnt.callbackPanics.Load(); got != 3 {
 		t.Fatalf("callback panics %d", got)
 	}

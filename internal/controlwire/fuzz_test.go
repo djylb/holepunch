@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 func FuzzParseHeader(f *testing.F) {
@@ -30,7 +31,7 @@ func FuzzParseHeader(f *testing.F) {
 			}
 			t.Fatalf("unexpected error %v", err)
 		}
-		if h[0] != 'h' || h[1] != 'p' || h[2] != Version || typ == 0 || typ != Type(h[3]) {
+		if h[0] != 'h' || h[1] != 'p' || h[2] != wiretype.Version || typ == 0 || typ != Type(h[3]) {
 			t.Fatalf("accepted a bad header % x", h)
 		}
 		if n != int(binary.BigEndian.Uint32(h[4:])) || n > typ.Cap() || n > MaxPayload {

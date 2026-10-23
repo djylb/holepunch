@@ -1,6 +1,6 @@
 package protocol
 
-import "github.com/djylb/holepunch/internal/controlwire"
+import "github.com/djylb/holepunch/internal/wiretype"
 
 // Feature is an optional client behaviour offered in punch_start.control and
 // echoed (accepted subset) in probe_report.control. Syntax
@@ -28,7 +28,7 @@ type ControlSpec struct {
 // DefaultControlSpec is what a server offers: the protocol's version and
 // every supported feature.
 func DefaultControlSpec() ControlSpec {
-	return ControlSpec{Version: controlwire.Version, Features: SupportedFeatures()}
+	return ControlSpec{Version: wiretype.Version, Features: SupportedFeatures()}
 }
 
 // SupportedFeatures are the features this implementation understands.

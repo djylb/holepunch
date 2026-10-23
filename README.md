@@ -58,6 +58,7 @@ go get github.com/djylb/holepunch
 | `github.com/djylb/holepunch`                | client: `Punch`, `Options`, `Session`, `Result`, `Error`              |
 | `github.com/djylb/holepunch/coord`          | coordinator: sessions, planning, round alignment, results and memory  |
 | `github.com/djylb/holepunch/natprobe`       | NAT observer server and the registry it shares with the coordinator   |
+| `github.com/djylb/holepunch/plan`           | the planner contract: `Planner` and the values it reads and returns   |
 | `github.com/djylb/holepunch/portmapper`     | UPnP IGD, NAT-PMP and PCP port mapping                                |
 | `github.com/djylb/holepunch/protocol`       | control messages, NAT traits, plans and reasons shared by both sides  |
 | `github.com/djylb/holepunch/stun`           | STUN Binding messages, a client query and a minimal server            |
@@ -193,6 +194,34 @@ server's public IP) avoids the restriction altogether.
 The package examples run the whole flow on a simulated Internet
 (`go test -run Example .`), and the `standalone` module is a complete
 deployment with authentication and matchmaking.
+
+### Custom planners
+
+The coordinator plans every session with a `plan.Planner`:
+`coord.DefaultPlanner()` unless `coord.Config.Planner` sets one. A custom
+planner usually wraps the built-in one and changes only what it means to; the
+coordinator clamps every decision to the budgets and the protocol limits
+whatever the planner returns, and falls back to the built-in planner if it
+panics:
+
+```go
+type relayFirst struct{ plan.Planner }
+
+// Classify sends the pairs classified rnd_x_rnd straight to the relay.
+func (p relayFirst) Classify(in plan.ClassifyInput) plan.Classification {
+	cl := p.Planner.Classify(in)
+	if cl.PairClass == "rnd_x_rnd" {
+		cl.Reject = protocol.ReasonHardSymmetricRandom
+	}
+	return cl
+}
+
+co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: spec,
+	Planner: relayFirst{coord.DefaultPlanner()}})
+```
+
+`coord.Config.Memory` takes a `coord.StrategyMemory` of your own in the same
+way, for example one shared by several servers.
 
 ### Handling failures
 

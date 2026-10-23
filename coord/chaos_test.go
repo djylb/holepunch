@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -74,7 +75,7 @@ func TestChaosRandom(t *testing.T) {
 			}
 			select {
 			case <-r.results:
-			case <-time.After(waitLimit):
+			case <-time.After(testkit.WaitBound(t)):
 				t.Fatal("no OnResult")
 			}
 			select {

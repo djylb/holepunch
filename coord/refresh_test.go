@@ -9,8 +9,10 @@ import (
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/ablation"
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/internal/plan"
+	engine "github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -94,7 +96,7 @@ func TestRefreshWaitBound(t *testing.T) {
 		defer s.mu.Lock()
 		_ = s.timerLocked(now)
 	}
-	st.pair.ProbeRTTMs = map[protocol.Role]uint32{protocol.RoleInitiator: 40, protocol.RoleResponder: 80}
+	st.adm.pair.ProbeRTTMs = map[protocol.Role]uint32{protocol.RoleInitiator: 40, protocol.RoleResponder: 80}
 	ask := func(sides ...int) {
 		st.refresh = refreshState{pending: true, k: 2, until: 5 * time.Second, cap: 5 * time.Second}
 		for _, r := range sides {
@@ -146,7 +148,7 @@ func TestRefreshNotAsked(t *testing.T) {
 	defer s.mu.Unlock()
 	d := decision{ok: true}
 	d.dec.Final = true // a final round may refresh, but not without a registration
-	if s.beginRefreshLocked(2, s.st.gen, d, ClassifyInput{}, RoundInput{}, 0) || s.st.refresh.pending || s.st.ctr.Refreshes != 0 {
+	if s.beginRefreshLocked(planTicket{k: 2, gen: s.st.plan.gen}, d, plan.ClassifyInput{}, plan.RoundInput{}, 0) || s.st.refresh.pending || s.st.ctr.Refreshes != 0 {
 		t.Fatal("refresh without a registration")
 	}
 }
@@ -162,18 +164,18 @@ func TestRefreshNoRefresh(t *testing.T) {
 	for _, abl := range []ablation.Set{{}, {NoRefresh: true}} {
 		r := newRig(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
 		p := r.pair(ablated(abl))
-		var pl plan.DefaultPlanner
+		var pl engine.DefaultPlanner
 		views := [2]protocol.PeerView{view(pubI), view(pubR)}
 		policy := protocol.Policy{Budget: protocol.DefaultBudget()}
-		cl := pl.Classify(ClassifyInput{Initiator: views[0], Responder: views[1], Policy: policy})
-		in := RoundInput{Round: 1, Class: cl, Views: views, Policy: policy, Remaining: 10 * time.Second, BudgetLeft: [2]int{-1, -1},
+		cl := pl.Classify(plan.ClassifyInput{Initiator: views[0], Responder: views[1], Policy: policy})
+		in := plan.RoundInput{Round: 1, Class: cl, Views: views, Policy: policy, Remaining: 10 * time.Second, BudgetLeft: [2]int{-1, -1},
 			MaxRounds: 3, HandshakeMs: 10000}
 		d := decision{ok: true, dec: pl.Round(in), cls: cl, planner: pl}
 		if d.dec.Stop != "" {
 			t.Fatalf("round 1 stops: %s", d.dec.Stop)
 		}
 		p.s.mu.Lock()
-		asked := p.s.beginRefreshLocked(1, p.s.st.gen, d, ClassifyInput{}, in, 0)
+		asked := p.s.beginRefreshLocked(planTicket{k: 1, gen: p.s.st.plan.gen}, d, plan.ClassifyInput{}, in, 0)
 		refreshes := p.s.st.ctr.Refreshes
 		p.s.mu.Unlock()
 		if asked == abl.NoRefresh || asked && refreshes != 2 {
@@ -195,16 +197,16 @@ func TestRefreshRound1Go(t *testing.T) {
 	predict := protocol.Stage{Kind: protocol.StagePredict, IP: pubR.Addr(), Anchor: 40000, Steps: []int16{1}, Span: 16, Pair: true}
 	p.s.mu.Lock()
 	st := &p.s.st
-	side := &st.cur.plans[0].Sides[0]
+	side := &st.rounds.cur.plans[0].Sides[0]
 	side.Stages = append(side.Stages, predict)
 	side.MaxPackets += 16
-	before := st.cur.plans[0]
-	st.refresh = refreshState{pending: true, k: 1, gen: st.gen, until: time.Hour, cap: time.Hour}
+	before := st.rounds.cur.plans[0]
+	st.refresh = refreshState{pending: true, k: 1, gen: st.plan.gen, until: time.Hour, cap: time.Hour}
 	p.s.mu.Unlock()
 
 	send(t, p.cl[0], simclient.Ready(sums[0], protocol.RoleInitiator, 1))
 	send(t, p.cl[1], simclient.Ready(sums[1], protocol.RoleResponder, 1))
-	eventually(t, "both readies taken", func() bool {
+	testkit.WaitFor(t, "both readies taken", func() bool {
 		p.s.mu.Lock()
 		defer p.s.mu.Unlock()
 		return st.ready[0] && st.ready[1]
@@ -214,16 +216,16 @@ func TestRefreshRound1Go(t *testing.T) {
 		p.s.mu.Unlock()
 		t.Fatalf("state %s: the go left before the refresh", st.state)
 	}
-	re := st.cur.plans
+	re := st.rounds.cur.plans
 	for r := range re {
 		re[r].Sides = slices.Clone(re[r].Sides)
 	}
 	re[0].Sides[0].Stages = slices.Clone(re[0].Sides[0].Stages)
 	n := len(re[0].Sides[0].Stages) - 1
 	re[0].Sides[0].Stages[n].Anchor, re[0].Sides[0].Stages[n].Span = 40007, 24 // the span would grow: cut to 16
-	d := decision{ok: true, dec: RoundDecision{Sides: [2][]protocol.FamilySide{re[0].Sides, re[1].Sides}}}
+	d := decision{ok: true, dec: plan.RoundDecision{Sides: [2][]protocol.FamilySide{re[0].Sides, re[1].Sides}}}
 	st.refresh.pending = false
-	fx := p.s.reanchorRound1Locked(st.gen, d, true, r.clk.Now())
+	fx := p.s.reanchorRound1Locked(d, true, r.clk.Now())
 	p.s.mu.Unlock()
 	p.s.apply(fx)
 
@@ -284,7 +286,7 @@ func TestReanchored(t *testing.T) {
 func TestRefreshMapped(t *testing.T) {
 	f := protocol.FamilyUDP4
 	s := &Session{}
-	cur := &s.st.cur
+	cur := &s.st.rounds.cur
 	cur.n = 2
 	cur.plans[1].Sides = []protocol.FamilySide{{Family: f, Role: protocol.SideReplyOnly, Sockets: 1, Stages: []protocol.Stage{{Kind: protocol.StageReplyOnly}}}}
 	s.st.refresh = refreshState{k: 2}
@@ -310,29 +312,29 @@ func TestRefreshKeepsPlannerSwitch(t *testing.T) {
 	}
 	r := newRig(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
 	p := r.pair(SessionOptions{})
-	var def plan.DefaultPlanner
+	var def engine.DefaultPlanner
 	views := [2]protocol.PeerView{view(pubI), view(pubR)}
 	policy := protocol.Policy{Budget: protocol.DefaultBudget()}
-	cl := def.Classify(ClassifyInput{Initiator: views[0], Responder: views[1], Policy: policy})
-	in := RoundInput{Round: 1, Class: cl, Views: views, Policy: policy, Remaining: 10 * time.Second, BudgetLeft: [2]int{-1, -1},
+	cl := def.Classify(plan.ClassifyInput{Initiator: views[0], Responder: views[1], Policy: policy})
+	in := plan.RoundInput{Round: 1, Class: cl, Views: views, Policy: policy, Remaining: 10 * time.Second, BudgetLeft: [2]int{-1, -1},
 		MaxRounds: 3, HandshakeMs: 10000}
 	switched := decision{ok: true, switched: true, planner: def, cls: cl, dec: def.Round(in)}
-	isDefault := func(pl Planner) bool { _, ok := pl.(plan.DefaultPlanner); return ok }
+	isDefault := func(pl plan.Planner) bool { _, ok := pl.(engine.DefaultPlanner); return ok }
 
 	p.s.mu.Lock()
 	defer p.s.mu.Unlock()
 	st := &p.s.st
-	st.planner = panicPlanner{where: "round"}
-	if !p.s.beginRefreshLocked(1, st.gen, switched, ClassifyInput{}, in, 0) {
+	st.plan.planner = panicPlanner{where: "round"}
+	if !p.s.beginRefreshLocked(planTicket{k: 1, gen: st.plan.gen}, switched, plan.ClassifyInput{}, in, 0) {
 		t.Fatal("no refresh asked")
 	}
-	if !isDefault(st.planner) || !isDefault(st.refresh.p) || !slices.Equal(st.cls.Ladder, cl.Ladder) {
-		t.Fatalf("planner %T, refresh planner %T", st.planner, st.refresh.p)
+	if !isDefault(st.plan.planner) || !isDefault(st.refresh.p) || !slices.Equal(st.plan.cls.Ladder, cl.Ladder) {
+		t.Fatalf("planner %T, refresh planner %T", st.plan.planner, st.refresh.p)
 	}
 
-	st.planner, st.state = panicPlanner{where: "round"}, StateSummarized
-	p.s.reanchorRound1Locked(st.gen, switched, true, r.clk.Now())
-	if !isDefault(st.planner) {
-		t.Fatalf("planner %T after round 1 was planned again by the default one", st.planner)
+	st.plan.planner, st.state = panicPlanner{where: "round"}, StateSummarized
+	p.s.reanchorRound1Locked(switched, true, r.clk.Now())
+	if !isDefault(st.plan.planner) {
+		t.Fatalf("planner %T after round 1 was planned again by the default one", st.plan.planner)
 	}
 }

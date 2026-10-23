@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/internal/testkit"
 )
 
 // deadlineConn records the read deadlines set on a request socket and when
@@ -165,7 +167,7 @@ func TestExchangeRetransmits(t *testing.T) {
 		}
 		want = min(want*2, retransmitMax)
 	}
-	waitFor(t, "every send at the gateway", func() bool { return gw.counts().received == len(sends) })
+	testkit.WaitFor(t, "every send at the gateway", func() bool { return gw.counts().received == len(sends) })
 }
 
 func TestExchangeAcceptsOnlyTheServer(t *testing.T) {
@@ -255,7 +257,7 @@ func TestOversizedDatagramIsSkipped(t *testing.T) {
 		return errc
 	}
 	m := newTestMapper(t, Config{}, testEnv{})
-	ctx, cancel := context.WithTimeout(context.Background(), waitBound(t))
+	ctx, cancel := context.WithTimeout(context.Background(), testkit.WaitBound(t))
 	defer cancel()
 
 	t.Run("exchange", func(t *testing.T) {
@@ -306,22 +308,6 @@ func TestExchangeBeforeSending(t *testing.T) {
 	c.Close()
 	if out != notSent || errors.Is(err, errNoResponse) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("exchange(cancelled) = %v, %v; want notSent, cancelled", out, err)
-	}
-}
-
-func TestAddrPortOf(t *testing.T) {
-	for _, tc := range []struct {
-		in   net.Addr
-		want netip.AddrPort
-	}{
-		{&net.UDPAddr{IP: net.ParseIP("::ffff:192.0.2.1"), Port: 5351}, netip.MustParseAddrPort("192.0.2.1:5351")},
-		{textAddr("192.0.2.2:1900"), netip.MustParseAddrPort("192.0.2.2:1900")},
-		{nil, netip.AddrPort{}},
-		{(*net.UDPAddr)(nil), netip.AddrPort{}},
-	} {
-		if got := addrPortOf(tc.in); got != tc.want {
-			t.Errorf("addrPortOf(%v) = %s, want %s", tc.in, got, tc.want)
-		}
 	}
 }
 

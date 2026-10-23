@@ -289,15 +289,3 @@ func TestWrapIsOneStep(t *testing.T) {
 		t.Fatalf("down across the wrap: %+v", tr)
 	}
 }
-
-// TestPortDelta: the short way round the range.
-func TestPortDelta(t *testing.T) {
-	for _, c := range []struct {
-		a, b uint16
-		d    int
-	}{{1000, 1001, 1}, {65535, 1024, 1}, {1024, 65535, -1}, {40000, 30000, -10000}, {2000, 60000, 58000 - portRange}} {
-		if d := portDelta(c.a, c.b); d != c.d {
-			t.Errorf("portDelta(%d, %d) = %d, want %d", c.a, c.b, d, c.d)
-		}
-	}
-}

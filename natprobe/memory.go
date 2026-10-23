@@ -3,48 +3,37 @@ package natprobe
 import (
 	"container/list"
 	"hash/maphash"
-	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/protocol"
 )
 
-// TraitsKey identifies one NAT across sessions: a
-// stable identity the caller provides (a client id or a hash of its key,
-// for example; empty keys by public IP only), the family, and the public IP — a new
-// public IP may well be another NAT.
-type TraitsKey struct {
-	ClientKey string
-	Family    protocol.Family
-	PublicIP  netip.Addr
-}
+// TraitsKey identifies one NAT across sessions: a stable identity the
+// caller provides (ClientKey: a client id or a hash of its key, for example;
+// empty keys by public IP only), the Family, and the PublicIP — a new public
+// IP may well be another NAT.
+type TraitsKey = nat.TraitsKey
 
 // TraitsMemory is the cross-session traits memory. The coordinator calls
-// Apply when it merges a client's probe_report with natprobe's records, and
-// Observe when a session ends, with the session's direct measurements. A nil
-// TraitsMemory turns the memory off.
+// Apply(k, current) when it merges a client's probe_report with natprobe's
+// records, and Observe(k, final, succeeded) when a session ends, with the
+// session's direct measurements. A nil TraitsMemory turns the memory off.
 // Callers may provide their own implementation, for example a persistent
 // one; it must be safe for concurrent use and must not block.
-type TraitsMemory interface {
-	// Apply refines current with what is remembered for k. It only reads,
-	// only fills unknown fields or raises one confidence level, and never
-	// overturns direct evidence.
-	//holepunch:callback
-	Apply(k TraitsKey, current protocol.Traits) protocol.Traits
-	// Observe records a session's final traits for k; succeeded says
-	// whether the session connected.
-	//
-	// final must be a direct measurement that the memory did not correct: the
-	// traits the merge produced without a memory (coord's raw views),
-	// corrected by punch_result.traits. Apply's output never enters Observe. A
-	// conclusion Apply raised would otherwise come back as evidence and renew
-	// itself for ever, while a direct measurement that agrees with a remembered
-	// conclusion is fresh evidence and renews it.
-	//holepunch:callback
-	Observe(k TraitsKey, final protocol.Traits, succeeded bool)
-}
+//
+// Apply refines current with what is remembered for k. It only reads, only
+// fills unknown fields or raises one confidence level, and never overturns
+// direct evidence. Observe records a session's final traits for k;
+// succeeded says whether the session connected. final is a direct
+// measurement the memory did not correct — the traits the merge produced
+// without a memory, corrected by punch_result.traits — so that a conclusion
+// Apply raised never comes back as evidence and renews itself for ever,
+// while a direct measurement that agrees with a remembered conclusion is
+// fresh evidence and renews it.
+type TraitsMemory = nat.TraitsMemory
 
 // TraitsMemoryConfig configures NewTraitsMemory; zero fields take the defaults.
 type TraitsMemoryConfig struct {

@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/testkit"
 )
 
 // loopConn serves the same datagram forever without allocating.
@@ -21,7 +24,7 @@ func (c *loopConn) ReadFrom(p []byte) (int, net.Addr, error) { return copy(p, c.
 // TestZeroAllocs checks 0 allocs/op on every hot path, including
 // garbage input and the DropResidual wrapper inside its window.
 func TestZeroAllocs(t *testing.T) {
-	if raceEnabled {
+	if testkit.RaceEnabled {
 		t.Skip("the race detector changes allocation counts")
 	}
 	ini, srv := newCodec(t, RoleInitiator), newCodec(t, RoleServer)
@@ -37,7 +40,7 @@ func TestZeroAllocs(t *testing.T) {
 	var w SeqWindow
 	seq := uint32(0)
 
-	clk := newManualClock()
+	clk := clock.NewFake(t, clockStart)
 	resp, err := NewCodec(testToken(), testRoute(), RoleResponder, testPad, clk.Now)
 	if err != nil {
 		t.Fatal(err)

@@ -32,8 +32,6 @@ const (
 const (
 	maxPrimarySends = 4  // per main observer: the first send and 3 retransmissions
 	maxOtherSends   = 2  // second socket, sibling, alt, STUN: the first send and 1 retransmission
-	maxSiblings     = 2  // sibling sockets probed
-	maxSTUNServers  = 8  // STUN servers used per family, all at once
 	serverBudget    = 25 // probes to the server per family: primary 13 + second 6 + alt 2 + siblings 4
 	stunBudget      = 16 // STUN requests per family: maxOtherSends per server
 )

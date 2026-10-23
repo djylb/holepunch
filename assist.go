@@ -19,7 +19,6 @@ const (
 	followUpPackets = 3
 	followUpGap     = 40 * time.Millisecond
 	maxFollowUps    = 4 // concurrent follow-ups; more are dropped
-	targetPackets   = 2 // per peer_targets target or window port, each round
 )
 
 // Fault-injection point of assist handling.
@@ -51,7 +50,7 @@ func (rt *runtime) handleAssist(a stamped[protocol.Assist], cur *roundRun, pendi
 	case protocol.AssistPeerTargets:
 		targets, rejected := rt.peerTargets(a.msg)
 		if cur == nil || cur.ctx.Err() != nil {
-			pending.rejected[famIndex(a.msg.Family)] += rejected
+			pending.rejected[a.msg.Family.Index()] += rejected
 			if len(pending.targets)+len(targets) <= pendingAssists*maxRoundTargetsPerAssist {
 				pending.targets = append(pending.targets, targets...)
 			}
@@ -62,7 +61,7 @@ func (rt *runtime) handleAssist(a stamped[protocol.Assist], cur *roundRun, pendi
 				continue
 			}
 			fr.rejected.Add(int32(rejected))
-			if room := maxRoundExtras - int(fr.extras.Load()); room > 0 && len(targets) > 0 {
+			if room := protocol.MaxPushPerRound - int(fr.extras.Load()); room > 0 && len(targets) > 0 {
 				select {
 				case fr.inject <- targets: // the round trims it to the quota, after scattering the window (extraItems)
 				default:
@@ -81,7 +80,7 @@ const maxRoundTargetsPerAssist = 16
 // candidates of kind targets (cand_kind=targets), except an
 // upstream-LAN candidate: it ranks with the LAN candidates until
 // the hairpin self-test shows that the public path loops back, and then
-// below that path. Each gets targetPackets a round, within every
+// below that path. Each gets protocol.PushPackets a round, within every
 // per-target cap admission sets (LAN 2, unverified family 8). The window
 // ports are marked as such: the round that sends them puts them in the
 // order of its spray seed (scatterWindows). A drift target is a mapping of
@@ -144,7 +143,7 @@ func (rt *runtime) followUp(fam protocol.Family, sockID uint8, target netip.Addr
 	}
 	started := rt.pg.Go("followup:"+string(fam), func(ctx context.Context) {
 		defer func() { <-rt.followUps }()
-		if rt.sleep(ctx, followUpDelay) != nil || rt.punch.rx.Load() > 0 {
+		if rt.sleep(ctx, followUpDelay) != nil || rt.punch.received() > 0 {
 			return
 		}
 		s := rt.socks.byID(fam, sockID)
@@ -161,11 +160,12 @@ func (rt *runtime) followUp(fam protocol.Family, sockID uint8, target netip.Addr
 		if meter == nil {
 			return
 		}
+		cand, _ := udpwire.CandID(extraStageIndex, 0) // within the limits
 		for i := range followUpPackets {
 			if i > 0 && rt.sleep(ctx, followUpGap) != nil {
 				return
 			}
-			h := udpwire.Header{Type: udpwire.TPunch, Round: run.plan.Round, Cand: extraStageIndex << 12}
+			h := udpwire.Header{Type: udpwire.TPunch, Round: run.plan.Round, Cand: cand}
 			err := rt.sender.Send(ctx, s, target, &h, nil, sendOpt{class: classInitiate, stage: txDirect, round: meter, quota: quotaFollowUp})
 			if err != nil && !errors.Is(err, errRun) { // a held-back punch is skipped: the next comes 40 ms later
 				return

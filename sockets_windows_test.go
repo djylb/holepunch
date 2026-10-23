@@ -6,8 +6,8 @@ import (
 	"net/netip"
 	"sync/atomic"
 	"testing"
-	"time"
 
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/udpsock"
 )
@@ -62,7 +62,7 @@ func TestReadLoopSurvivesPortUnreachable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := newTestRuntime(t, nil, tc.netw)
-			rt.punch.active.Store(true)
+			rt.punch.activate()
 			rt.punch.newRound(1, []protocol.Family{protocol.FamilyUDP4})
 			ctx := context.Background()
 			s, err := rt.socks.open(ctx, protocol.FamilyUDP4, netipAP("127.0.0.1", 0), PurposeProbe, 0, primaryRecvBuffer)
@@ -73,10 +73,8 @@ func TestReadLoopSurvivesPortUnreachable(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.reports {
-				waitFor(t, 2*time.Second, "the ICMP report", func() bool {
-					rt.punch.mu.Lock()
-					defer rt.punch.mu.Unlock()
-					return rt.punch.icmpMax > 0
+				testkit.WaitFor(t, "the ICMP report", func() bool {
+					return rt.punch.evidence().icmpMax > 0
 				})
 			}
 			peer, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netipAP("127.0.0.1", 0)))
@@ -89,7 +87,7 @@ func TestReadLoopSurvivesPortUnreachable(t *testing.T) {
 			if _, err := peer.WriteToUDPAddrPort([]byte("after the report"), s.local); err != nil {
 				t.Fatal(err)
 			}
-			waitFor(t, 2*time.Second, "the next datagram", func() bool { return cnt.rx.Load() > before })
+			testkit.WaitFor(t, "the next datagram", func() bool { return cnt.rx.Load() > before })
 			select {
 			case <-s.readDone:
 				t.Fatal("the read loop ended")
@@ -125,16 +123,4 @@ func closedLoopbackPort(t *testing.T) netip.AddrPort {
 	ap := c.LocalAddr().(*net.UDPAddr).AddrPort()
 	_ = c.Close()
 	return ap
-}
-
-// waitFor polls cond until it holds or d passes.
-func waitFor(t *testing.T, d time.Duration, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(d)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(time.Millisecond)
-	}
 }

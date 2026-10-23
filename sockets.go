@@ -29,8 +29,6 @@ const (
 	extraPortLo       = 20000 // extra sockets bind a random port in [20000, 60000) first
 	extraPortHi       = 60000
 	extraBindTries    = 3
-	firstExtraIndex   = 5   // round and birthday sockets use indexes 5–125 (internal/nat)
-	maxSocketIndex    = 125 // the last index the 7-bit sock field leaves to round sockets
 	winnerReadJoin    = time.Second
 	writeTurnWait     = time.Second
 	preRateBurst      = 8000 // per-socket pre-AEAD token bucket
@@ -78,9 +76,7 @@ type udpSock struct {
 	stopping atomic.Bool   // set by stopRead: a read timeout now ends the loop
 	readDone chan struct{} // closed when the read loop returns
 
-	// pre-AEAD rate limit, touched by the read loop only
-	rateTokens float64
-	rateAt     time.Time
+	rate bucket // the pre-AEAD rate limit, touched by the read loop only
 }
 
 // hopCtl sets the unicast TTL of one socket: through HopLimiter when the conn
@@ -240,7 +236,7 @@ func (s *udpSock) read(buf []byte) (int, netip.AddrPort, error) {
 // where Unix truncates it: it is no holepunch packet, and anyone can send
 // one. Any other error ends the loop and removes the socket from the
 // candidates.
-func (s *udpSock) readLoop(rt *runtime) {
+func (s *udpSock) readLoop(sink packetSink, cnt *famCounters) {
 	defer close(s.readDone)
 	buf := make([]byte, readBufferSize)
 	for {
@@ -257,13 +253,13 @@ func (s *udpSock) readLoop(rt *runtime) {
 			case errors.Is(err, net.ErrClosed):
 				return
 			case udpsock.IsICMPReport(err):
-				rt.noteICMP(s)
+				sink.noteICMP(s)
 				continue
 			case udpsock.IsTruncated(err):
-				rt.fam(s.fam).cnt.drop(dropForeign)
+				cnt.drop(dropForeign)
 				continue
 			}
-			rt.readFailed(s)
+			sink.readFailed(s)
 			return
 		}
 		if s.stopping.Load() {
@@ -272,30 +268,41 @@ func (s *udpSock) readLoop(rt *runtime) {
 		if faultinject.Point(fiReadloopPacket) != nil {
 			continue
 		}
-		rt.dispatch(s, buf[:n], from)
+		sink.dispatch(s, buf[:n], from)
 	}
 }
 
-// preRateAllow is the per-socket pre-AEAD token bucket; read loop only.
-func (s *udpSock) preRateAllow(now time.Time) bool {
-	if s.rateAt.IsZero() {
-		s.rateAt, s.rateTokens = now, preRateBurst
-	}
-	if dt := now.Sub(s.rateAt); dt > 0 {
-		s.rateTokens = min(preRateBurst, s.rateTokens+dt.Seconds()*preRatePerSec)
-		s.rateAt = now
-	}
-	if s.rateTokens < 1 {
-		return false
-	}
-	s.rateTokens--
-	return true
+// preRateAllow takes a token of the socket's pre-AEAD rate limit; read loop
+// only.
+func (s *udpSock) preRateAllow(now time.Time) bool { return s.rate.take(now, 0) }
+
+// packetSink is where a socket's read loop delivers every datagram, every
+// ICMP report and the read error that ends it. The runtime implements it.
+type packetSink interface {
+	dispatch(s *udpSock, pkt []byte, from netip.AddrPort)
+	noteICMP(s *udpSock)
+	readFailed(s *udpSock)
+}
+
+// poolDeps are the session's parts the socket pool uses: the session group
+// that owns every socket and runs its read loop, the Network sockets are
+// bound on, the flow opener (nil when off), the per-family counters, the
+// pacer drawing extra ports, the callback panic counter and the read loops'
+// sink.
+type poolDeps struct {
+	g      *life.Group
+	netw   Network
+	opener *opener
+	pace   *pacer
+	cnt    [2]*famCounters // by Family.Index
+	panics *atomic.Int64
+	sink   packetSink
 }
 
 // socketPool holds every socket of the session, indexed by family, role in
 // the session and local address. It enforces the socket budget.
 type socketPool struct {
-	rt *runtime
+	poolDeps
 
 	mu        sync.Mutex
 	all       []*udpSock
@@ -306,18 +313,11 @@ type socketPool struct {
 	outbound  [2]netip.Addr
 }
 
-func famIndex(f protocol.Family) int {
-	if f == protocol.FamilyUDP6 {
-		return 1
-	}
-	return 0
-}
-
 func famNetwork(f protocol.Family) string { return string(f) }
 
-func newSocketPool(rt *runtime, limit int) *socketPool {
-	return &socketPool{rt: rt, byLocal: map[netip.AddrPort]*udpSock{}, limit: limit,
-		nextIndex: [2]uint8{firstExtraIndex, firstExtraIndex}}
+func newSocketPool(d poolDeps, limit int) *socketPool {
+	return &socketPool{poolDeps: d, byLocal: map[netip.AddrPort]*udpSock{}, limit: limit,
+		nextIndex: [2]uint8{nat.IndexFirstExtra, nat.IndexFirstExtra}}
 }
 
 // setLimit lowers the socket budget (session budget after the summary).
@@ -376,7 +376,6 @@ func (p *socketPool) open(ctx context.Context, fam protocol.Family, laddr netip.
 	if !p.reserve() {
 		return nil, errNoSockets
 	}
-	rt := p.rt
 	conn, err := p.listen(ctx, fam, laddr, purpose)
 	if err != nil {
 		p.unreserve()
@@ -384,24 +383,26 @@ func (p *socketPool) open(ctx context.Context, fam protocol.Family, laddr netip.
 	}
 	name := purpose + ":" + string(fam) + ":" + strconv.Itoa(int(index))
 	owner := &connOwner{conn: conn}
-	if !rt.g.Own(name, owner) {
+	if !p.g.Own(name, owner) {
 		p.unreserve()
 		return nil, net.ErrClosed
 	}
 	local := p.concreteLocal(ctx, fam, conn)
 	if sb, ok := conn.(interface{ SetReadBuffer(int) error }); ok {
 		if pe := life.Safe("setreadbuffer", func() { _ = sb.SetReadBuffer(rcvbuf) }); pe != nil {
-			rt.cnt.callbackPanics.Add(1)
+			p.panics.Add(1)
 		}
 	}
 	s := &udpSock{
 		conn: conn, owner: owner, fam: fam, id: nat.SocketID(fam, index), local: local,
-		turn: make(chan struct{}, 1), readDone: make(chan struct{}), op: rt.opener,
+		turn: make(chan struct{}, 1), readDone: make(chan struct{}), op: p.opener,
+		rate: newBucket(preRatePerSec, preRateBurst),
 	}
-	s.hop = newHopCtl(conn, &rt.cnt.callbackPanics)
+	s.hop = newHopCtl(conn, p.panics)
 	p.commit(s)
-	rt.fam(fam).cnt.sockets.Add(1)
-	if !rt.g.Go("udp-read:"+name, func(context.Context) { s.readLoop(rt) }) {
+	cnt := p.cnt[fam.Index()]
+	cnt.sockets.Add(1)
+	if !p.g.Go("udp-read:"+name, func(context.Context) { s.readLoop(p.sink, cnt) }) {
 		close(s.readDone)
 	}
 	return s, nil
@@ -415,9 +416,9 @@ func (p *socketPool) listen(ctx context.Context, fam protocol.Family, laddr neti
 	var conn net.PacketConn
 	var err error
 	if pe := life.Safe("network.listenpacket", func() {
-		conn, err = p.rt.netw.ListenPacket(ctx, famNetwork(fam), laddr, purpose)
+		conn, err = p.netw.ListenPacket(ctx, famNetwork(fam), laddr, purpose)
 	}); pe != nil {
-		p.rt.cnt.callbackPanics.Add(1)
+		p.panics.Add(1)
 		return nil, pe
 	}
 	if err != nil {
@@ -436,7 +437,7 @@ var errNilConn = errors.New("holepunch: Network.ListenPacket returned a nil conn
 func (p *socketPool) concreteLocal(ctx context.Context, fam protocol.Family, conn net.PacketConn) netip.AddrPort {
 	var la net.Addr
 	if pe := life.Safe("localaddr", func() { la = conn.LocalAddr() }); pe != nil {
-		p.rt.cnt.callbackPanics.Add(1)
+		p.panics.Add(1)
 	}
 	ap, _ := netaddr.FromNetAddr(la)
 	if ap.Addr().IsValid() && !ap.Addr().IsUnspecified() {
@@ -447,7 +448,7 @@ func (p *socketPool) concreteLocal(ctx context.Context, fam protocol.Family, con
 
 // outboundAddr asks the Network once per family for the outbound address.
 func (p *socketPool) outboundAddr(ctx context.Context, fam protocol.Family) netip.Addr {
-	i := famIndex(fam)
+	i := fam.Index()
 	p.mu.Lock()
 	a := p.outbound[i]
 	p.mu.Unlock()
@@ -455,9 +456,9 @@ func (p *socketPool) outboundAddr(ctx context.Context, fam protocol.Family) neti
 		return a
 	}
 	var err error
-	if pe := life.Safe("network.outboundaddr", func() { a, err = p.rt.netw.OutboundAddr(ctx, famNetwork(fam)) }); pe != nil || err != nil {
+	if pe := life.Safe("network.outboundaddr", func() { a, err = p.netw.OutboundAddr(ctx, famNetwork(fam)) }); pe != nil || err != nil {
 		if pe != nil {
-			p.rt.cnt.callbackPanics.Add(1)
+			p.panics.Add(1)
 		}
 		return netip.Addr{}
 	}
@@ -506,23 +507,19 @@ func (p *socketPool) byAddr(local netip.AddrPort) *udpSock {
 // failures in a row stop the attempt.
 func (p *socketPool) roundSockets(ctx context.Context, primary *udpSock, n int, purpose string) (socks []*udpSock, bindFailed int) {
 	socks = append(socks, primary)
-	fi := famIndex(primary.fam)
+	fi := primary.fam.Index()
 	for fails := 0; len(socks) < n && fails < extraBindTries; {
 		p.mu.Lock()
 		var s *udpSock
 		if k := len(socks) - 1; k < len(p.extras[fi]) {
 			s = p.extras[fi][k]
 		}
-		idx := p.nextIndex[fi]
-		if s == nil && idx <= maxSocketIndex {
-			p.nextIndex[fi]++
-		}
 		p.mu.Unlock()
 		if s == nil {
-			if idx > maxSocketIndex {
+			idx, err := p.takeIndex(primary.fam)
+			if err != nil {
 				break
 			}
-			var err error
 			if s, err = p.openExtra(ctx, primary, idx, purpose); err != nil {
 				if errors.Is(err, errNoSockets) || errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
 					break
@@ -544,7 +541,7 @@ func (p *socketPool) roundSockets(ctx context.Context, primary *udpSock, n int, 
 func (p *socketPool) openExtra(ctx context.Context, primary *udpSock, idx uint8, purpose string) (*udpSock, error) {
 	ip := primary.local.Addr()
 	for range extraBindTries {
-		port := p.rt.pace.portIn(extraPortLo, extraPortHi)
+		port := p.pace.portIn(extraPortLo, extraPortHi)
 		s, err := p.open(ctx, primary.fam, netip.AddrPortFrom(ip, port), purpose, idx, extraRecvBuffer)
 		if err == nil || errors.Is(err, errNoSockets) || errors.Is(err, net.ErrClosed) {
 			return s, err
@@ -579,11 +576,11 @@ func (p *socketPool) pacedSocket(ctx context.Context, primary *udpSock, purpose 
 // takeIndex takes the next round-socket index of family fam; errNoSockets
 // once the header's index space is spent.
 func (p *socketPool) takeIndex(fam protocol.Family) (uint8, error) {
-	fi := famIndex(fam)
+	fi := fam.Index()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	idx := p.nextIndex[fi]
-	if idx > maxSocketIndex {
+	if idx > nat.IndexLastExtra {
 		return 0, errNoSockets
 	}
 	p.nextIndex[fi]++
@@ -591,10 +588,9 @@ func (p *socketPool) takeIndex(fam protocol.Family) (uint8, error) {
 }
 
 // sandwichHelper binds a sandwich helper socket (index 4) for one family
-// round on the primary's IP: a new internal endpoint, so that both probes of
-// the round map anew on any NAT. It holds a place in the socket budget
-// until release; nil when the
-// budget or the bind refuses it.
+// round, or for one refresh probe, on the primary's IP: a new internal
+// endpoint, so that its probes map anew on any NAT. It holds a place in the
+// socket budget until release; nil when the budget or the bind refuses it.
 func (p *socketPool) sandwichHelper(ctx context.Context, primary *udpSock) *udpSock {
 	s, err := p.open(ctx, primary.fam, netip.AddrPortFrom(primary.local.Addr(), 0), PurposeProbe, nat.IndexSandwich, extraRecvBuffer)
 	if err != nil {
@@ -614,10 +610,10 @@ func (p *socketPool) release(s *udpSock) {
 		delete(p.byLocal, s.local)
 	}
 	p.mu.Unlock()
-	if !p.rt.g.Disown(s.owner) {
+	if !p.g.Disown(s.owner) {
 		return
 	}
 	if pe := life.Safe("socket.close", func() { _ = s.conn.Close() }); pe != nil {
-		p.rt.cnt.callbackPanics.Add(1)
+		p.panics.Add(1)
 	}
 }

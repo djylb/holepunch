@@ -12,6 +12,7 @@ import (
 
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -65,7 +66,7 @@ func TestMapNATPMPWhenPCPUnsupported(t *testing.T) {
 	}
 	waitPending(t, fc, 1)
 	fc.Advance(time.Minute) // half of the granted 120 s
-	waitFor(t, "NAT-PMP renewal", func() bool { return gw.counts().natRenews == 1 })
+	testkit.WaitFor(t, "NAT-PMP renewal", func() bool { return gw.counts().natRenews == 1 })
 	if err := release(); err != nil {
 		t.Fatalf("release() error = %v", err)
 	}
@@ -106,7 +107,7 @@ func TestMapUPnPVariants(t *testing.T) {
 			}
 			waitPending(t, fc, 1)
 			fc.Advance(time.Minute)
-			waitFor(t, "UPnP renewal", func() bool { _, r, _, _ := igd.counts(); return r == 1 })
+			testkit.WaitFor(t, "UPnP renewal", func() bool { _, r, _, _ := igd.counts(); return r == 1 })
 			if err := release(); err != nil {
 				t.Fatalf("release() error = %v", err)
 			}
@@ -301,7 +302,7 @@ func TestMapCompensatesUncertainMappings(t *testing.T) {
 			t.Fatalf("Map() error = %v, want ErrUnsupported after no response", err)
 		}
 		// The gateway created the mapping but its answer was lost: Map deletes it.
-		waitFor(t, "compensating delete", func() bool { return gw.active() == 0 })
+		testkit.WaitFor(t, "compensating delete", func() bool { return gw.active() == 0 })
 		if c := gw.counts(); c.pcpCreates != 1 || c.pcpDeletes != 1 {
 			t.Fatalf("counts = %+v", c)
 		}
@@ -314,7 +315,7 @@ func TestMapCompensatesUncertainMappings(t *testing.T) {
 		if !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("Map() error = %v, want ErrUnsupported", err)
 		}
-		waitFor(t, "compensating delete", func() bool { return gw.active() == 0 })
+		testkit.WaitFor(t, "compensating delete", func() bool { return gw.active() == 0 })
 		if c := gw.counts(); c.natCreates != 1 || c.natDeletes != 1 {
 			t.Fatalf("counts = %+v", c)
 		}
@@ -327,7 +328,7 @@ func TestMapCompensatesUncertainMappings(t *testing.T) {
 		if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "zero lifetime") {
 			t.Fatalf("Map() error = %v, want ErrUnsupported about the lifetime", err)
 		}
-		waitFor(t, "deletes of unusable mappings", func() bool { return gw.active() == 0 })
+		testkit.WaitFor(t, "deletes of unusable mappings", func() bool { return gw.active() == 0 })
 		if c := gw.counts(); c.pcpCreates != 1 || c.pcpDeletes != 1 || c.natCreates != 1 || c.natDeletes != 1 {
 			t.Fatalf("counts = %+v", c)
 		}
@@ -602,6 +603,6 @@ func TestMapBoundedWhenEveryStepIsSlow(t *testing.T) {
 	within(t, "Map()", time.Since(start), 2*attempt+150*time.Millisecond)
 	// The NAT-PMP mapping that was created without an answer is deleted.
 	gw.set(func(f *fakeGW) { f.natMode = serveOK })
-	waitFor(t, "compensating NAT-PMP delete", func() bool { return gw.active() == 0 })
+	testkit.WaitFor(t, "compensating NAT-PMP delete", func() bool { return gw.active() == 0 })
 	noLeak(t, base)
 }

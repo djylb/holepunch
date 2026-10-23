@@ -4,48 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 
-	"github.com/djylb/holepunch/internal/controlwire"
-)
-
-// Structural limits checked by Validate. Lists over
-// these limits are a protocol violation. Limits the receiver clamps instead
-// are in normalize.go, and maps over their key limit are truncated
-// there.
-const (
-	maxSessionID       = 64
-	maxFeatures        = 16
-	maxFeatureName     = 32
-	maxName            = 64 // names, ids, codes, map keys
-	maxImpl            = 64
-	maxCapsFamilies    = 2
-	maxPortMapMethods  = 3
-	maxObservers       = 16
-	maxReportFamilies  = 2
-	maxReportSockets   = 6
-	maxReportRows      = 16
-	maxReportFilters   = 24
-	maxReportSTUNRows  = 8
-	maxLocalAddrs      = 16
-	maxOverlayAddrs    = 2
-	maxTransportMode   = 16
-	maxTransportData   = 8 << 10
-	maxViewFamilies    = 2
-	maxEndpoints       = 12
-	maxSharedFamilies  = 2
-	maxLadder          = 16
-	maxSides           = 2
-	maxRound           = 8
-	maxDetail          = 256
-	maxProgressDetail  = 128
-	maxMetaValue       = 64
-	maxMetaTotal       = 1 << 10
-	maxSeenFrom        = 4
-	maxOutcomes        = 2
-	maxTraitsUpdates   = 2
-	maxWarn            = 8
-	maxLowTTLHops      = 8
-	maxPingSeq         = 8
-	maxPortWindowWidth = 63
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // ---- messages ----
@@ -219,11 +178,11 @@ func (m Progress) Validate() error {
 	default:
 		return violation("status", "unknown status %q", m.Status)
 	}
-	if m.Round > maxRound {
-		return violation("round", "%d > %d", m.Round, maxRound)
+	if m.Round > MaxRound {
+		return violation("round", "%d > %d", m.Round, MaxRound)
 	}
-	if len(m.Detail) > maxProgressDetail {
-		return violation("detail", "%d bytes > %d", len(m.Detail), maxProgressDetail)
+	if len(m.Detail) > MaxProgressDetail {
+		return violation("detail", "%d bytes > %d", len(m.Detail), MaxProgressDetail)
 	}
 	for k := range m.Counters {
 		if !isName(k, maxName) {
@@ -245,8 +204,8 @@ func (m Abort) Validate() error {
 	if m.Reason != "" && !isName(string(m.Reason), maxName) {
 		return violation("code", "%q is not a code", m.Reason)
 	}
-	if len(m.Detail) > maxDetail {
-		return violation("detail", "%d bytes > %d", len(m.Detail), maxDetail)
+	if len(m.Detail) > MaxDetail {
+		return violation("detail", "%d bytes > %d", len(m.Detail), MaxDetail)
 	}
 	return nil
 }
@@ -281,8 +240,8 @@ func (m RoundResult) Validate() error {
 		if err := checkDistinctFamily(p, f.Family, m.Families[:i], func(g FamilyOutcome) Family { return g.Family }); err != nil {
 			return err
 		}
-		if len(f.SeenFrom) > maxSeenFrom {
-			return violation(p+".seen_from", "%d > %d", len(f.SeenFrom), maxSeenFrom)
+		if len(f.SeenFrom) > MaxSeenFrom {
+			return violation(p+".seen_from", "%d > %d", len(f.SeenFrom), MaxSeenFrom)
 		}
 		for j, a := range f.SeenFrom {
 			if err := checkEndpoint(fmt.Sprintf("%s.seen_from[%d]", p, j), a, f.Family); err != nil {
@@ -339,8 +298,8 @@ func (m PunchResult) Validate() error {
 			return err
 		}
 	}
-	if len(m.Detail) > maxDetail {
-		return violation("detail", "%d bytes > %d", len(m.Detail), maxDetail)
+	if len(m.Detail) > MaxDetail {
+		return violation("detail", "%d bytes > %d", len(m.Detail), MaxDetail)
 	}
 	for k := range m.Stats.Drops {
 		if !isName(k, maxName) {
@@ -359,8 +318,8 @@ func (m PunchResult) Validate() error {
 			return err
 		}
 	}
-	if len(m.Warn) > maxWarn {
-		return violation("warn", "%d > %d", len(m.Warn), maxWarn)
+	if len(m.Warn) > MaxWarn {
+		return violation("warn", "%d > %d", len(m.Warn), MaxWarn)
 	}
 	for i, w := range m.Warn {
 		if !isName(string(w), maxName) {
@@ -412,9 +371,9 @@ func (m Assist) origin() (string, Role, bool) { return m.SessionID, m.Role, true
 // ---- sub-structures ----
 
 func (c ControlSpec) validate(path string) error {
-	if c.Version != controlwire.Version {
+	if c.Version != wiretype.Version {
 		return &ValidationError{Reason: ReasonControlVersionMismatch, Detail: path + ".version",
-			Msg: fmt.Sprintf("%d != frame major %d", c.Version, controlwire.Version)}
+			Msg: fmt.Sprintf("%d != frame major %d", c.Version, wiretype.Version)}
 	}
 	if len(c.Features) > maxFeatures {
 		return violation(path+".features", "%d > %d", len(c.Features), maxFeatures)
@@ -461,8 +420,8 @@ func (p ProbeSpec) validate(path string) error {
 		return &ValidationError{Reason: ReasonControlVersionMismatch, Detail: "probe_v",
 			Msg: fmt.Sprintf("probe spec v%d, want v%d", p.V, ProbeSpecVersion)}
 	}
-	if len(p.Observers) > maxObservers {
-		return violation(path+".observers", "%d > %d", len(p.Observers), maxObservers)
+	if len(p.Observers) > MaxObservers {
+		return violation(path+".observers", "%d > %d", len(p.Observers), MaxObservers)
 	}
 	for i, o := range p.Observers {
 		q := fmt.Sprintf("%s.observers[%d]", path, i)
@@ -490,8 +449,8 @@ func (p Policy) validate(path string) error {
 	if err := p.Budget.validate(path + ".budget"); err != nil {
 		return err
 	}
-	if len(p.LowTTLHops) > maxLowTTLHops {
-		return violation(path+".low_ttl_hops", "%d > %d", len(p.LowTTLHops), maxLowTTLHops)
+	if len(p.LowTTLHops) > MaxLowTTLHops {
+		return violation(path+".low_ttl_hops", "%d > %d", len(p.LowTTLHops), MaxLowTTLHops)
 	}
 	return nil
 }
@@ -510,8 +469,8 @@ func (f FamilyReport) validate(path string) error {
 	if f.Failure != "" && !f.Failure.Known() {
 		return violation(path+".failure", "unknown reason %q", f.Failure)
 	}
-	if len(f.Sockets) > maxReportSockets {
-		return violation(path+".sockets", "%d > %d", len(f.Sockets), maxReportSockets)
+	if len(f.Sockets) > MaxReportSockets {
+		return violation(path+".sockets", "%d > %d", len(f.Sockets), MaxReportSockets)
 	}
 	for i, s := range f.Sockets {
 		q := fmt.Sprintf("%s.sockets[%d]", path, i)
@@ -523,8 +482,8 @@ func (f FamilyReport) validate(path string) error {
 		if err := checkEndpoint(q+".local", s.Local, f.Family); err != nil {
 			return err
 		}
-		if len(s.Rows) > maxReportRows {
-			return violation(q+".rows", "%d > %d", len(s.Rows), maxReportRows)
+		if len(s.Rows) > MaxReportRows {
+			return violation(q+".rows", "%d > %d", len(s.Rows), MaxReportRows)
 		}
 		for j, r := range s.Rows {
 			if err := checkOptionalEndpoint(fmt.Sprintf("%s.rows[%d].a", q, j), r.Observed, f.Family); err != nil {
@@ -532,11 +491,11 @@ func (f FamilyReport) validate(path string) error {
 			}
 		}
 	}
-	if len(f.Filters) > maxReportFilters {
-		return violation(path+".filters", "%d > %d", len(f.Filters), maxReportFilters)
+	if len(f.Filters) > MaxReportFilters {
+		return violation(path+".filters", "%d > %d", len(f.Filters), MaxReportFilters)
 	}
-	if len(f.STUN) > maxReportSTUNRows {
-		return violation(path+".stun", "%d > %d", len(f.STUN), maxReportSTUNRows)
+	if len(f.STUN) > MaxReportSTUNRows {
+		return violation(path+".stun", "%d > %d", len(f.STUN), MaxReportSTUNRows)
 	}
 	for j, r := range f.STUN {
 		if err := checkOptionalEndpoint(fmt.Sprintf("%s.stun[%d].a", path, j), r.Observed, f.Family); err != nil {
@@ -548,16 +507,16 @@ func (f FamilyReport) validate(path string) error {
 			return err
 		}
 	}
-	if len(f.LocalAddrs) > maxLocalAddrs {
-		return violation(path+".local_addrs", "%d > %d", len(f.LocalAddrs), maxLocalAddrs)
+	if len(f.LocalAddrs) > MaxLocalAddrs {
+		return violation(path+".local_addrs", "%d > %d", len(f.LocalAddrs), MaxLocalAddrs)
 	}
 	for i, a := range f.LocalAddrs {
 		if !f.Family.Matches(a) {
 			return violation(fmt.Sprintf("%s.local_addrs[%d]", path, i), "%v is not a %s address", a, f.Family)
 		}
 	}
-	if len(f.Overlay) > maxOverlayAddrs {
-		return violation(path+".overlay", "%d > %d", len(f.Overlay), maxOverlayAddrs)
+	if len(f.Overlay) > MaxOverlayAddrs {
+		return violation(path+".overlay", "%d > %d", len(f.Overlay), MaxOverlayAddrs)
 	}
 	for i, a := range f.Overlay {
 		if !f.Family.Matches(a) {
@@ -634,8 +593,8 @@ func (v PeerView) validate(path string) error {
 		if err := f.Traits.validate(q+".traits", f.Family); err != nil {
 			return err
 		}
-		if len(f.Endpoints) > maxEndpoints {
-			return violation(q+".endpoints", "%d > %d", len(f.Endpoints), maxEndpoints)
+		if len(f.Endpoints) > MaxEndpoints {
+			return violation(q+".endpoints", "%d > %d", len(f.Endpoints), MaxEndpoints)
 		}
 		for j, e := range f.Endpoints {
 			r := fmt.Sprintf("%s.endpoints[%d]", q, j)
@@ -883,8 +842,8 @@ func checkSessionID(s string) error { return checkID("session_id", s) }
 
 // checkID accepts 1..64 bytes of [A-Za-z0-9_-] (session ids, plan ids).
 func checkID(path, s string) error {
-	if len(s) < 1 || len(s) > maxSessionID {
-		return violation(path, "%d bytes, want 1..%d", len(s), maxSessionID)
+	if len(s) < 1 || len(s) > MaxSessionID {
+		return violation(path, "%d bytes, want 1..%d", len(s), MaxSessionID)
 	}
 	for i := 0; i < len(s); i++ {
 		if c := s[i]; !nameChar(rune(c)) && (c < 'A' || c > 'Z') && c != '-' {
@@ -905,8 +864,8 @@ func checkOrigin(sessionID string, role Role) error {
 }
 
 func checkRound(path string, r uint8) error {
-	if r < 1 || r > maxRound {
-		return violation(path, "%d not in [1, %d]", r, maxRound)
+	if r < 1 || r > MaxRound {
+		return violation(path, "%d not in [1, %d]", r, MaxRound)
 	}
 	return nil
 }
@@ -915,8 +874,8 @@ func checkTransport(path, mode string, data []byte) error {
 	if err := CheckTransportMode(mode); err != nil {
 		return violation(path+".mode", "%v", err)
 	}
-	if len(data) > maxTransportData {
-		return violation(path, "data of %d bytes > %d", len(data), maxTransportData)
+	if len(data) > MaxTransportData {
+		return violation(path, "data of %d bytes > %d", len(data), MaxTransportData)
 	}
 	return nil
 }
@@ -960,18 +919,35 @@ func checkMeta(path string, meta map[string]string, maxKeys int) error {
 	return nil
 }
 
+// UsableEndpoint reports whether a may stand in an address field of family
+// f on the wire: an address with a port that is neither unspecified nor
+// multicast, of family f — of either family when f is empty — and never
+// IPv4-mapped. Validation refuses a frame with any other endpoint, so a
+// sender checks what it reports against the same rule. It is a wire rule,
+// not admission: loopback and private addresses pass.
+func UsableEndpoint(f Family, a netip.AddrPort) bool {
+	ip := a.Addr()
+	switch {
+	case !a.IsValid() || a.Port() == 0 || ip.IsUnspecified() || ip.IsMulticast():
+		return false
+	case f == "":
+		return FamilyOf(ip) != ""
+	}
+	return f.Matches(ip)
+}
+
 // checkEndpoint requires a usable unicast ip:port of family fam ("" = any).
 func checkEndpoint(path string, a netip.AddrPort, fam Family) error {
 	ip := a.Addr()
 	switch {
+	case UsableEndpoint(fam, a):
+		return nil
 	case !a.IsValid() || a.Port() == 0 || ip.IsUnspecified() || ip.IsMulticast():
 		return violation(path, "%v is not a usable ip:port", a)
-	case fam == "" && FamilyOf(ip) == "":
+	case fam == "":
 		return violation(path, "%v is an IPv4-mapped address", a)
-	case fam != "" && !fam.Matches(ip):
-		return violation(path, "%v is not a %s address", a, fam)
 	}
-	return nil
+	return violation(path, "%v is not a %s address", a, fam)
 }
 
 func checkOptionalEndpoint(path string, a netip.AddrPort, fam Family) error {

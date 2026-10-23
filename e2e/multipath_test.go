@@ -87,7 +87,7 @@ func checkTwoPaths(cr *cellRun) error {
 }
 
 // datagramOver sends datagrams over path p until one arrives on dst.
-func datagramOver(src, dst handedConn, p holepunch.Path) error {
+func datagramOver(src, dst nattest.Conn, p holepunch.Path) error {
 	d, ok := dst.(interface{ SetReadDeadline(time.Time) error })
 	if !ok {
 		return fmt.Errorf("no read deadline on %T", dst)

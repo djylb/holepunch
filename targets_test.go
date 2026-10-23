@@ -1,7 +1,6 @@
 package holepunch
 
 import (
-	"context"
 	"net/netip"
 	"slices"
 	"testing"
@@ -95,7 +94,7 @@ func TestPeerTargetsOwnQuota(t *testing.T) {
 		return nil
 	})
 	f := rr.Families[0]
-	if rr.Status != protocol.RoundWindowEnd || f.BudgetHit || f.Sent != 6+8*targetPackets {
+	if rr.Status != protocol.RoundWindowEnd || f.BudgetHit || f.Sent != 6+8*protocol.PushPackets {
 		t.Fatalf("round_result %+v family %+v", rr, f)
 	}
 }
@@ -124,7 +123,7 @@ func TestPeerTargetsAfterPlanCut(t *testing.T) {
 		return nil
 	})
 	f := rr.Families[0]
-	if rr.Status != protocol.RoundBudgetExhausted || !f.BudgetHit || f.Sent != 3+2*targetPackets {
+	if rr.Status != protocol.RoundBudgetExhausted || !f.BudgetHit || f.Sent != 3+2*protocol.PushPackets {
 		t.Fatalf("round_result %+v family %+v", rr, f)
 	}
 }
@@ -146,23 +145,20 @@ func TestPeerTargetsClassCeiling(t *testing.T) {
 	}
 }
 
-// At most maxRoundExtras pushed targets a family and round; the rest are
+// At most protocol.MaxPushPerRound pushed targets a family and round; the rest are
 // budget drops.
 func TestExtraItemsCap(t *testing.T) {
 	_, h := simHost(t)
 	rt := newTestRuntime(t, fakeClock(t), h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openPrimary(t, rt)
 	fs := rt.fam(protocol.FamilyUDP4)
 	fr := &familyRound{rt: rt, w: &worker{fam: protocol.FamilyUDP4, fs: fs}, socks: []*udpSock{s}}
 	var targets []extraTarget
-	for p := range maxRoundExtras + 6 {
+	for p := range protocol.MaxPushPerRound + 6 {
 		targets = append(targets, extraTarget{to: netipAP("198.51.100.7", 2000+p), kind: candidate.KindTargets})
 	}
 	items := fr.extraItems(targets, rt.clk.Now())
-	if len(items) != maxRoundExtras*targetPackets || fs.cnt.drops[dropBudget].Load() != 6 {
+	if len(items) != protocol.MaxPushPerRound*protocol.PushPackets || fs.cnt.drops[dropBudget].Load() != 6 {
 		t.Fatalf("%d items, %d drops", len(items), fs.cnt.drops[dropBudget].Load())
 	}
 	for _, it := range items {
@@ -182,10 +178,7 @@ func TestExtraItemsCap(t *testing.T) {
 func TestWindowPortsScattered(t *testing.T) {
 	_, h := simHost(t)
 	rt := newTestRuntime(t, fakeClock(t), h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openPrimary(t, rt)
 	fs := rt.fam(protocol.FamilyUDP4)
 	newRound := func(seed byte) *familyRound {
 		return &familyRound{rt: rt, w: &worker{fam: protocol.FamilyUDP4, fs: fs}, socks: []*udpSock{s}, seed: [8]byte{seed, 1, 2, 3}}
@@ -238,10 +231,10 @@ func TestWindowPortsScattered(t *testing.T) {
 	// Four places left in the round: the explicit targets and the first two
 	// window ports of the scattered order; the other 18 are budget drops.
 	fr = newRound(1)
-	fr.extras.Store(maxRoundExtras - 4)
+	fr.extras.Store(protocol.MaxPushPerRound - 4)
 	drops := fs.cnt.drops[dropBudget].Load()
 	got = firstOrder(fr.extraItems(batch, rt.clk.Now()))
-	first := plan.ScatterPorts(fr.seed, maxRoundExtras-4, window)[:2]
+	first := plan.ScatterPorts(fr.seed, protocol.MaxPushPerRound-4, window)[:2]
 	want = []netip.AddrPort{explicit[0], explicit[1], netip.AddrPortFrom(explicit[0].Addr(), first[0]), netip.AddrPortFrom(explicit[0].Addr(), first[1])}
 	if !slices.Equal(got, want) || fs.cnt.drops[dropBudget].Load()-drops != int64(len(batch)-4) {
 		t.Fatalf("over the quota: %v, want %v", got, want)
@@ -257,7 +250,7 @@ func TestPeerTargetsWindowOnWire(t *testing.T) {
 		pushTargets(so, nil, peerWindow(5000, 5011))
 		return nil
 	})
-	if f := rr.Families[0]; f.Sent != 6+12*targetPackets || f.BudgetHit {
+	if f := rr.Families[0]; f.Sent != 6+12*protocol.PushPackets || f.BudgetHit {
 		t.Fatalf("family %+v", f)
 	}
 	sent := map[uint16]int{}
@@ -265,7 +258,7 @@ func TestPeerTargetsWindowOnWire(t *testing.T) {
 		sent[p]++
 	}
 	for p := uint16(5000); p <= 5011; p++ {
-		if sent[p] != targetPackets {
+		if sent[p] != protocol.PushPackets {
 			t.Fatalf("window port %d sent %d times: %v", p, sent[p], sent)
 		}
 	}
@@ -353,10 +346,7 @@ func TestRoundReportsRejected(t *testing.T) {
 func TestSprayItemsPaired(t *testing.T) {
 	_, h := simHost(t)
 	rt := newTestRuntime(t, fakeClock(t), h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openPrimary(t, rt)
 	peer := netip.MustParseAddr("198.51.100.7")
 	rp := protocol.RoundPlan{Round: 2, Seed: 99}
 	tok, route := rt.start.Token, rt.start.Wire.RouteID
@@ -380,13 +370,13 @@ func TestSprayItemsPaired(t *testing.T) {
 		fr.seed = udpwire.SpraySeed(tok, route, role, rp.Round, rp.Seed)
 		want := plan.ExpandPaired(paired.Anchor, paired.Steps, int(paired.Span),
 			plan.ExpandInput{PairSeed: pairSeed, Responder: role == udpwire.RoleResponder})
-		if got := ports(fr.sprayItems(0, paired, rt.clk.Now(), nil)); !slices.Equal(got, want) || len(got) != 16 {
+		if got := ports(fr.sprayItems(0, paired, paired.IP, rt.clk.Now(), nil)); !slices.Equal(got, want) || len(got) != 16 {
 			t.Fatalf("%v: paired ports %v, want %v", role, got, want)
 		}
 		plain := paired
 		plain.Pair = false
 		want = plan.ExpandPredict(plain.Anchor, plain.Steps, int(plain.Span), plan.ExpandInput{Seed: fr.seed})
-		if got := ports(fr.sprayItems(0, plain, rt.clk.Now(), nil)); !slices.Equal(got, want) {
+		if got := ports(fr.sprayItems(0, plain, plain.IP, rt.clk.Now(), nil)); !slices.Equal(got, want) {
 			t.Fatalf("%v: predict ports %v, want %v", role, got, want)
 		}
 	}

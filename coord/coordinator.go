@@ -153,7 +153,9 @@ func (c *Coordinator) Stats() Stats {
 }
 
 // Memory returns the strategy memory, for callers that report outcomes of
-// their own (an upper-layer transport that failed on a confirmed path).
+// their own: an upper-layer transport that failed on a confirmed path is
+// Report(key, Result.Winner.Variant, MemFailure), key being Result.StrategyKey
+// decoded from hex. The key has no transport dimension (StrategyMemory).
 func (c *Coordinator) Memory() StrategyMemory { return c.set.memory }
 
 // Close ends every session with server_shutdown — sessions still before the
@@ -217,7 +219,7 @@ func (c *Coordinator) shutdown() error {
 // closeStep runs one step of Close in a recover boundary; a panic is
 // reported, counted and kept for Close's result.
 func (c *Coordinator) closeStep(errs *closeErrs, fn func()) {
-	if err := life.Safe(fiClose, fn); err != nil {
+	if err := callout(fiClose, "", fn); err != nil {
 		c.noteCallbackPanic("", err)
 		errs.add(err)
 	}
@@ -308,9 +310,7 @@ func (c *Coordinator) housekeep(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C():
-			if err := life.Safe("coord.housekeeping", c.sweep); err != nil {
-				c.noteCallbackPanic("", err)
-			}
+			c.callout("", "coord.housekeeping", "", c.sweep)
 			t.Reset(housekeepEvery)
 		}
 	}

@@ -277,13 +277,13 @@ func (d Diagnostics) clone() Diagnostics {
 	out.Self = append([]protocol.Traits(nil), d.Self...)
 	out.Peer = append([]protocol.Traits(nil), d.Peer...)
 	if d.Plan != nil {
-		p := clonePlan(*d.Plan)
+		p := d.Plan.Clone()
 		out.Plan = &p
 	}
 	if d.Rounds != nil {
 		out.Rounds = make([]protocol.RoundPlan, len(d.Rounds))
 		for i, r := range d.Rounds {
-			out.Rounds[i] = cloneRound(r)
+			out.Rounds[i] = r.Clone()
 		}
 	}
 	if d.Path != nil {
@@ -310,33 +310,4 @@ func (c Counters) clone() Counters {
 	c.TxByStage = maps.Clone(c.TxByStage)
 	c.Drops = maps.Clone(c.Drops)
 	return c
-}
-
-// clonePlan deep-copies a plan spec.
-func clonePlan(p protocol.PlanSpec) protocol.PlanSpec {
-	p.Ladder = append([]string(nil), p.Ladder...)
-	p.Round1 = cloneRound(p.Round1)
-	return p
-}
-
-// cloneRound deep-copies a round plan, down to the stage targets.
-func cloneRound(r protocol.RoundPlan) protocol.RoundPlan {
-	if r.Sides == nil {
-		return r
-	}
-	sides := make([]protocol.FamilySide, len(r.Sides))
-	for i, s := range r.Sides {
-		if s.Stages != nil {
-			st := make([]protocol.Stage, len(s.Stages))
-			for j, g := range s.Stages {
-				g.Targets = append([]netip.AddrPort(nil), g.Targets...)
-				g.Steps = append([]int16(nil), g.Steps...)
-				st[j] = g
-			}
-			s.Stages = st
-		}
-		sides[i] = s
-	}
-	r.Sides = sides
-	return r
 }

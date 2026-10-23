@@ -6,12 +6,14 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/djylb/holepunch/internal/netaddr"
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
 // clientModel is the client's target admission and send schedule for one family
 // of one side, as the root package implements them (newWorker, admit, schedule
-// and directItems in workers.go and rounds.go). The plan package cannot import
+// and directItems in workers.go and schedule.go). The plan package cannot import
 // the client, so the model restates it; every planner output must run under it
 // unchanged.
 type clientModel struct {
@@ -51,9 +53,9 @@ func newClientModel(fam protocol.Family, peer protocol.PeerView, pair protocol.P
 			}
 		case e.Verified:
 			m.verified[a] = true
-		case e.Source == protocol.EndpointLAN && sameLAN && len(m.lan) < clientLANTargets && privateAddr(a):
+		case e.Source == protocol.EndpointLAN && sameLAN && len(m.lan) < clientLANTargets && netaddr.Private(a):
 			m.lan[a] = true
-		case m.unverified && a.IsGlobalUnicast() && !privateAddr(a) && len(m.reported) < clientUnverifiedTargets:
+		case m.unverified && a.IsGlobalUnicast() && !netaddr.Private(a) && len(m.reported) < clientUnverifiedTargets:
 			m.reported[a] = true
 		}
 	}
@@ -84,7 +86,7 @@ func (m clientModel) admit(ap netip.AddrPort, kind protocol.StageKind) (ok bool,
 	}
 	switch {
 	case m.verified[a]:
-		if privateAddr(a) && kind != protocol.StageDirect {
+		if netaddr.Private(a) && kind != protocol.StageDirect {
 			return false, 0
 		}
 		return true, 0
@@ -182,7 +184,7 @@ func wireView(v protocol.PeerView, pair protocol.PairFacts) protocol.PeerView {
 			if e.Source == protocol.EndpointOverlay {
 				return !pair.SharedOverlay[fv.Family]
 			}
-			if !privateAddr(e.Addr.Addr().Unmap()) || e.Verified {
+			if !netaddr.Private(e.Addr.Addr().Unmap()) || e.Verified {
 				return false
 			}
 			switch e.Source {
@@ -204,7 +206,7 @@ func wireView(v protocol.PeerView, pair protocol.PairFacts) protocol.PeerView {
 // and an unverified one at most eight in the round, never in a stage with
 // public targets; an unverified family has at most maxTargets distinct
 // targets, all Direct, on one socket, and MaxPackets ≤ 8 × targets.
-func checkAdmitted(t *testing.T, label string, dec RoundDecision, views [2]protocol.PeerView, pair protocol.PairFacts, maxTargets int) {
+func checkAdmitted(t *testing.T, label string, dec api.RoundDecision, views [2]protocol.PeerView, pair protocol.PairFacts, maxTargets int) {
 	t.Helper()
 	for r := range 2 {
 		peer := wireView(views[1-r], pair)
@@ -222,12 +224,12 @@ func checkAdmitted(t *testing.T, label string, dec RoundDecision, views [2]proto
 				t.Errorf("%s: the client sends %d packets > MaxPackets %d", where, cr.expanded, fs.MaxPackets)
 			}
 			for a, n := range cr.perLAN {
-				if n > lanRepeats {
+				if n > protocol.LANRepeats {
 					t.Errorf("%s: LAN target %v gets %d packets", where, a, n)
 				}
 			}
 			for a, n := range cr.perUnver {
-				if n > maxUnverifiedRepeats {
+				if n > protocol.UnverifiedRepeats {
 					t.Errorf("%s: unverified target %v gets %d packets", where, a, n)
 				}
 			}
@@ -240,21 +242,21 @@ func checkAdmitted(t *testing.T, label string, dec RoundDecision, views [2]proto
 						pub++
 					}
 				}
-				if lan > 0 && (pub > 0 || lan > maxLANTargets+maxOverlayTargets || st.Repeats > lanRepeats) {
+				if lan > 0 && (pub > 0 || lan > protocol.MaxLANTargets+protocol.MaxOverlayTargets || st.Repeats > protocol.LANRepeats) {
 					t.Errorf("%s: LAN stage %+v", where, st)
 				}
 			}
 			if !pair.Unverified[fs.Family] || fs.Role == protocol.SideReplyOnly {
 				continue
 			}
-			if len(cr.perUnver) > maxTargets || fs.Sockets != 1 || int(fs.MaxPackets) > maxUnverifiedRepeats*(len(cr.perUnver)+len(cr.perLAN)) {
+			if len(cr.perUnver) > maxTargets || fs.Sockets != 1 || int(fs.MaxPackets) > protocol.UnverifiedRepeats*(len(cr.perUnver)+len(cr.perLAN)) {
 				t.Errorf("%s: unverified family over its limits (%d targets, max %d)", where, len(cr.perUnver), maxTargets)
 			}
 		}
 	}
 }
 
-func roundOf(dec RoundDecision) string {
+func roundOf(dec api.RoundDecision) string {
 	if dec.Rescue {
 		return "rescue"
 	}
@@ -268,7 +270,7 @@ var (
 )
 
 // selfV6 is side n's IPv6 family as a coordinator without an IPv6 observer
-// builds it from the report (coord's selfFamilyView): no row, the
+// builds it from the report (nat.SelfReportedView): no row, the
 // primary socket's address and the host's other addresses at its port, as
 // LAN endpoints, none verified; provisional traits.
 func selfV6(n int, tr protocol.Traits) protocol.FamilyView {
@@ -368,7 +370,7 @@ func admissionCases() []admissionCase {
 				{Families: []protocol.FamilyView{selfV6(2, c.b(u6)), realisticView(b4).Families[0]}},
 			},
 			pair:       protocol.PairFacts{SharedFamilies: both, Unverified: map[protocol.Family]bool{u6: true}},
-			maxTargets: maxUnverifiedTargets,
+			maxTargets: protocol.MaxUnverifiedTargets,
 		})
 		// No registry: every family is unverified.
 		out = append(out, admissionCase{
@@ -378,7 +380,7 @@ func admissionCases() []admissionCase {
 				{Families: []protocol.FamilyView{selfV6(2, c.b(u6)), relayOnlyV4(2, b4)}},
 			},
 			pair:       protocol.PairFacts{SharedFamilies: both, Unverified: map[protocol.Family]bool{u6: true, u4: true}},
-			maxTargets: maxRelayOnlyTargets,
+			maxTargets: protocol.MaxRelayOnlyTargets,
 		})
 		// One LAN behind one NAT.
 		out = append(out, admissionCase{
@@ -412,15 +414,15 @@ func TestPlansAdmittedByClient(t *testing.T) {
 	var p DefaultPlanner
 	for _, c := range admissionCases() {
 		t.Run(c.name, func(t *testing.T) {
-			ci := ClassifyInput{Initiator: c.views[0], Responder: c.views[1], Pair: c.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+			ci := api.ClassifyInput{Initiator: c.views[0], Responder: c.views[1], Pair: c.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
 			cl := p.Classify(ci)
 			if cl.Reject != "" {
 				t.Fatalf("reject %s", cl.Reject)
 			}
-			var prev []RoundOutcome
+			var prev []api.RoundOutcome
 			rescued := false
 			for round := 1; round <= 7; round++ {
-				in := roundInput(cl, protocol.Traits{}, protocol.Traits{}, round, prev)
+				in := classified(roundInput(cl, protocol.Traits{}, protocol.Traits{}, round, prev), ci)
 				in.Views, in.RescueUsed = c.views, rescued
 				in.AllowExtreme, in.MaxRounds, in.HandshakeMs = true, 6, 40000
 				in.Policy.Budget.Birthday = protocol.BirthdayAggressive
@@ -429,13 +431,13 @@ func TestPlansAdmittedByClient(t *testing.T) {
 					break
 				}
 				checkAdmitted(t, c.name, dec, c.views, c.pair, c.maxTargets)
-				o := outcomeOf(round, dec, RCNoContact)
+				o := outcomeOf(round, dec, api.RoundNoContact)
 				if round == 1 {
 					// The ladder's A side heard its peer once: on every
 					// address kind it may have come from. (A pdf_x_rnd
 					// family whose random B side heard needs no rescue.)
 					seer := roleIndex(cl.SideA)
-					o.Class = RCOneWay
+					o.Class = api.RoundOneWay
 					o.SeenFrom[seer] = heardFrom(c.views[1-seer])
 				}
 				rescued = rescued || dec.Rescue
@@ -477,15 +479,16 @@ func TestUnverifiedFamilyDirectOnly(t *testing.T) {
 	}
 	pair := protocol.PairFacts{SharedFamilies: []protocol.Family{u6, u4}, Unverified: map[protocol.Family]bool{u6: true}}
 	var p DefaultPlanner
-	cl := p.Classify(ClassifyInput{Initiator: views[0], Responder: views[1], Pair: pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}})
-	if !slices.Equal(cl.Families, []protocol.Family{u6, u4}) || cl.PairClass != PairPDFSeq || !cl.fams[0].Unverified ||
-		cl.fams[1].Unverified || cl.fams[0].MaxTargets != maxUnverifiedTargets {
-		t.Fatalf("classification %s %+v", cl.PairClass, cl.fams)
+	cin := api.ClassifyInput{Initiator: views[0], Responder: views[1], Pair: pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+	cl, fams := p.Classify(cin), famsOf(cin)
+	if !slices.Equal(cl.Families, []protocol.Family{u6, u4}) || cl.PairClass != PairPDFSeq || !fams[0].Unverified ||
+		fams[1].Unverified || fams[0].MaxTargets != protocol.MaxUnverifiedTargets {
+		t.Fatalf("classification %s %+v", cl.PairClass, fams)
 	}
-	var prev []RoundOutcome
+	var prev []api.RoundOutcome
 	sent := 0
 	for round := 1; round <= 6; round++ {
-		in := roundInput(cl, protocol.Traits{}, protocol.Traits{}, round, prev)
+		in := classified(roundInput(cl, protocol.Traits{}, protocol.Traits{}, round, prev), cin)
 		in.Views, in.SandwichOK = views, true
 		in.AllowExtreme, in.MaxRounds, in.HandshakeMs = true, 6, 40000
 		dec := p.Round(in)
@@ -514,13 +517,13 @@ func TestUnverifiedFamilyDirectOnly(t *testing.T) {
 				}
 				sent++
 				want := []netip.AddrPort{peer.Endpoints[0].Addr, peer.Endpoints[1].Addr} // the two global ones, not the ULA
-				if !slices.Equal(st.Targets, want) || st.Repeats > maxUnverifiedRepeats {
+				if !slices.Equal(st.Targets, want) || st.Repeats > protocol.UnverifiedRepeats {
 					t.Fatalf("round %d side %d: stage %+v, want the peer's self-reported global addresses %v", round, r, st, want)
 				}
 			}
 		}
-		checkAdmitted(t, "unverified_v6", dec, views, pair, maxUnverifiedTargets)
-		prev = append(prev, outcomeOf(round, dec, RCNoContact))
+		checkAdmitted(t, "unverified_v6", dec, views, pair, protocol.MaxUnverifiedTargets)
+		prev = append(prev, outcomeOf(round, dec, api.RoundNoContact))
 		if dec.Final {
 			break
 		}
@@ -536,11 +539,12 @@ func TestUnverifiedFamilyDirectOnly(t *testing.T) {
 func TestRelayOnlyTargets(t *testing.T) {
 	c := admissionCaseNamed(t, "relay_only/easy")
 	var p DefaultPlanner
-	cl := p.Classify(ClassifyInput{Initiator: c.views[0], Responder: c.views[1], Pair: c.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}})
-	if cl.fams[0].MaxTargets != maxRelayOnlyTargets || cl.fams[1].MaxTargets != maxRelayOnlyTargets {
-		t.Fatalf("classification %+v", cl.fams)
+	cin := api.ClassifyInput{Initiator: c.views[0], Responder: c.views[1], Pair: c.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+	cl, fams := p.Classify(cin), famsOf(cin)
+	if fams[0].MaxTargets != protocol.MaxRelayOnlyTargets || fams[1].MaxTargets != protocol.MaxRelayOnlyTargets {
+		t.Fatalf("classification %+v", fams)
 	}
-	in := roundInput(cl, protocol.Traits{}, protocol.Traits{}, 1, nil)
+	in := classified(roundInput(cl, protocol.Traits{}, protocol.Traits{}, 1, nil), cin)
 	in.Views = c.views
 	dec := p.Round(in)
 	v4 := dec.Sides[0][1]
@@ -553,10 +557,10 @@ func TestRelayOnlyTargets(t *testing.T) {
 		}
 	}
 	// Four IPs of two ports each are admitted; the fifth IP is not.
-	if len(targets) != 8 || len(ips) != 4 || ips[netip.MustParseAddr("198.51.102.14")] || int(v4.MaxPackets) > maxUnverifiedRepeats*len(targets) {
+	if len(targets) != 8 || len(ips) != 4 || ips[netip.MustParseAddr("198.51.102.14")] || int(v4.MaxPackets) > protocol.UnverifiedRepeats*len(targets) {
 		t.Fatalf("relay-only side %s: %d targets on %v", describe(v4), len(targets), ips)
 	}
-	checkAdmitted(t, c.name, dec, c.views, c.pair, maxRelayOnlyTargets)
+	checkAdmitted(t, c.name, dec, c.views, c.pair, protocol.MaxRelayOnlyTargets)
 
 	// The limits themselves, on a view with more admissible endpoints.
 	var fv protocol.FamilyView
@@ -566,16 +570,16 @@ func TestRelayOnlyTargets(t *testing.T) {
 				Addr: netip.MustParseAddrPort(fmt.Sprintf("198.51.100.%d:%d", 10+ip, 42000+port))})
 		}
 	}
-	for _, limit := range []int{maxRelayOnlyTargets, maxUnverifiedTargets} {
+	for _, limit := range []int{protocol.MaxRelayOnlyTargets, protocol.MaxUnverifiedTargets} {
 		pa := peerAddrsOf(familyPlan{Unverified: true, MaxTargets: limit}, fv)
 		if len(pa.direct) != limit || len(pa.public) != 4 || pa.sprayIP.IsValid() {
 			t.Fatalf("limit %d: %+v", limit, pa)
 		}
 	}
 	c.pair.Unverified = map[protocol.Family]bool{protocol.FamilyUDP4: true}
-	cl = p.Classify(ClassifyInput{Initiator: c.views[0], Responder: c.views[1], Pair: c.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}})
-	if cl.fams[1].MaxTargets != maxUnverifiedTargets || cl.fams[0].Unverified {
-		t.Fatalf("one family unverified: %+v", cl.fams)
+	cin.Pair = c.pair
+	if fams = famsOf(cin); fams[1].MaxTargets != protocol.MaxUnverifiedTargets || fams[0].Unverified {
+		t.Fatalf("one family unverified: %+v", fams)
 	}
 }
 
@@ -587,11 +591,12 @@ func TestRelayOnlyTargets(t *testing.T) {
 func TestSameLANStage(t *testing.T) {
 	c := admissionCaseNamed(t, "same_lan/pdf_x_seq")
 	var p DefaultPlanner
-	cl := p.Classify(ClassifyInput{Initiator: c.views[0], Responder: c.views[1], Pair: c.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}})
-	var prev []RoundOutcome
+	ci := api.ClassifyInput{Initiator: c.views[0], Responder: c.views[1], Pair: c.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+	cl := p.Classify(ci)
+	var prev []api.RoundOutcome
 	multi := false
 	for round := 1; round <= 6; round++ {
-		in := roundInput(cl, protocol.Traits{}, protocol.Traits{}, round, prev)
+		in := classified(roundInput(cl, protocol.Traits{}, protocol.Traits{}, round, prev), ci)
 		in.Views = c.views
 		in.AllowExtreme, in.MaxRounds, in.HandshakeMs = true, 6, 40000
 		dec := p.Round(in)
@@ -605,13 +610,13 @@ func TestSameLANStage(t *testing.T) {
 				netip.MustParseAddrPort("192.168.1.10:40000"), netip.MustParseAddrPort("192.168.1.10:40001"),
 				netip.MustParseAddrPort("192.168.1.11:40000"), netip.MustParseAddrPort("192.168.1.12:40000"),
 			}
-			if lan.Kind != protocol.StageDirect || !slices.Equal(lan.Targets, want) || lan.Repeats != lanRepeats || lan.TTL != 0 || lan.AtMs != 0 {
+			if lan.Kind != protocol.StageDirect || !slices.Equal(lan.Targets, want) || lan.Repeats != protocol.LANRepeats || lan.TTL != 0 || lan.AtMs != 0 {
 				t.Fatalf("round %d side %d: LAN stage %+v", round, r, lan)
 			}
 			multi = multi || fs.Sockets > 1
 		}
 		checkAdmitted(t, c.name, dec, c.views, c.pair, 0)
-		prev = append(prev, outcomeOf(round, dec, RCNoContact))
+		prev = append(prev, outcomeOf(round, dec, api.RoundNoContact))
 		if dec.Final {
 			break
 		}
@@ -623,14 +628,15 @@ func TestSameLANStage(t *testing.T) {
 	// Two LANs behind one upstream NAT: no LAN target, and the upstream-LAN
 	// candidate is left to peer_targets.
 	up := admissionCaseNamed(t, "upstream/pdf_x_seq")
-	cl = p.Classify(ClassifyInput{Initiator: up.views[0], Responder: up.views[1], Pair: up.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}})
-	in := roundInput(cl, protocol.Traits{}, protocol.Traits{}, 1, nil)
+	ci = api.ClassifyInput{Initiator: up.views[0], Responder: up.views[1], Pair: up.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+	cl = p.Classify(ci)
+	in := classified(roundInput(cl, protocol.Traits{}, protocol.Traits{}, 1, nil), ci)
 	in.Views = up.views
 	dec := p.Round(in)
 	for r := range 2 {
 		for _, st := range dec.Sides[r][0].Stages {
 			for _, a := range st.Targets {
-				if privateAddr(a.Addr()) {
+				if netaddr.Private(a.Addr()) {
 					t.Fatalf("side %d aims at %v on another LAN", r, a)
 				}
 			}
@@ -649,7 +655,7 @@ func TestLANStageBudget(t *testing.T) {
 	if st == nil {
 		t.Fatal("no LAN stage")
 	}
-	if len(st.Targets) != maxLANTargets || lanPackets(st) != 8 || lanStage(nil, nil) != nil {
+	if len(st.Targets) != protocol.MaxLANTargets || lanPackets(st) != 8 || lanStage(nil, nil) != nil {
 		t.Fatalf("stage %+v", st)
 	}
 	// Overlay targets follow the LAN ones, at most two.
@@ -659,7 +665,7 @@ func TestLANStageBudget(t *testing.T) {
 	if both == nil {
 		t.Fatal("no LAN and overlay stage")
 	}
-	if len(both.Targets) != 1+maxOverlayTargets || both.Targets[0] != four[0] {
+	if len(both.Targets) != 1+protocol.MaxOverlayTargets || both.Targets[0] != four[0] {
 		t.Fatalf("LAN and overlay stage %+v", both)
 	}
 	for _, c := range []struct{ budget, targets, repeats int }{{9, 4, 2}, {8, 4, 2}, {7, 3, 2}, {2, 1, 2}, {1, 1, 1}} {

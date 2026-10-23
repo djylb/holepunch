@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/internal/testkit"
 )
 
 func TestNewCodec(t *testing.T) {
@@ -52,7 +54,7 @@ func TestNewCodec(t *testing.T) {
 }
 
 func TestNextSeqAndNow(t *testing.T) {
-	clk := newManualClock()
+	clk := testkit.NewStepClock(t, clockStart)
 	c, err := NewCodec(testToken(), testRoute(), RoleInitiator, testPad, clk.Now)
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +66,7 @@ func TestNextSeqAndNow(t *testing.T) {
 	if c.Now() != 1500 {
 		t.Errorf("Now = %d, want 1500", c.Now())
 	}
-	clk.Advance(-time.Hour)
+	clk.Step(-time.Hour)
 	if c.Now() != 0 {
 		t.Errorf("Now before t0 = %d, want 0", c.Now())
 	}
@@ -492,6 +494,26 @@ func TestCheckRole(t *testing.T) {
 	} {
 		if got := c.c.CheckRole(&c.h); got != c.want {
 			t.Errorf("receiver %d %+v: %v, want %v", c.c.role, c.h, got, c.want)
+		}
+	}
+}
+
+func TestCandID(t *testing.T) {
+	for _, c := range []struct {
+		stage, index int
+		want         uint16
+		ok           bool
+	}{
+		{0, 0, 0, true},
+		{3, 17, 3<<12 | 17, true},
+		{maxCandStage, maxCandIndex, maxCandStage<<12 | maxCandIndex, true},
+		{0, maxCandIndex + 1, NoCand, false},
+		{maxCandStage + 1, 0, NoCand, false}, // stage 15 would reach NoCand
+		{-1, 0, NoCand, false},
+		{0, -1, NoCand, false},
+	} {
+		if got, ok := CandID(c.stage, c.index); got != c.want || ok != c.ok {
+			t.Errorf("CandID(%d, %d) = %#x %v, want %#x %v", c.stage, c.index, got, ok, c.want, c.ok)
 		}
 	}
 }

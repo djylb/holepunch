@@ -116,7 +116,7 @@ func (l *lane) wrote(to netip.AddrPort, now time.Time) {
 // without extending the run of its IP further than the class may (see the
 // rules above). The caller holds l.
 func (s *sender) runAllows(l *lane, to netip.AddrPort, o *sendOpt, now time.Time) bool {
-	if s.rt.isObserver(to) {
+	if s.host.isObserver(to) {
 		return true
 	}
 	cur := l.runs[to.Addr()]
@@ -136,5 +136,5 @@ func (s *sender) runAllows(l *lane, to netip.AddrPort, o *sendOpt, now time.Time
 // known reports whether ap is a Direct target of the packet's round or an
 // address that answered.
 func (s *sender) known(ap netip.AddrPort, o *sendOpt) bool {
-	return o.round != nil && o.round.direct[ap] || s.rt.punch.isHit(ap)
+	return o.round != nil && o.round.direct[ap] || s.hits.isHit(ap)
 }

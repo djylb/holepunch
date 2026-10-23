@@ -11,10 +11,13 @@
 // failure) and with CheckClosed that nothing is open once the caller has
 // closed its session; a failure lists the open sockets in opening order.
 //
-// The connections returned by TrackingNetwork expose exactly the optional
-// capabilities of the wrapped connection that the library probes for —
-// HopLimiter, syscall.Conn, SetReadBuffer and SetWriteBuffer — and no others,
-// so tracking never changes which code path the library takes.
+// The connections returned by TrackingNetwork are made by Wrap, which tests
+// also use to intercept a socket's reads, writes, hop limit and Close
+// (Hooks). They have the address-port calls ReadFromUDPAddrPort and
+// WriteToUDPAddrPort and exactly the optional capabilities of the wrapped
+// connection that the library probes for — HopLimiter, syscall.Conn,
+// SetReadBuffer and SetWriteBuffer — and no others, so wrapping never changes
+// which code path the library takes.
 //
 // OpenFDs counts the descriptors of the process on darwin (/dev/fd) and linux
 // (/proc/self/fd); CheckFDs waits until the count is back at a baseline.

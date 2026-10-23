@@ -156,6 +156,10 @@ func (fakeConn) LocalAddr() net.Addr                       { return nil }
 func (fakeConn) SetDeadline(time.Time) error               { return nil }
 func (fakeConn) SetReadDeadline(time.Time) error           { return nil }
 func (fakeConn) SetWriteDeadline(time.Time) error          { return nil }
+func (fakeConn) ReadFromUDPAddrPort([]byte) (int, netip.AddrPort, error) {
+	return 0, netip.AddrPort{}, net.ErrClosed
+}
+func (fakeConn) WriteToUDPAddrPort(p []byte, _ netip.AddrPort) (int, error) { return len(p), nil }
 
 // capRecorder implements every optional capability and records the calls.
 type capRecorder struct {

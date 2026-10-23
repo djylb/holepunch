@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -34,7 +35,7 @@ func TestProbeReplies(t *testing.T) {
 	register(t, r.reg, "s1", tok(1), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 	sock := nat.SocketID(protocol.FamilyUDP4, 0)
-	pkt := c.probe(probeOpts{sock: sock, obs: 1, extra: true})
+	pkt := c.probe(probetest.Probe{Sock: sock, Obs: 1, Extra: true})
 	var ph udpwire.Header
 	var pt udpwire.TLVs
 	cp := append([]byte(nil), pkt...)
@@ -85,7 +86,7 @@ func TestReplyLengthRule(t *testing.T) {
 	ackLens, pairLens, extraLens := map[int]bool{}, map[int]bool{}, map[int]bool{}
 	for i := range 3000 {
 		plain := 24 + i%200 // wire 69 … 268
-		pkt := c.probe(probeOpts{obs: 0, extra: true, plainLen: plain})
+		pkt := c.probe(probetest.Probe{Obs: 0, Extra: true, PlainLen: plain})
 		L := len(pkt)
 		if i%250 == 249 { // the extra quota is per role: refresh it
 			r.reg.lookup(rt(1)).roles[0].extraLeft = 255
@@ -143,12 +144,12 @@ func TestReplyCaps(t *testing.T) {
 	}
 	extras, alts, acks, quotaSeen := 0, 0, 0, false
 	for i := range 200 {
-		o := probeOpts{obs: uint8(i % 3)}
+		o := probetest.Probe{Obs: uint8(i % 3)}
 		switch i % 4 {
 		case 0:
-			o.extra = true
+			o.Extra = true
 		case 1:
-			o.alt = true
+			o.Alt = true
 		}
 		for _, rep := range r.deliver(i%3, c.probe(o), srcA) {
 			h, _ := open(t, c, rep.b)
@@ -176,7 +177,7 @@ func TestReplyCaps(t *testing.T) {
 	}
 	// the other role is not affected
 	c2 := newClient(t, tok(1), rt(1), udpwire.RoleResponder)
-	if out := r.deliver(0, c2.probe(probeOpts{extra: true}), srcA); len(out) != 2 {
+	if out := r.deliver(0, c2.probe(probetest.Probe{Extra: true}), srcA); len(out) != 2 {
 		t.Fatalf("responder: %d replies", len(out))
 	}
 }
@@ -187,14 +188,14 @@ func TestNoSecondReplyCases(t *testing.T) {
 	r := newRig(t, rigOpts{alt: true, noExtra: true})
 	register(t, r.reg, "s1", tok(1), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	out := r.deliver(0, c.probe(probeOpts{obs: 0, extra: true}), srcA)
+	out := r.deliver(0, c.probe(probetest.Probe{Obs: 0, Extra: true}), srcA)
 	if len(out) != 1 {
 		t.Fatalf("%d replies with extras disabled", len(out))
 	}
 	if h, _ := open(t, c, out[0].b); h.FA || h.FC {
 		t.Fatalf("ack %+v", h)
 	}
-	out = r.deliver(3, c.probe(probeOpts{obs: 8, alt: true}), srcA)
+	out = r.deliver(3, c.probe(probetest.Probe{Obs: 8, Alt: true}), srcA)
 	if len(out) != 1 {
 		t.Fatalf("%d replies on the alt listener", len(out))
 	}
@@ -205,7 +206,7 @@ func TestNoSecondReplyCases(t *testing.T) {
 	r2 := newRig(t, rigOpts{})
 	register(t, r2.reg, "s1", tok(1), rt(1))
 	c2 := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	out = r2.deliver(0, c2.probe(probeOpts{obs: 0, alt: true}), srcA)
+	out = r2.deliver(0, c2.probe(probetest.Probe{Obs: 0, Alt: true}), srcA)
 	if h, _ := open(t, c2, out[0].b); len(out) != 1 || h.FB {
 		t.Fatalf("%d replies, ack %+v", len(out), h)
 	}
@@ -221,7 +222,7 @@ func TestSessionRate(t *testing.T) {
 		if i%10 == 0 && i > 0 {
 			r.clk.Advance(50 * time.Millisecond)
 		}
-		if len(r.deliver(0, c.probe(probeOpts{}), srcA)) > 0 {
+		if len(r.deliver(0, c.probe(probetest.Probe{}), srcA)) > 0 {
 			accepted++
 		}
 	}
@@ -235,7 +236,7 @@ func TestSourceRateAndUnknownRoutes(t *testing.T) {
 	r := newRig(t, rigOpts{srcRate: Rate{PerSec: 512, Burst: 1024}})
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator) // never registered
 	for range 1100 {
-		if len(r.deliver(0, c.probe(probeOpts{}), srcA)) != 0 {
+		if len(r.deliver(0, c.probe(probetest.Probe{}), srcA)) != 0 {
 			t.Fatal("reply to an unknown route")
 		}
 	}
@@ -243,10 +244,10 @@ func TestSourceRateAndUnknownRoutes(t *testing.T) {
 		t.Fatalf("unknown %d rate %d auth %d", r.stats.unknownRoute.Load(), r.stats.rateSrc.Load(), r.stats.badAuth.Load())
 	}
 	// another /32 has its own bucket; another port of the same /32 does not
-	if r.deliver(0, c.probe(probeOpts{}), netip.MustParseAddrPort("203.0.113.6:1")); r.stats.unknownRoute.Load() != 1025 {
+	if r.deliver(0, c.probe(probetest.Probe{}), netip.MustParseAddrPort("203.0.113.6:1")); r.stats.unknownRoute.Load() != 1025 {
 		t.Fatal("another prefix limited")
 	}
-	r.deliver(0, c.probe(probeOpts{}), netip.MustParseAddrPort("203.0.113.5:9"))
+	r.deliver(0, c.probe(probetest.Probe{}), netip.MustParseAddrPort("203.0.113.5:9"))
 	if r.stats.rateSrc.Load() != 77 {
 		t.Fatal("the same /32 not limited")
 	}
@@ -316,17 +317,17 @@ func TestReplay(t *testing.T) {
 	r := newRig(t, rigOpts{reg: RegistryConfig{SessionRate: Rate{PerSec: 1e6, Burst: 1e6}, ProbeBudgetPerRole: 5000}})
 	register(t, r.reg, "s1", tok(1), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	pkt := c.probe(probeOpts{seq: 5000})
+	pkt := c.probe(probetest.Probe{Seq: 5000})
 	if len(r.deliver(0, append([]byte(nil), pkt...), srcA)) == 0 {
 		t.Fatal("first copy refused")
 	}
 	if len(r.deliver(0, pkt, srcA)) != 0 || r.stats.replay.Load() != 1 {
 		t.Fatal("replay answered")
 	}
-	if len(r.deliver(0, c.probe(probeOpts{seq: 5000 - 1024}), srcA)) != 0 || r.stats.replay.Load() != 2 {
+	if len(r.deliver(0, c.probe(probetest.Probe{Seq: 5000 - 1024}), srcA)) != 0 || r.stats.replay.Load() != 2 {
 		t.Fatal("a seq 1024 behind the top accepted")
 	}
-	if len(r.deliver(0, c.probe(probeOpts{seq: 5000 - 1023}), srcA)) == 0 {
+	if len(r.deliver(0, c.probe(probetest.Probe{Seq: 5000 - 1023}), srcA)) == 0 {
 		t.Fatal("a seq 1023 behind the top refused")
 	}
 	// the client's clock is irrelevant: codecs ±10 min off
@@ -336,14 +337,14 @@ func TestReplay(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		skewed := &client{t: t, codec: cc, role: udpwire.RoleInitiator}
-		if len(r.deliver(0, skewed.probe(probeOpts{seq: 6000 + uint32(skew/time.Minute+20)}), srcA)) == 0 {
+		skewed := &client{t: t, codec: cc}
+		if len(r.deliver(0, skewed.probe(probetest.Probe{Seq: 6000 + uint32(skew/time.Minute+20)}), srcA)) == 0 {
 			t.Fatalf("refused with a client clock off by %v", skew)
 		}
 	}
 	// a server clock that steps back restarts the session bucket, never stalls it
-	r.clk.Advance(-10 * time.Minute)
-	if len(r.deliver(0, c.probe(probeOpts{seq: 7000}), srcA)) == 0 {
+	r.clk.Step(-10 * time.Minute)
+	if len(r.deliver(0, c.probe(probetest.Probe{Seq: 7000}), srcA)) == 0 {
 		t.Fatal("refused after a backward clock step")
 	}
 }
@@ -353,16 +354,16 @@ func TestRejections(t *testing.T) {
 	r := newRig(t, rigOpts{})
 	register(t, r.reg, "s1", tok(1), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	if len(r.deliver(1, c.probe(probeOpts{obs: 2}), srcA)) != 0 || r.stats.badObserver.Load() != 1 {
+	if len(r.deliver(1, c.probe(probetest.Probe{Obs: 2}), srcA)) != 0 || r.stats.badObserver.Load() != 1 {
 		t.Fatal("observer mismatch answered")
 	}
-	pkt := c.probe(probeOpts{obs: 0})
+	pkt := c.probe(probetest.Probe{Obs: 0})
 	pkt[len(pkt)-1] ^= 1
 	if len(r.deliver(0, pkt, srcA)) != 0 || r.stats.badAuth.Load() != 1 {
 		t.Fatal("tampered probe answered")
 	}
 	// a modified masked route finds no session, or not this one
-	pkt = c.probe(probeOpts{obs: 0})
+	pkt = c.probe(probetest.Probe{Obs: 0})
 	pkt[udpwire.PeerOuterSize+3] ^= 1
 	if len(r.deliver(0, pkt, srcA)) != 0 || r.stats.unknownRoute.Load() != 1 {
 		t.Fatal("modified route answered")
@@ -391,10 +392,10 @@ func TestCookiesAndSlots(t *testing.T) {
 		_, tl := open(t, c, out[0].b)
 		return tl.Cookie
 	}
-	c1 := cookie(r.deliver(0, c.probe(probeOpts{sock: 0, obs: 0}), srcA))
-	c2 := cookie(r.deliver(0, c.probe(probeOpts{sock: 0, obs: 0}), srcA))
+	c1 := cookie(r.deliver(0, c.probe(probetest.Probe{Sock: 0, Obs: 0}), srcA))
+	c2 := cookie(r.deliver(0, c.probe(probetest.Probe{Sock: 0, Obs: 0}), srcA))
 	other := netip.MustParseAddrPort("203.0.113.5:40777")
-	c3 := cookie(r.deliver(0, c.probe(probeOpts{sock: 0, obs: 0}), other))
+	c3 := cookie(r.deliver(0, c.probe(probetest.Probe{Sock: 0, Obs: 0}), other))
 	if c1 == 0 || c1 != c2 || c3 == c2 {
 		t.Fatalf("cookies %d %d %d", c1, c2, c3)
 	}
@@ -402,8 +403,8 @@ func TestCookiesAndSlots(t *testing.T) {
 	if len(so) != 1 || so[0].First != srcA || so[0].Observed != other || so[0].Changes != 1 || so[0].Count != 3 || so[0].Cookie != c3 {
 		t.Fatalf("slot %+v", so)
 	}
-	cookie(r.deliver(1, c.probe(probeOpts{sock: 0, obs: 1}), srcA))
-	if c := cookie(r.deliver(2, c.probe(probeOpts{sock: 0, obs: 2}), srcA)); c != 0 {
+	cookie(r.deliver(1, c.probe(probetest.Probe{Sock: 0, Obs: 1}), srcA))
+	if c := cookie(r.deliver(2, c.probe(probetest.Probe{Sock: 0, Obs: 2}), srcA)); c != 0 {
 		t.Fatalf("the third slot got cookie %d", c)
 	}
 	// slots grow beyond their initial capacity
@@ -411,7 +412,7 @@ func TestCookiesAndSlots(t *testing.T) {
 	register(t, r2.reg, "s1", tok(1), rt(1))
 	for sock := range uint8(6) {
 		for o := range 3 {
-			r2.deliver(o, c.probe(probeOpts{sock: sock, obs: uint8(o)}), srcA)
+			r2.deliver(o, c.probe(probetest.Probe{Sock: sock, Obs: uint8(o)}), srcA)
 		}
 	}
 	if n := len((&handle{r: r2.reg, e: r2.reg.lookup(rt(1))}).Observations(protocol.RoleInitiator)); n != 18 {
@@ -427,7 +428,7 @@ func TestForgedSourceNeverVerified(t *testing.T) {
 	c := newClient(t, tok(1), rt(1), udpwire.RoleResponder)
 	victim := netip.MustParseAddrPort("192.0.2.77:9")
 	for o := range 3 {
-		r.deliver(o, c.probe(probeOpts{sock: 0, obs: uint8(o)}), victim) // the acks go to the victim
+		r.deliver(o, c.probe(probetest.Probe{Sock: 0, Obs: uint8(o)}), victim) // the acks go to the victim
 	}
 	rep := reportFor("s1", protocol.RoleResponder, protocol.FamilyUDP4, "10.0.0.2:5000",
 		[]protocol.RowReport{{Observer: 0, Observed: victim, RTTMs: 10}, {Observer: 1}, {Observer: 2}})
@@ -451,7 +452,7 @@ func TestWriteErrors(t *testing.T) {
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 	r.ls[0].conn.(*captureConn).fail = true
 	r.ls[0].pool.conns[0].(*captureConn).fail = true
-	if len(r.deliver(0, c.probe(probeOpts{extra: true}), srcA)) != 0 || r.stats.writeErrs.Load() != 2 {
+	if len(r.deliver(0, c.probe(probetest.Probe{Extra: true}), srcA)) != 0 || r.stats.writeErrs.Load() != 2 {
 		t.Fatalf("write errors %d", r.stats.writeErrs.Load())
 	}
 	if r.stats.acks.Load() != 0 || r.stats.extras.Load() != 0 || r.stats.bytesOut.Load() != 0 {
@@ -468,7 +469,7 @@ func TestSandwichQueue(t *testing.T) {
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 	sw := &[2]uint8{1, nat.SandwichBefore}
 	// before a sink: queued, then delivered by the attach
-	r.deliver(0, c.probe(probeOpts{sandwich: sw}), srcA)
+	r.deliver(0, c.probe(probetest.Probe{Sandwich: sw}), srcA)
 	release := make(chan struct{})
 	entered := make(chan struct{}, 1)
 	var mu sync.Mutex
@@ -492,13 +493,13 @@ func TestSandwichQueue(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		r.rds[0].process(c.probe(probeOpts{sandwich: sw}), srcA, netip.Addr{})
+		r.rds[0].process(c.probe(probetest.Probe{Sandwich: sw}), srcA, netip.Addr{})
 	}()
 	<-entered
 	// meanwhile reader 1 keeps answering; with the event in the sink, 7 more
 	// fit the capacity of 8
 	for range 12 {
-		r.rds[1].process(c.probe(probeOpts{obs: 1, sandwich: sw}), srcA, netip.Addr{})
+		r.rds[1].process(c.probe(probetest.Probe{Obs: 1, Sandwich: sw}), srcA, netip.Addr{})
 	}
 	if r.stats.acks.Load() != 14 || r.stats.sandwichDropped.Load() != 5 {
 		t.Fatalf("acks %d dropped %d", r.stats.acks.Load(), r.stats.sandwichDropped.Load())
@@ -513,7 +514,7 @@ func TestSandwichQueue(t *testing.T) {
 	}
 	// a panicking sink is contained and counted
 	h.AttachSandwichSink(func(nat.SandwichEvent) { panic("sink") })
-	r.deliver(0, c.probe(probeOpts{sandwich: sw}), srcA)
+	r.deliver(0, c.probe(probetest.Probe{Sandwich: sw}), srcA)
 	if r.stats.panics.Load() != 1 {
 		t.Fatalf("panics %d", r.stats.panics.Load())
 	}
@@ -627,7 +628,7 @@ func TestSessionRateConcurrentReaders(t *testing.T) {
 		c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 		pkts := make([][]byte, len(rds))
 		for i, rd := range rds {
-			pkts[i] = c.probe(probeOpts{obs: rd.l.id})
+			pkts[i] = c.probe(probetest.Probe{Obs: rd.l.id})
 		}
 		el := floodFor(rds, pkts, srcA, 500*time.Millisecond)
 		bound := 32 + int(16*el.Seconds()) + 1
@@ -644,8 +645,8 @@ func TestSandwichNoDeliveryAfterClose(t *testing.T) {
 	h := register(t, r.reg, "s1", tok(1), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 	sw := &[2]uint8{1, nat.SandwichBefore}
-	r.deliver(0, c.probe(probeOpts{sandwich: sw}), srcA)
-	r.deliver(0, c.probe(probeOpts{sandwich: sw}), srcA)
+	r.deliver(0, c.probe(probetest.Probe{Sandwich: sw}), srcA)
+	r.deliver(0, c.probe(probetest.Probe{Sandwich: sw}), srcA)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var closed atomic.Bool
 	var calls, afterClose atomic.Int32
@@ -678,7 +679,7 @@ func TestSandwichQueueBoundCountsInFlight(t *testing.T) {
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 	sw := &[2]uint8{1, nat.SandwichBefore}
 	for range 8 {
-		r.deliver(0, c.probe(probeOpts{sandwich: sw}), srcA)
+		r.deliver(0, c.probe(probetest.Probe{Sandwich: sw}), srcA)
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var consumed atomic.Int32
@@ -692,7 +693,7 @@ func TestSandwichQueueBoundCountsInFlight(t *testing.T) {
 	go func() { defer close(done); h.AttachSandwichSink(sink) }()
 	<-entered
 	for range 8 {
-		r.deliver(1, c.probe(probeOpts{obs: 1, sandwich: sw}), srcA)
+		r.deliver(1, c.probe(probetest.Probe{Obs: 1, Sandwich: sw}), srcA)
 	}
 	queued, used := r.stats.sandwichEvents.Load(), consumed.Load()
 	close(release)
@@ -711,7 +712,7 @@ func TestAttachSinkPanicCounted(t *testing.T) {
 	r := newRig(t, rigOpts{})
 	h := register(t, r.reg, "s1", tok(1), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	r.deliver(0, c.probe(probeOpts{sandwich: &[2]uint8{1, nat.SandwichBefore}}), srcA)
+	r.deliver(0, c.probe(probetest.Probe{Sandwich: &[2]uint8{1, nat.SandwichBefore}}), srcA)
 	calls := 0
 	h.AttachSandwichSink(func(nat.SandwichEvent) { calls++; panic("sink") })
 	if calls != 1 {
@@ -739,7 +740,7 @@ func TestSandwichZeroAlloc(t *testing.T) {
 	c := newClient(t, token, route, udpwire.RoleInitiator)
 	pkts := make([][]byte, 2000)
 	for i := range pkts {
-		pkts[i] = c.probe(probeOpts{sandwich: &[2]uint8{1, nat.SandwichAfter}})
+		pkts[i] = c.probe(probetest.Probe{Sandwich: &[2]uint8{1, nat.SandwichAfter}})
 	}
 	i := 0
 	if a := testing.AllocsPerRun(50, func() { bp.handle(pkts[i], srcA); i++ }); a != 0 {

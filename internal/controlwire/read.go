@@ -8,6 +8,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // maxEmptyReads bounds consecutive (0, nil) results from Read, which
@@ -74,7 +75,7 @@ func (c *Conn) readFrames() error {
 			payload = make([]byte, n)
 		} else {
 			if c.scratch == nil {
-				c.scratch = make([]byte, DiscardCap)
+				c.scratch = make([]byte, wiretype.DiscardCap)
 			}
 			payload = c.scratch[:n]
 		}
@@ -130,7 +131,7 @@ func (c *Conn) capFor(t Type) int {
 	if c.side.Receives(t) {
 		return t.Cap()
 	}
-	return DiscardCap
+	return wiretype.DiscardCap
 }
 
 // beginFrame reports whether the reader may start another frame.

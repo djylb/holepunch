@@ -11,12 +11,14 @@ import (
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/testkit"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/protocol"
 )
 
 // rawFrame is a frame header with an arbitrary major, type and length,
 // followed by payload.
-func rawFrame(major uint8, typ controlwire.Type, length uint32, payload []byte) []byte {
+func rawFrame(major uint8, typ wiretype.Type, length uint32, payload []byte) []byte {
 	b := make([]byte, controlwire.HeaderSize, controlwire.HeaderSize+len(payload))
 	b[0], b[1], b[2], b[3] = 'h', 'p', major, byte(typ)
 	binary.BigEndian.PutUint32(b[4:], length)
@@ -47,10 +49,10 @@ func violates(t *testing.T, raw []byte, code protocol.Reason, detail string) {
 // TestFrameLimitPerType: a frame one byte over its type's cap is a
 // protocol violation (frame_too_large), decided from the header alone.
 func TestFrameLimitPerType(t *testing.T) {
-	for _, typ := range []controlwire.Type{controlwire.TypeProbeReport, controlwire.TypePunchReady, controlwire.TypeProgress,
-		controlwire.TypeAssist, controlwire.TypePong, controlwire.TypeRoundResult, controlwire.TypePunchResult} {
+	for _, typ := range []wiretype.Type{wiretype.ProbeReport, wiretype.PunchReady, wiretype.Progress,
+		wiretype.Assist, wiretype.Pong, wiretype.RoundResult, wiretype.PunchResult} {
 		t.Run(typ.String(), func(t *testing.T) {
-			violates(t, rawFrame(controlwire.Version, typ, uint32(typ.Cap()+1), nil), protocol.ReasonProtocolViolation, "frame_too_large")
+			violates(t, rawFrame(wiretype.Version, typ, uint32(typ.Cap()+1), nil), protocol.ReasonProtocolViolation, "frame_too_large")
 		})
 	}
 }
@@ -59,7 +61,7 @@ func TestFrameLimitPerType(t *testing.T) {
 // control.version other than 1, is control_version_mismatch.
 func TestVersionMismatchRejected(t *testing.T) {
 	t.Run("header", func(t *testing.T) {
-		violates(t, rawFrame(2, controlwire.TypePong, 2, []byte("{}")), protocol.ReasonControlVersionMismatch, "")
+		violates(t, rawFrame(2, wiretype.Pong, 2, []byte("{}")), protocol.ReasonControlVersionMismatch, "")
 	})
 	t.Run("control.version", func(t *testing.T) {
 		r := newRig(t)
@@ -67,7 +69,7 @@ func TestVersionMismatchRejected(t *testing.T) {
 		rep := simclient.Report(*p.starts[0], 1, "", fam(0, simclient.OpenTraits))
 		rep.Control.Version = 2
 		b, _ := json.Marshal(rep)
-		if err := p.cl[0].SendFrame(ctx(t), controlwire.TypeProbeReport, b); err != nil {
+		if err := p.cl[0].SendFrame(ctx(t), wiretype.ProbeReport, b); err != nil {
 			t.Fatal(err)
 		}
 		if a := expectAbort(t, p.cl[1]); a.Reason != protocol.ReasonControlVersionMismatch || a.By != protocol.RoleInitiator {
@@ -85,8 +87,8 @@ func TestVersionMismatchRejected(t *testing.T) {
 // TestUnknownTypeTolerated: reserved types and types sent the wrong way are
 // read, dropped and counted; the 17th is a protocol violation.
 func TestUnknownTypeTolerated(t *testing.T) {
-	for _, typ := range []controlwire.Type{42, controlwire.TypePunchStart, controlwire.TypeProbeSummary,
-		controlwire.TypePunchGo, controlwire.TypeAbort, controlwire.TypePing} {
+	for _, typ := range []wiretype.Type{42, wiretype.PunchStart, wiretype.ProbeSummary,
+		wiretype.PunchGo, wiretype.Abort, wiretype.Ping} {
 		t.Run(typ.String(), func(t *testing.T) {
 			r := newRig(t)
 			p := r.noPongPair()
@@ -98,17 +100,17 @@ func TestUnknownTypeTolerated(t *testing.T) {
 			go func() { _, _ = io.Copy(io.Discard, nc) }()
 			payload := []byte("{" + strings.Repeat(" ", 1000) + "}")
 			for range controlwire.MaxDiscarded {
-				if _, err := nc.Write(rawFrame(controlwire.Version, typ, uint32(len(payload)), payload)); err != nil {
+				if _, err := nc.Write(rawFrame(wiretype.Version, typ, uint32(len(payload)), payload)); err != nil {
 					t.Fatal(err)
 				}
 			}
 			rep := simclient.Report(*p.starts[0], 1, "", fam(0, simclient.OpenTraits))
 			f, _ := msgframe.Encode(&rep)
-			if _, err := nc.Write(rawFrame(controlwire.Version, f.Type, uint32(len(f.Payload)), f.Payload)); err != nil {
+			if _, err := nc.Write(rawFrame(wiretype.Version, f.Type, uint32(len(f.Payload)), f.Payload)); err != nil {
 				t.Fatal(err)
 			}
-			eventually(t, "report after unknown frames", func() bool { return p.s.Snapshot().Reported[0] })
-			if _, err := nc.Write(rawFrame(controlwire.Version, typ, uint32(len(payload)), payload)); err != nil {
+			testkit.WaitFor(t, "report after unknown frames", func() bool { return p.s.Snapshot().Reported[0] })
+			if _, err := nc.Write(rawFrame(wiretype.Version, typ, uint32(len(payload)), payload)); err != nil {
 				t.Fatal(err)
 			}
 			res := r.wait(p.s)
@@ -169,7 +171,7 @@ func TestProgressQuota(t *testing.T) {
 		send(t, p.cl[0], &protocol.Progress{SessionID: p.s.ID(), Role: protocol.RoleInitiator, Seq: uint16(i), Stage: "probe_started"})
 	}
 	p.report(0)
-	eventually(t, "report", func() bool { return p.s.Snapshot().Reported[0] })
+	testkit.WaitFor(t, "report", func() bool { return p.s.Snapshot().Reported[0] })
 	p.s.Abort(protocol.ReasonCanceled, "")
 	res := r.wait(p.s)
 	if res.Counters.ProgressDropped != 2 || len(res.Timeline) != 3 {
@@ -187,7 +189,7 @@ func TestMessageViolations(t *testing.T) {
 		do     func(t *testing.T, p *pair)
 	}{
 		{"bad json", "", func(t *testing.T, p *pair) {
-			_ = p.cl[0].SendFrame(ctx(t), controlwire.TypeProbeReport, []byte("{not json"))
+			_ = p.cl[0].SendFrame(ctx(t), wiretype.ProbeReport, []byte("{not json"))
 		}},
 		{"session", "session_mismatch", func(t *testing.T, p *pair) {
 			rep := simclient.Report(*p.starts[0], 1, "", fam(0, simclient.OpenTraits))
@@ -257,7 +259,7 @@ func TestLateMessagesIgnored(t *testing.T) {
 	send(t, p.cl[0], simclient.Ready(sums[0], protocol.RoleInitiator, 1))
 	p.windowEnd(0, 1, simclient.Outcome{})
 	p.windowEnd(1, 1, simclient.Outcome{})
-	eventually(t, "round 2", func() bool { return p.s.Snapshot().Round == 2 })
+	testkit.WaitFor(t, "round 2", func() bool { return p.s.Snapshot().Round == 2 })
 	p.windowEnd(0, 1, simclient.Outcome{}) // the previous round, late
 	p.confirm(0, 2)
 	p.state(StateConfirming)

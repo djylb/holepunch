@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/coord/internal/faultconn"
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/faultconn"
+	"github.com/djylb/holepunch/internal/testkit"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -46,7 +48,7 @@ func TestHappyPath(t *testing.T) {
 	if r.c.Len() != 0 || r.c.Stats().ActiveByKey != 0 {
 		t.Fatalf("Len %d stats %+v", r.c.Len(), r.c.Stats())
 	}
-	if len(res.Rounds) != 1 || res.Rounds[0].Class != RoundConfirmed || res.Rounds[0].Granted[0] == 0 {
+	if len(res.Rounds) != 1 || res.Rounds[0].Class != plan.RoundConfirmed || res.Rounds[0].Granted[0] == 0 {
 		t.Fatalf("rounds %+v", res.Rounds)
 	}
 	if res.Clients[0] == nil || !res.Clients[0].OK || res.Timing.FirstGo.IsZero() || res.Timing.Summary.IsZero() {
@@ -77,7 +79,7 @@ func TestAttachOrderIndependent(t *testing.T) {
 			t.Fatalf("summary_wait_ms %d", p.starts[first].Timeouts.SummaryWaitMs)
 		}
 		p.report(first)
-		eventually(t, "early report", func() bool { return s.Snapshot().Reported[first] })
+		testkit.WaitFor(t, "early report", func() bool { return s.Snapshot().Reported[first] })
 		second := 1 - first
 		p.cl[second] = r.attach(s, roleOf(second))
 		p.starts[second] = expect[protocol.PunchStart](t, p.cl[second])
@@ -223,7 +225,7 @@ func TestSucceededReleasesImmediately(t *testing.T) {
 	p.confirm(0, 1)
 	p.confirm(1, 1)
 	p.state(StateConfirming)
-	eventually(t, "both confirmed", func() bool { return p.s.Snapshot().Confirmed == [2]bool{true, true} })
+	testkit.WaitFor(t, "both confirmed", func() bool { return p.s.Snapshot().Confirmed == [2]bool{true, true} })
 	r.clk.Advance(defResultGrace - time.Millisecond)
 	select {
 	case <-p.s.Done():
@@ -281,10 +283,10 @@ func TestConfirmLinger(t *testing.T) {
 		p.confirm(1, 1)
 		p.state(StateConfirming)
 		send(t, p.cl[0], simclient.Failure(p.s.ID(), protocol.RoleInitiator, protocol.ReasonHandoverTimeout, protocol.PhaseHandover))
-		eventually(t, "final recorded", func() bool {
+		testkit.WaitFor(t, "final recorded", func() bool {
 			p.s.mu.Lock()
 			defer p.s.mu.Unlock()
-			return p.s.st.finals[0] != nil
+			return p.s.st.confirm.finals[0] != nil
 		})
 		r.clk.Advance(3 * time.Second)
 		res := r.wait(p.s)
@@ -341,7 +343,7 @@ func TestControlLossDuringPunching(t *testing.T) {
 		p := r.pair(SessionOptions{})
 		p.punching()
 		_ = p.cl[0].Close()
-		eventually(t, "gone", func() bool {
+		testkit.WaitFor(t, "gone", func() bool {
 			return p.s.Snapshot().State == StatePunching && func() bool {
 				p.s.mu.Lock()
 				defer p.s.mu.Unlock()
@@ -361,7 +363,7 @@ func TestControlLossDuringPunching(t *testing.T) {
 		p := r.pair(SessionOptions{})
 		p.punching()
 		_ = p.cl[0].Close()
-		eventually(t, "gone", func() bool {
+		testkit.WaitFor(t, "gone", func() bool {
 			p.s.mu.Lock()
 			defer p.s.mu.Unlock()
 			return p.s.st.gone[0]
@@ -632,7 +634,7 @@ func TestProgressNeverDrivesState(t *testing.T) {
 		send(t, p.cl[0], &protocol.Progress{SessionID: p.s.ID(), Role: protocol.RoleInitiator, Seq: uint16(i + 1),
 			Stage: stage, Status: protocol.StatusOK, Round: 1})
 	}
-	eventually(t, "timeline", func() bool { return p.s.Snapshot().LastStage[0] == "handover_done" })
+	testkit.WaitFor(t, "timeline", func() bool { return p.s.Snapshot().LastStage[0] == "handover_done" })
 	if snap := p.s.Snapshot(); snap.State != StatePunching || snap.Confirmed != [2]bool{} {
 		t.Fatalf("snapshot %+v", snap)
 	}

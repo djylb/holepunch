@@ -5,14 +5,8 @@ import (
 	"net/netip"
 	"slices"
 
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
-)
-
-// Endpoint bounds (FamilyView.endpoints; LAN addresses).
-const (
-	maxEndpoints        = 12
-	maxLANEndpoints     = 4
-	maxOverlayEndpoints = 2
 )
 
 // VerifiedIPs returns the IPs of the verified server rows in the
@@ -25,7 +19,7 @@ func (t *ObsTable) VerifiedIPs() []netip.Addr {
 	return t.verifiedIPsLocked(t.classScopeLocked())
 }
 
-func (t *ObsTable) verifiedIPsLocked(scope Scope) []netip.Addr {
+func (t *ObsTable) verifiedIPsLocked(scope netaddr.Scope) []netip.Addr {
 	var out []netip.Addr
 	for _, r := range t.rows {
 		if t.verifiedServerRowLocked(r, scope) && !slices.Contains(out, r.Observed.Addr()) {
@@ -38,8 +32,8 @@ func (t *ObsTable) verifiedIPsLocked(scope Scope) []netip.Addr {
 // verifiedServerRowLocked: a verified natprobe row whose observer and value
 // are both in the scope. A private observer's verified row would pass the
 // peer's admission anywhere, so it never becomes a server endpoint.
-func (t *ObsTable) verifiedServerRowLocked(r Row, scope Scope) bool {
-	if !r.Verified || !r.Observed.IsValid() || ScopeOf(r.Observed.Addr()) != scope {
+func (t *ObsTable) verifiedServerRowLocked(r Row, scope netaddr.Scope) bool {
+	if !r.Verified || !r.Observed.IsValid() || netaddr.ScopeOf(r.Observed.Addr()) != scope {
 		return false
 	}
 	if r.Key.Source != SourceServer && r.Key.Source != SourceServerAlt {
@@ -52,8 +46,8 @@ func (t *ObsTable) verifiedServerRowLocked(r Row, scope Scope) bool {
 // AdmitSelfReported reports whether a self-reported address of source src may
 // enter a server-side table (anti-reflection): a STUN address only
 // when its IP is verified; a port-mapping external address when its IP is
-// verified, or private or shared space (a LAN or CGNAT candidate). Other
-// sources are never self-reported.
+// verified, or a usable LAN-scope one (netaddr.Private: a LAN or CGNAT
+// candidate upstream). Other sources are never self-reported.
 func AdmitSelfReported(src Source, a netip.AddrPort, verified []netip.Addr) bool {
 	ip := a.Addr().Unmap()
 	if !ip.IsValid() || a.Port() == 0 {
@@ -63,7 +57,11 @@ func AdmitSelfReported(src Source, a netip.AddrPort, verified []netip.Addr) bool
 	case SourceSTUN:
 		return slices.Contains(verified, ip)
 	case SourcePortMap:
-		return slices.Contains(verified, ip) || ip.IsPrivate() || IsCGN(ip)
+		// A gateway on the client's own network may map from a private,
+		// CGN or link-local address: the address an upstream router of a
+		// double NAT hands out. The client and the coordinator take the
+		// same set as upstream-LAN candidates.
+		return slices.Contains(verified, ip) || netaddr.Private(ip) && !netaddr.Unusable(ip)
 	case SourceServer, SourceServerAlt, SourcePeer:
 		// Observed by a server or the peer, never self-reported.
 	}
@@ -99,7 +97,7 @@ func (t *ObsTable) admitReportedLocked(src Source, a netip.AddrPort, verified []
 	}
 	ip := a.Addr().Unmap()
 	return t.reportedFallback && (src == SourceSTUN || src == SourcePortMap) && a.Port() != 0 &&
-		ScopeOf(ip) == ScopeGlobal && t.family.Matches(ip) && t.lanObservedLocked()
+		netaddr.Public(ip) && t.family.Matches(ip) && t.lanObservedLocked()
 }
 
 // NoteOverlay records the host's overlay addresses of the table's family
@@ -110,13 +108,21 @@ func (t *ObsTable) admitReportedLocked(src Source, a netip.AddrPort, verified []
 func (t *ObsTable) NoteOverlay(addrs []netip.Addr) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.overlay = t.overlay[:0]
+	t.overlay = overlayAddrs(t.family, addrs)
+}
+
+// overlayAddrs keeps the overlay addresses of family fam a view may list:
+// the first protocol.MaxOverlayAddrs distinct ones that pass overlayCandidate,
+// unmapped.
+func overlayAddrs(fam protocol.Family, addrs []netip.Addr) []netip.Addr {
+	var out []netip.Addr
 	for _, a := range addrs {
 		a = a.Unmap()
-		if len(t.overlay) < maxOverlayEndpoints && t.family.Matches(a) && overlayCandidate(a) && !slices.Contains(t.overlay, a) {
-			t.overlay = append(t.overlay, a)
+		if len(out) < protocol.MaxOverlayAddrs && fam.Matches(a) && overlayCandidate(a) && !slices.Contains(out, a) {
+			out = append(out, a)
 		}
 	}
+	return out
 }
 
 // Endpoints returns what a server-side table may hand to the peer, at most 12
@@ -139,17 +145,8 @@ func (t *ObsTable) Endpoints() []protocol.Endpoint {
 	defer t.mu.Unlock()
 	scope := t.classScopeLocked()
 	verified := t.verifiedIPsLocked(scope)
-	var out []protocol.Endpoint
-	add := func(a netip.AddrPort, src protocol.EndpointSource, sock uint8, v bool) bool {
-		if len(out) == maxEndpoints || slices.ContainsFunc(out, func(e protocol.Endpoint) bool { return e.Addr == a }) {
-			return false
-		}
-		out = append(out, protocol.Endpoint{Addr: a, Source: src, Socket: sock, Verified: v})
-		return true
-	}
-	var guess netip.AddrPort // the primary socket's local port on its verified IP
-	var guessSock uint8
-	for _, kind := range [...]protocol.SocketKind{protocol.SocketPrimary, protocol.SocketSecond, protocol.SocketSibling} {
+	var l endpointList
+	for _, kind := range socketKinds {
 		for _, s := range t.sockets {
 			if s.Kind != kind {
 				continue
@@ -160,39 +157,165 @@ func (t *ObsTable) Endpoints() []protocol.Endpoint {
 					rows = append(rows, r)
 				}
 			}
-			slices.SortStableFunc(rows, func(a, b Row) int { return cmp.Compare(a.FirstSeq, b.FirstSeq) })
-			for _, r := range rows {
-				add(r.Observed, endpointSource(kind), s.ID, true)
-			}
-			if kind == protocol.SocketPrimary && len(rows) > 0 && s.Local.Port() != 0 && !guess.IsValid() {
-				guess, guessSock = netip.AddrPortFrom(rows[0].Observed.Addr(), s.Local.Port()), s.ID
-			}
+			l.observed(s, rows, true)
 		}
 	}
 	for _, src := range [...]Source{SourceSTUN, SourcePortMap} {
 		for _, r := range t.rows {
 			if r.Key.Source == src && r.Observed.IsValid() && t.admitReportedLocked(src, r.Observed, verified) {
-				add(r.Observed, selfReportedSource(src), r.Key.Socket, false)
+				l.add(r.Observed, selfReportedSource(src), r.Key.Socket, false)
 			}
 		}
 	}
-	if guess.IsValid() {
-		add(guess, protocol.EndpointLocalPort, guessSock, false) // nothing when an observation holds it
-	}
-	lan := 0
+	l.addGuess()
 	for _, s := range t.sockets {
-		lanSocket := s.Kind == protocol.SocketPrimary || s.Kind == protocol.SocketSibling
-		if lan < maxLANEndpoints && lanSocket && usableIn(t.family, s.Local) && lanCandidate(s.Local, verified) &&
-			add(s.Local, protocol.EndpointLAN, s.ID, false) {
-			lan++
+		l.addLAN(t.family, s, verified)
+	}
+	if p, ok := t.socketOfKindLocked(protocol.SocketPrimary); ok {
+		l.addOverlay(p, t.overlay)
+	}
+	return l.out
+}
+
+// SelfReportedView is the family view of a client built from its own report
+// alone, for a family no server observation verifies: its provisional
+// traits and the endpoints Endpoints would list were every value it
+// reports admitted, none of them verified — the observed values of its
+// probe rows, its STUN answers and its port mapping, the local-port guess,
+// the LAN addresses of its primary and sibling sockets and then the host's
+// global addresses at the primary socket's port (a host without NAT is
+// reached there), and its overlay addresses at that port. A value that no
+// table would hold (protocol.UsableEndpoint), or that no peer could reach
+// (netaddr.UsableTarget: loopback, broadcast, zoneless link-local), is left
+// out.
+func SelfReportedView(fr protocol.FamilyReport) protocol.FamilyView {
+	fam := fr.Family
+	fv := protocol.FamilyView{Family: fam, Traits: fr.Traits}
+	fv.Traits.Family = fam
+	// PortAnchorMs is on the server's axis, which a client cannot know; the
+	// punch-time mappings re-anchor the prediction instead.
+	fv.Traits.PortAnchorMs = 0
+	// The wire admits loopback, the limited broadcast and zoneless
+	// link-local; no peer can reach a client there.
+	usable := func(a netip.AddrPort) bool { return protocol.UsableEndpoint(fam, a) && netaddr.UsableTarget(a) }
+	var (
+		l       endpointList
+		primary SocketMeta
+		public  []netip.Addr // the host's global addresses: a host without NAT is reached there
+		ok      bool
+	)
+	for _, a := range fr.LocalAddrs {
+		if a = a.Unmap(); fam.Matches(a) && netaddr.Public(a) && !slices.Contains(public, a) {
+			public = append(public, a)
 		}
 	}
-	if p, ok := t.socketOfKindLocked(protocol.SocketPrimary); ok && p.Local.Port() != 0 {
-		for _, a := range t.overlay {
-			add(netip.AddrPortFrom(a, p.Local.Port()), protocol.EndpointOverlay, p.ID, false)
+	for _, kind := range socketKinds {
+		for _, sk := range fr.Sockets {
+			if sk.Kind != kind {
+				continue
+			}
+			s := SocketMeta{ID: sk.ID, Kind: sk.Kind, Local: netaddr.Unmap(sk.Local)}
+			if kind == protocol.SocketPrimary && !ok {
+				primary, ok = s, true
+			}
+			var rows []Row
+			for _, r := range sk.Rows {
+				if a := netaddr.Unmap(r.Observed); usable(a) {
+					rows = append(rows, Row{Observed: a, FirstSeq: r.FirstSeq})
+				}
+			}
+			l.observed(s, rows, false)
 		}
 	}
-	return out
+	for _, r := range fr.STUN {
+		if a := netaddr.Unmap(r.Observed); usable(a) {
+			l.add(a, protocol.EndpointSTUN, primary.ID, false)
+		}
+	}
+	if pm := fr.PortMap; pm != nil {
+		if a := netaddr.Unmap(pm.External); usable(a) {
+			l.add(a, protocol.EndpointPortmap, primary.ID, false)
+		}
+	}
+	l.addGuess()
+	for _, sk := range fr.Sockets {
+		l.addLAN(fam, SocketMeta{ID: sk.ID, Kind: sk.Kind, Local: netaddr.Unmap(sk.Local)}, public)
+	}
+	if ok {
+		for _, a := range public {
+			l.addLAN(fam, SocketMeta{ID: primary.ID, Kind: primary.Kind, Local: netip.AddrPortFrom(a, primary.Local.Port())}, public)
+		}
+		l.addOverlay(primary, overlayAddrs(fam, fr.Overlay))
+	}
+	fv.Endpoints = l.out
+	if fv.Traits.Samples == 0 && len(fv.Endpoints) > 0 {
+		fv.Traits.Samples = 1
+	}
+	return fv
+}
+
+// socketKinds is the order in which a view lists the sockets' observations.
+var socketKinds = [...]protocol.SocketKind{protocol.SocketPrimary, protocol.SocketSecond, protocol.SocketSibling}
+
+// endpointList builds the endpoints of a family view by the rules of
+// Endpoints: at most protocol.MaxEndpoints, no address twice, at most
+// protocol.MaxLANTargets LAN ones.
+type endpointList struct {
+	out       []protocol.Endpoint
+	guess     netip.AddrPort // the primary socket's local port on its first observed IP
+	lan       int
+	guessSock uint8
+}
+
+// add appends a, unless the list is full or holds it already, and reports
+// whether it did.
+func (l *endpointList) add(a netip.AddrPort, src protocol.EndpointSource, sock uint8, verified bool) bool {
+	if len(l.out) == protocol.MaxEndpoints || slices.ContainsFunc(l.out, func(e protocol.Endpoint) bool { return e.Addr == a }) {
+		return false
+	}
+	l.out = append(l.out, protocol.Endpoint{Addr: a, Source: src, Socket: sock, Verified: verified})
+	return true
+}
+
+// observed adds the observed values of socket s's rows by mapping creation
+// order and notes the local-port guess of the first primary socket with an
+// observation.
+func (l *endpointList) observed(s SocketMeta, rows []Row, verified bool) {
+	slices.SortStableFunc(rows, func(a, b Row) int { return cmp.Compare(a.FirstSeq, b.FirstSeq) })
+	for _, r := range rows {
+		l.add(r.Observed, endpointSource(s.Kind), s.ID, verified)
+	}
+	if s.Kind == protocol.SocketPrimary && len(rows) > 0 && s.Local.Port() != 0 && !l.guess.IsValid() {
+		l.guess, l.guessSock = netip.AddrPortFrom(rows[0].Observed.Addr(), s.Local.Port()), s.ID
+	}
+}
+
+// addGuess adds the local-port guess (EndpointLocalPort): nothing when an
+// observation holds it already.
+func (l *endpointList) addGuess() {
+	if l.guess.IsValid() {
+		l.add(l.guess, protocol.EndpointLocalPort, l.guessSock, false)
+	}
+}
+
+// addLAN adds the local address of a primary or sibling socket s when it
+// passes the LAN rule (lanCandidate) with public as the host's public IPs.
+func (l *endpointList) addLAN(fam protocol.Family, s SocketMeta, public []netip.Addr) {
+	lanSocket := s.Kind == protocol.SocketPrimary || s.Kind == protocol.SocketSibling
+	if l.lan < protocol.MaxLANTargets && lanSocket && protocol.UsableEndpoint(fam, s.Local) && lanCandidate(s.Local, public) &&
+		l.add(s.Local, protocol.EndpointLAN, s.ID, false) {
+		l.lan++
+	}
+}
+
+// addOverlay adds the overlay addresses at the primary socket's port.
+func (l *endpointList) addOverlay(primary SocketMeta, overlay []netip.Addr) {
+	if primary.Local.Port() == 0 {
+		return
+	}
+	for _, a := range overlay {
+		l.add(netip.AddrPortFrom(a, primary.Local.Port()), protocol.EndpointOverlay, primary.ID, false)
+	}
 }
 
 func endpointSource(k protocol.SocketKind) protocol.EndpointSource {
@@ -212,26 +335,18 @@ func selfReportedSource(src Source) protocol.EndpointSource {
 	return protocol.EndpointSTUN
 }
 
-// lanCandidate applies the LAN rule to a local socket address. The
-// shared space 100.64/10 is no LAN: Tailscale and the carriers number their
-// overlays and subscribers there.
+// lanCandidate applies the LAN rule to a local socket address: a usable
+// target that is netaddr.Private, or a verified IP of a host without NAT.
+// The shared space 100.64/10 is no LAN: Tailscale and the carriers number
+// their overlays and subscribers there.
 func lanCandidate(a netip.AddrPort, verified []netip.Addr) bool {
 	ip := a.Addr().Unmap()
-	switch {
-	case !ip.IsValid() || a.Port() == 0 || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLoopback() || IsCGN(ip):
+	if !netaddr.UsableTarget(a) || netaddr.IsCGN(ip) {
 		return false
-	case ip.Is6() && ip.IsLinkLocalUnicast():
-		return false // the peer cannot use it without our zone
-	case ip.IsPrivate() || ip.IsLinkLocalUnicast():
-		return true
 	}
-	return slices.Contains(verified, ip)
+	return netaddr.Private(ip) || slices.Contains(verified, ip)
 }
 
 // overlayCandidate reports whether a reported overlay address can be aimed
-// at: a unicast address that is not loopback, unspecified or IPv6 link
-// local.
-func overlayCandidate(ip netip.Addr) bool {
-	return ip.IsValid() && !ip.IsUnspecified() && !ip.IsMulticast() && !ip.IsLoopback() && !(ip.Is6() && ip.IsLinkLocalUnicast()) &&
-		ip != netip.AddrFrom4([4]byte{255, 255, 255, 255})
-}
+// at: one that is not netaddr.Unusable.
+func overlayCandidate(ip netip.Addr) bool { return !netaddr.Unusable(ip) }

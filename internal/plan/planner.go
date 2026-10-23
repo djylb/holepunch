@@ -1,140 +1,12 @@
 package plan
 
 import (
-	"net/netip"
+	"slices"
 	"time"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
-
-// RoundClass is the coordinator's reading of a finished round. The
-// planner consumes the previous round's class to decide advancement.
-type RoundClass uint8
-
-const (
-	RCNoReport    RoundClass = iota // one side's result missing
-	RCConfirmed                     // a side confirmed; no further round
-	RCConfirmLost                   // both hit but no confirm
-	RCOneWay                        // one direction only
-	RCNoContact                     // neither side saw a peer packet
-	RCBlocked                       // udp_blocked / icmp_unreach >= 50
-)
-
-// Evidence is the cross-round accumulation the planner reads, indexed by role
-// (0 = initiator, 1 = responder).
-type Evidence struct {
-	SeenFrom    [2][]netip.AddrPort // deduped peer sources (<= 8)
-	Hit         [2]bool
-	PeerSeenUs  [2]bool
-	Sent        [2]uint32
-	Fired       [2]bool // the side entered the fire window at least once
-	Drift       [2]bool
-	ICMPUnreach [2]uint16
-	BindFailed  [2]uint16
-	BudgetHit   [2]bool
-	Fatal       [2]protocol.Reason
-}
-
-// FamilyRound is what one shared family runs in a round. Each family follows
-// its own ladder, with its own BirthdayTier, extreme and two-sided-birthday
-// gates and its own class.
-type FamilyRound struct {
-	Family protocol.Family
-	// Budget is the family's effective class: its variant's class under the
-	// round's escalation guard. RoundDecision.Budget is the highest of them;
-	// it is empty for an exhausted family.
-	Budget protocol.BudgetClass
-	// Mapped is, by role, how many new external mappings the round made in
-	// the family on the side's NAT: its granted plan's new (socket,
-	// destination) pairs (SideMappings; the spray part cut to the distinct
-	// ports the client reported), the peer_targets ports it was sent, two
-	// for the sandwich probes of a fresh helper socket, one for a
-	// re-observation probe that found a new mapping. The coordinator fills it
-	// in RoundOutcome.Families; a sequential endpoint-dependent NAT
-	// allocates one port per mapping, so seq_x_seq advances a side's
-	// predicted port by it (pairAnchor). The planner leaves it zero
-	// in RoundDecision.
-	Mapped [2]int
-	// Center is, by role, the port the role's predict stage centred on: the
-	// peer's predicted next port, the stage's anchor plus its first step; 0
-	// without a predict stage. The planner sets it; the outcome returns it, and
-	// the next round of pdf_x_seq sends the ports around it once more.
-	Center [2]uint16
-	// Heard is, by role, whether the side heard its peer in the family
-	// during the round: a hit or a peer source. The coordinator fills it in
-	// RoundOutcome.Families; two one-way rounds with the same side hearing
-	// and the other never make the family a PDF×RND pair with the hearer
-	// as the random side (oneWaySeer). The planner leaves it zero
-	// in RoundDecision.
-	Heard [2]bool
-	// Variant is the family's variant this round, or VInvalid once the
-	// family's ladder is exhausted: its sides then only reply (reply_only)
-	// while another family still runs.
-	Variant VariantID
-	// NoContact: neither side heard the other in the family during the
-	// round, and neither saw the path blocked. The coordinator fills it in
-	// RoundOutcome.Families; two in a row make a doubtful EIM side endpoint
-	// dependent (escalate). The planner leaves it false in
-	// RoundDecision.
-	NoContact bool
-}
-
-// RoundOutcome summarises a finished round for the planner (Prev). Budget is
-// the class the coordinator actually granted that round; the escalation guard
-// bases the next round on it, not on the variant's template class.
-type RoundOutcome struct {
-	Budget protocol.BudgetClass
-	// SeenFrom and Hit are this round's own evidence by role — the
-	// round_result seen_from (deduplicated) and hit — not the cumulative
-	// Evidence. After a one-way round the rescue round makes the side that
-	// heard the other the sender, toward the sources it heard, in their
-	// family: cumulative evidence would also count earlier rounds
-	// and may point at the wrong side. An outcome without them leaves that
-	// choice to the cumulative Evidence.
-	SeenFrom [2][]netip.AddrPort
-	// Families is the round's RoundDecision.Families, which the coordinator
-	// copies: the planner advances each family's own ladder from it. An
-	// outcome without it is read as the primary family running Variant and
-	// every other family advancing one rung (none after ConfirmLost) —
-	// exact for a single-family session; a dual-stack session needs it to
-	// follow each family's skips and exhaustion.
-	Families []FamilyRound
-	Round    int
-	Hit      [2]bool
-	Variant  VariantID
-	Class    RoundClass
-	Rescue   bool
-}
-
-// ClassifyInput is the planner's one-shot classification input. The
-// two views are the server's merged views by role, exactly as the clients
-// receive them. Pair says, per family, which families the server could not
-// verify (Pair.Unverified: Direct to self-reported global addresses only)
-// and which pairs share a LAN (Pair.LikelySameLAN: the peers' LAN endpoints
-// become targets).
-type ClassifyInput struct {
-	Initiator protocol.PeerView
-	Responder protocol.PeerView
-	// Measured is, by role (0 initiator, 1 responder), what natprobe itself
-	// measured of each family it observed: the view the natprobe merge returns
-	// without a TraitsMemory (the coordinator's raw view). A family
-	// natprobe did not observe is absent — every family without a natprobe
-	// registry, a family no observer covers — and so is the
-	// whole view when the coordinator has none. Initiator and Responder
-	// choose the ladders, but they may carry a client's self-reported
-	// traits or a conclusion the traits memory raised; only these traits,
-	// and only their port allocation and its confidence, can end a session
-	// at summary time (summaryVerdict). Endpoints are not read.
-	Measured [2]protocol.PeerView
-	Pair     protocol.PairFacts
-	Policy   protocol.Policy
-	Timeouts protocol.Timeouts
-	Features []protocol.Feature
-	// Mode is the session's mode: in ModeBackground a pdf_x_rnd
-	// family runs the slow birthday instead of the bursty one-sided birthday
-	// rounds.
-	Mode protocol.SessionMode
-}
 
 // familyPlan is the per-family classification. Each shared family runs its own
 // ladder; for a dual-stack session the families can be in
@@ -146,7 +18,7 @@ type familyPlan struct {
 	// TierCap caps the session's BirthdayTier for this family: conservative
 	// for a v6 family behind NAT66, "" for no cap.
 	TierCap protocol.BirthdayTier
-	Ladder  []VariantID
+	Ladder  []api.VariantID
 	// MaxTargets bounds the Direct targets of a side and round: 8 in a
 	// verified family; in an unverified one 4, or 16 when every
 	// shared family is unverified (the NoObserver mode).
@@ -188,116 +60,6 @@ type familyPlan struct {
 	Restart bool
 }
 
-// Classification is the planner's one-shot output. The top-level
-// PairClass/SideA/Ladder/Budgets describe the primary family (Families[0]), the
-// one StrategyMemory keys on; fams holds every shared family's own plan.
-// StrategyKey derivation (ClassBits) is coord's job and lives there, so this
-// struct does not import internal/nat.
-type Classification struct {
-	Reject    protocol.Reason                    // non-empty -> do not punch
-	PairClass string                             // primary family's diagnostic ladder name
-	Families  []protocol.Family                  // shared workable families, priority order (v6 first)
-	SideA     protocol.Role                      // the A (rule) side of the primary ladder
-	Ladder    []VariantID                        // primary ladder, cheap -> expensive
-	Budgets   map[VariantID]protocol.BudgetClass // per-variant class of the primary ladder
-	// Advice is what a failure of the session suggests (adviceFor).
-	Advice protocol.Advice
-
-	fams       []familyPlan // per-family plans, Families[i] == fams[i].Family
-	background bool         // a Background session's (ClassifyInput.Mode)
-}
-
-// MappingSample is one external mapping of a side observed while punching.
-type MappingSample struct {
-	Addr  netip.AddrPort
-	At    time.Duration // when it was observed, on the RoundInput.FireAt axis
-	Round int           // the round it was observed in
-}
-
-// RoundInput is the per-round planner input. Views is by role index.
-type RoundInput struct {
-	Round             int
-	Class             Classification
-	Order             []VariantID // memory-reordered primary ladder; empty -> Class.Ladder
-	Prev              []RoundOutcome
-	Evidence          Evidence
-	RTT               [2]time.Duration
-	Remaining         time.Duration // punchDeadline - now (D is passed separately)
-	D                 time.Duration // coordinator's stop margin; the planner does not re-estimate
-	BudgetLeft        [2]int        // each side's remaining grantable packets
-	Recent10sDistinct [2]int        // distinct ports already granted to the peer IP in the last 10 s
-	Gone              [2]bool
-	RescueUsed        bool
-	Views             [2]protocol.PeerView // [initiator, responder]
-	Policy            protocol.Policy
-	AllowExtreme      bool
-	MaxRounds         int
-	HandshakeMs       uint32 // handshake_timeout_ms (the two-sided birthday needs >= 30000)
-	SandwichOK        bool   // both sides negotiated the sandwich feature
-	// MemoryPromoted lifts the first-round "<= Ladder[0] class" cap when
-	// StrategyMemory promotes a heavier variant proven for this key.
-	// Failure never promotes.
-	MemoryPromoted bool
-	// FireAt is when this round is expected to fire, on the server's
-	// monotonic axis whose origin is the session's natprobe registration —
-	// the axis of protocol.Traits.PortAnchorMs. The coordinator derives it
-	// from the registration time, now and D (the go leaves now and fires D
-	// later). The planner extrapolates a sequential peer's next external port
-	// to it: anchor + step + PortVelocity·(FireAt − anchor time). Zero means
-	// unknown: no extrapolation.
-	FireAt time.Duration
-	// Mappings are, by role, that side's external mappings observed while
-	// punching: the seen_from sources its peer reported and the remotes of
-	// peer_seen about it, each with the time it was observed on the FireAt axis
-	// (the fire time of the round it was seen in is a good estimate). A sample
-	// later than the probe's anchor becomes the new anchor and, with the point
-	// before it, re-estimates the allocation velocity. The planner does this
-	// itself; the coordinator only passes the samples.
-	Mappings [2][]MappingSample
-	// Refresh are, by role, the anchor refreshes the coordinator had the
-	// side make just before this round: where its sequential
-	// allocator is now and how fast other hosts move it. A refresh is the
-	// newest point of the allocator; the planner aims at it, advanced by
-	// the drift it expects until the round fires.
-	Refresh [2][]AnchorRefresh
-}
-
-// AnchorRefresh is one family's anchor refresh by one side: the mappings of
-// its two new sockets, each made by a
-// single probe about 60 ms apart, and when natprobe saw them, on the
-// FireAt axis. A probe that did not come in time is the zero AddrPort: the
-// coordinator waits a bounded time after the first one and goes on with
-// what came, so a refresh carries one probe or both.
-type AnchorRefresh struct {
-	Family            protocol.Family
-	First, Second     netip.AddrPort
-	FirstAt, SecondAt time.Duration
-}
-
-// RoundDecision is the planner's per-round output.
-type RoundDecision struct {
-	Stop protocol.Reason // non-empty -> stop; Sides is empty
-	// StopDetail is the detail of a Stop (punch_result.detail); empty
-	// takes the attribution's detail when it names the same reason.
-	StopDetail  string
-	VariantName string
-	Budget      protocol.BudgetClass // the highest class of the running families
-	// Sides are by role; a family side's Sandwich is set where
-	// applySandwich allows it, and the coordinator keeps it only when
-	// both sides negotiated the feature.
-	Sides [2][]protocol.FamilySide // [initiator, responder]
-	// Families is what each shared family runs, in Class.Families order.
-	// The coordinator copies it into the round's RoundOutcome.
-	Families []FamilyRound
-	Window   time.Duration
-	// Variant and VariantName name the round on the wire and in
-	// StrategyMemory: the primary family's variant, or — once the primary
-	// ladder is exhausted while another family still runs — that family's.
-	Variant VariantID
-	Final   bool
-	Rescue  bool
-}
-
 // DefaultPlanner is the stateless strategy the coordinator uses by default. It
 // carries no state; every input is explicit.
 type DefaultPlanner struct{}
@@ -310,43 +72,68 @@ const minWindow = 700 * time.Millisecond
 // hard_symmetric_random, before a single punch, only when natprobe measured
 // every shared family hopeless (summaryVerdict); the classification is
 // otherwise a hint the rounds correct.
-func (DefaultPlanner) Classify(in ClassifyInput) Classification {
-	fams := sharedFamilies(in.Initiator, in.Responder)
+func (DefaultPlanner) Classify(in api.ClassifyInput) api.Classification {
+	fams := familyPlans([2]protocol.PeerView{in.Initiator, in.Responder}, in.Measured, in.Pair, in.Policy, in.Mode)
 	if len(fams) == 0 {
-		return Classification{Reject: protocol.ReasonNoCommonFamily}
+		return api.Classification{Reject: protocol.ReasonNoCommonFamily}
 	}
-	cl := Classification{Families: fams}
-	// Relay-only mode: no family verified at all. A family unverified only
-	// because a side is LAN-observed keeps the tighter unverified bounds.
-	relayOnly := true
-	for _, fam := range fams {
-		lanObserved := familyTraits(in.Initiator, fam).LANObserved || familyTraits(in.Responder, fam).LANObserved
-		relayOnly = relayOnly && in.Pair.Unverified[fam] && !lanObserved
+	primary := fams[0]
+	cl := api.Classification{PairClass: primary.PairClass, SideA: primary.SideA, Ladder: slices.Clone(primary.Ladder)}
+	for _, fp := range fams {
+		cl.Families = append(cl.Families, fp.Family)
 	}
-	cl.background = in.Mode == protocol.ModeBackground
-	for _, fam := range fams {
-		tr := [2]protocol.Traits{familyTraits(in.Initiator, fam), familyTraits(in.Responder, fam)}
+	if summaryVerdict(in, fams) {
+		cl.Reject = protocol.ReasonHardSymmetricRandom // no punch at all
+	}
+	cl.Advice = adviceFor(primary, cl.Reject, in.Policy)
+	return cl
+}
+
+// familyPlans is the classification of every family the two views share,
+// in priority order. Classify reports it, and Round derives it again from
+// its input: the classification carries nothing a round could not
+// recompute, so a Classification of any origin plans the same rounds.
+func familyPlans(views [2]protocol.PeerView, measured [2]protocol.PeerView, pair protocol.PairFacts, pol protocol.Policy,
+	mode protocol.SessionMode) []familyPlan {
+	shared := sharedFamilies(views[0], views[1])
+	relayOnly := protocol.RelayOnly(shared, pair, views)
+	background := mode == protocol.ModeBackground
+	fams := make([]familyPlan, 0, len(shared))
+	for _, fam := range shared {
+		tr := [2]protocol.Traits{familyTraits(views[0], fam), familyTraits(views[1], fam)}
 		var edm [2]bool
 		for r := range tr {
 			// A STUN server saw another mapping than natprobe: the
 			// mapping depends on the path, and the EIM conclusion is
 			// planned as endpoint dependent from the start.
-			edm[r] = !in.Pair.Unverified[fam] && tr[r].PathDependent && eimDoubt(tr[r])
+			edm[r] = !pair.Unverified[fam] && tr[r].PathDependent && eimDoubt(tr[r])
 		}
-		fp := planFamily(fam, tr, edm, in.Pair, in.Policy, cl.background, relayOnly)
-		fp.CheapOnly = fp.PairClass == PairSeqRnd && SeqRndVerdict(in.Measured, fam)
-		cl.fams = append(cl.fams, fp)
+		fp := planFamily(fam, tr, edm, pair, pol, background, relayOnly)
+		fp.CheapOnly = fp.PairClass == PairSeqRnd && SeqRndVerdict(measured, fam)
+		fams = append(fams, fp)
 	}
-	primary := cl.fams[0]
-	cl.PairClass = primary.PairClass
-	cl.SideA = primary.SideA
-	cl.Ladder = primary.Ladder
-	cl.Budgets = variantClasses(primary.Ladder)
-	if summaryVerdict(in, cl) {
-		cl.Reject = protocol.ReasonHardSymmetricRandom // no punch at all
+	return fams
+}
+
+// input is a round's planner input with the per-family plans of the
+// families its classification runs, in Class.Families order (newInput).
+type input struct {
+	api.RoundInput
+	fams []familyPlan
+}
+
+// newInput derives the per-family plans of in: those of the shared families
+// in.Class.Families names, each once, in its order.
+func newInput(in api.RoundInput) input {
+	all := familyPlans(in.Views, in.Measured, in.Pair, in.Policy, in.Mode)
+	fams := make([]familyPlan, 0, len(in.Class.Families))
+	for _, f := range in.Class.Families {
+		i := slices.IndexFunc(all, func(fp familyPlan) bool { return fp.Family == f })
+		if i >= 0 && !slices.ContainsFunc(fams, func(fp familyPlan) bool { return fp.Family == f }) {
+			fams = append(fams, all[i])
+		}
 	}
-	cl.Advice = adviceFor(primary, cl.Reject, in.Policy)
-	return cl
+	return input{RoundInput: in, fams: fams}
 }
 
 // planFamily is the classification of one shared family from both sides'
@@ -393,9 +180,9 @@ func planFamily(fam protocol.Family, tr [2]protocol.Traits, edm [2]bool, pair pr
 	}
 	switch {
 	case fp.Unverified && relayOnly:
-		fp.MaxTargets = maxRelayOnlyTargets
+		fp.MaxTargets = protocol.MaxRelayOnlyTargets
 	case fp.Unverified:
-		fp.MaxTargets = maxUnverifiedTargets
+		fp.MaxTargets = protocol.MaxUnverifiedTargets
 	}
 	return fp
 }
@@ -405,37 +192,38 @@ func planFamily(fam protocol.Family, tr [2]protocol.Traits, edm [2]bool, pair pr
 // BirthdayTier gate, the dual-stack shared-budget split and the invariant
 // "granted = emittable", which here means that every side's MaxPackets equals
 // the packets its stages expand to.
-func (DefaultPlanner) Round(in RoundInput) RoundDecision {
+func (DefaultPlanner) Round(r api.RoundInput) api.RoundDecision {
+	in := newInput(r)
 	order := in.Order
 	if len(order) == 0 {
 		order = in.Class.Ladder
 	}
-	if len(order) == 0 || len(in.Class.fams) == 0 {
-		return RoundDecision{Stop: protocol.ReasonNoProbeEndpoint}
+	if len(order) == 0 || len(in.fams) == 0 {
+		return api.RoundDecision{Stop: protocol.ReasonNoProbeEndpoint}
 	}
 	// An unconfirmed end without contact is hard_symmetric_random when both
 	// sides of the primary family are RND, or when natprobe measured it as
 	// one only the cheap rounds can open and they ran. The
 	// measurement decides, not a run-time correction.
-	primary := in.Class.fams[0]
+	primary := in.fams[0]
 	hopeless := primary.CatA == CatRND && primary.CatB == CatRND || primary.CheapOnly && countNonRescue(in.Prev) >= CheapRounds
 	if escalated := escalate(&in); escalated[0] {
-		order = in.Class.fams[0].Ladder
+		order = in.fams[0].Ladder
 	}
 
 	// Coordinator-level stop rules the planner also enforces (invariants).
 	// Remaining is punchDeadline - now; D is the coordinator's margin (the
 	// planner uses the coordinator's D and does not re-estimate or re-deduct).
 	if in.Remaining < minWindow+in.D {
-		return RoundDecision{Stop: TerminalReason(in.Evidence, hopeless)}
+		return api.RoundDecision{Stop: TerminalReason(in.Evidence, hopeless)}
 	}
 	if sideBudgetTooLow(in.BudgetLeft[0]) || sideBudgetTooLow(in.BudgetLeft[1]) {
-		return RoundDecision{Stop: protocol.ReasonPacketBudgetExceeded}
+		return api.RoundDecision{Stop: protocol.ReasonPacketBudgetExceeded}
 	}
 
 	// Rescue round: one per session, not counted against max_rounds;
 	// none where the next birthday round is the remedy.
-	if last, ok := lastOutcome(in.Prev); ok && last.Class == RCOneWay && !in.RescueUsed && !birthdayFollows(in, last) {
+	if last, ok := lastOutcome(in.Prev); ok && last.Class == api.RoundOneWay && !in.RescueUsed && !birthdayFollows(in, last) {
 		return buildRescue(in, last)
 	}
 
@@ -449,7 +237,7 @@ func (DefaultPlanner) Round(in RoundInput) RoundDecision {
 	}
 	if lead < 0 {
 		if bindBlocked {
-			return RoundDecision{Stop: protocol.ReasonLocalPortBindFailed}
+			return api.RoundDecision{Stop: protocol.ReasonLocalPortBindFailed}
 		}
 		return stopBeforeContact(in, hopeless)
 	}
@@ -457,7 +245,7 @@ func (DefaultPlanner) Round(in RoundInput) RoundDecision {
 	// budget_hit with no candidate and a not-lower next round -> stop.
 	if (in.Evidence.BudgetHit[0] || in.Evidence.BudgetHit[1]) && !hasCandidate(in.Evidence) {
 		if prev, ok := lastNonRescue(in.Prev); ok && nominalPackets(picks) >= prevNominalPackets(in, prev) {
-			return RoundDecision{Stop: protocol.ReasonPacketBudgetExceeded}
+			return api.RoundDecision{Stop: protocol.ReasonPacketBudgetExceeded}
 		}
 	}
 
@@ -468,7 +256,7 @@ func (DefaultPlanner) Round(in RoundInput) RoundDecision {
 		return stopBeforeContact(in, hopeless)
 	}
 
-	dec := RoundDecision{
+	dec := api.RoundDecision{
 		Variant:     picks[lead].vr.id,
 		VariantName: picks[lead].vr.name,
 		Budget:      roundClass,
@@ -477,7 +265,7 @@ func (DefaultPlanner) Round(in RoundInput) RoundDecision {
 		Sides:       sides,
 	}
 	for i := range picks {
-		dec.Families = append(dec.Families, FamilyRound{Family: in.Class.fams[i].Family, Variant: picks[i].vr.id, Budget: picks[i].class,
+		dec.Families = append(dec.Families, api.FamilyRound{Family: in.fams[i].Family, Variant: picks[i].vr.id, Budget: picks[i].class,
 			Center: [2]uint16{predictCenter(sides[0][i]), predictCenter(sides[1][i])}})
 	}
 	applySandwich(&dec, in, picks)
@@ -504,7 +292,7 @@ func predictCenter(fs protocol.FamilySide) uint16 {
 
 // familyPick is one family's choice for the round.
 type familyPick struct {
-	ladder []VariantID
+	ladder []api.VariantID
 	idx    int     // the chosen index, or -1 when the ladder is exhausted
 	vr     variant // the chosen variant (zero when exhausted)
 	class  protocol.BudgetClass
@@ -519,17 +307,17 @@ func (p familyPick) running() bool { return p.idx >= 0 }
 // after the family's next ladder position. bindBlocked reports that a family
 // stopped only because a forced single socket cannot run the multi-socket
 // variants left on its ladder.
-func pickFamilies(in RoundInput, order []VariantID) (picks []familyPick, bindBlocked bool) {
+func pickFamilies(in input, order []api.VariantID) (picks []familyPick, bindBlocked bool) {
 	single := [2]bool{forceSingleSocket(in, 0), forceSingleSocket(in, 1)}
-	picks = make([]familyPick, len(in.Class.fams))
+	picks = make([]familyPick, len(in.fams))
 	for i := range picks {
-		ladder := in.Class.fams[i].Ladder
+		ladder := in.fams[i].Ladder
 		if i == 0 {
 			ladder = order
 		}
 		p := familyPick{ladder: ladder, idx: -1, singleSocket: single}
 		start := nextIndex(in, i, ladder)
-		if in.Class.fams[i].CheapOnly && start >= CheapRounds && !hasCandidate(in.Evidence) {
+		if in.fams[i].CheapOnly && start >= CheapRounds && !hasCandidate(in.Evidence) {
 			start = len(ladder) // the cheap rounds found nothing: the verdict
 		}
 		for j := start; j < len(ladder); j++ {
@@ -537,7 +325,7 @@ func pickFamilies(in RoundInput, order []VariantID) (picks []familyPick, bindBlo
 			if !ok || !reachable(in, i, vr, in.Round) {
 				continue
 			}
-			if vr, ok = forFamily(vr, in.Class.fams[i]); !ok {
+			if vr, ok = forFamily(vr, in.fams[i]); !ok {
 				continue
 			}
 			if needsSockets(in, i, vr, single) {
@@ -558,17 +346,17 @@ func pickFamilies(in RoundInput, order []VariantID) (picks []familyPick, bindBlo
 // family's ladder started (familyPlan.From). A family whose last record is
 // VInvalid has exhausted its ladder. Rescue rounds do not advance; a family
 // the outcomes do not record advances one rung per round.
-func nextIndex(in RoundInput, i int, ladder []VariantID) int {
-	fam := in.Class.fams[i].Family
+func nextIndex(in input, i int, ladder []api.VariantID) int {
+	fam := in.fams[i].Family
 	runs, rungs := 0, 0
-	var last VariantID
-	var lastClass RoundClass
+	var last api.VariantID
+	var lastClass api.RoundClass
 	recorded := false
-	for _, o := range in.Prev[min(in.Class.fams[i].From, len(in.Prev)):] {
+	for _, o := range in.Prev[min(in.fams[i].From, len(in.Prev)):] {
 		if o.Rescue {
 			continue
 		}
-		if o.Class != RCConfirmLost {
+		if o.Class != api.RoundConfirmLost {
 			rungs++
 		}
 		if v, ok := familyVariantOf(o, i, fam); ok {
@@ -588,14 +376,14 @@ func nextIndex(in RoundInput, i int, ladder []VariantID) int {
 		// the rounds the family ran.
 		base = runs - 1
 	}
-	if lastClass == RCConfirmLost {
+	if lastClass == api.RoundConfirmLost {
 		return base
 	}
 	return base + 1
 }
 
 // familyVariantOf returns what family i (fam) ran in outcome o.
-func familyVariantOf(o RoundOutcome, i int, fam protocol.Family) (VariantID, bool) {
+func familyVariantOf(o api.RoundOutcome, i int, fam protocol.Family) (api.VariantID, bool) {
 	for _, f := range o.Families {
 		if f.Family == fam {
 			return f.Variant, true
@@ -611,19 +399,19 @@ func familyVariantOf(o RoundOutcome, i int, fam protocol.Family) (VariantID, boo
 // round under the extreme gate, the family's BirthdayTier gate (with its
 // NAT66 cap), the two-sided birthday's handshake rule and opensBirthday. round is explicit so
 // isFinal can look ahead to the round a successor would actually run in.
-func reachable(in RoundInput, i int, vr variant, round int) bool {
+func reachable(in input, i int, vr variant, round int) bool {
 	if vr.budget == protocol.BudgetExtreme && (!in.AllowExtreme || round < 3) {
 		return false
 	}
 	if vr.reqTier != "" {
 		tier := protocol.TightenBudget(in.Policy.Budget).Birthday
-		if c := in.Class.fams[i].TierCap; c != "" && c.Rank() < tier.Rank() {
+		if c := in.fams[i].TierCap; c != "" && c.Rank() < tier.Rank() {
 			tier = c
 		}
 		if !tier.Valid() || tier.Rank() < vr.reqTier.Rank() {
 			return false
 		}
-		if !sprayerOpens(in.Class.fams[i], vr) {
+		if !sprayerOpens(in.fams[i], vr) {
 			return false
 		}
 	}
@@ -650,9 +438,9 @@ func sprayerOpens(fp familyPlan, vr variant) bool {
 
 // needsSockets reports whether vr depends on several sockets of a role that
 // is forced to one socket: such a variant is skipped.
-func needsSockets(in RoundInput, i int, vr variant, single [2]bool) bool {
+func needsSockets(in input, i int, vr variant, single [2]bool) bool {
 	for role := range 2 {
-		if single[role] && roleTemplate(vr, in.Class.fams[i].SideA, role).sockets > 1 {
+		if single[role] && roleTemplate(vr, in.fams[i].SideA, role).sockets > 1 {
 			return true
 		}
 	}
@@ -671,14 +459,14 @@ func roleTemplate(vr variant, sideA protocol.Role, role int) sideTmpl {
 // forceSingleSocket reports whether role failed to bind more than half of its
 // sockets in the last non-rescue round. The round's socket
 // count is the largest the role's templates asked for in any family.
-func forceSingleSocket(in RoundInput, role int) bool {
+func forceSingleSocket(in input, role int) bool {
 	bf := int(in.Evidence.BindFailed[role])
 	prev, ok := lastNonRescue(in.Prev)
 	if bf == 0 || !ok {
 		return false
 	}
 	sockets := 0
-	for i, fp := range in.Class.fams {
+	for i, fp := range in.fams {
 		v, ok := familyVariantOf(prev, i, fp.Family)
 		if !ok {
 			continue
@@ -699,15 +487,15 @@ func forceSingleSocket(in RoundInput, role int) bool {
 // — and on the first round at most min(the family's Ladder[0]
 // class, balanced) unless memory promoted the primary variant. heavy needs
 // round 2 with random-EDM evidence in the family, else round 3.
-func assignClasses(in RoundInput, picks []familyPick) protocol.BudgetClass {
+func assignClasses(in input, picks []familyPick) protocol.BudgetClass {
 	last, hasLast := lastOutcome(in.Prev)
 	var guard protocol.BudgetClass
 	if hasLast {
 		r := prevRank(last)
-		if last.Class != RCConfirmLost {
+		if last.Class != api.RoundConfirmLost {
 			r++
 		}
-		guard = classByRank(r)
+		guard = protocol.ClassOfRank(r)
 	}
 	round := protocol.BudgetClass("")
 	for i := range picks {
@@ -718,13 +506,13 @@ func assignClasses(in RoundInput, picks []familyPick) protocol.BudgetClass {
 		promoted := i == 0 && !hasLast && in.MemoryPromoted
 		limit := guard
 		if !hasLast {
-			limit = minClass(classOf(in.Class.fams[i].Ladder[0]), protocol.BudgetBalanced)
+			limit = classOf(in.fams[i].Ladder[0]).Min(protocol.BudgetBalanced)
 			if promoted {
 				limit = protocol.BudgetHeavy
 			}
 		}
-		eff := minClass(p.vr.budget, limit)
-		fp := in.Class.fams[i]
+		eff := p.vr.budget.Min(limit)
+		fp := in.fams[i]
 		if eff == protocol.BudgetHeavy && in.Round < 3 && fp.CatA != CatRND && fp.CatB != CatRND && !promoted {
 			eff = protocol.BudgetBalanced
 		}
@@ -744,7 +532,7 @@ func assignClasses(in RoundInput, picks []familyPick) protocol.BudgetClass {
 
 // prevRank is the previous round's actual granted rank: RoundOutcome.Budget
 // when the coordinator set it, otherwise the variant's template class.
-func prevRank(prev RoundOutcome) int {
+func prevRank(prev api.RoundOutcome) int {
 	if prev.Budget.Valid() {
 		return prev.Budget.Rank()
 	}
@@ -754,52 +542,32 @@ func prevRank(prev RoundOutcome) int {
 	return 1
 }
 
-func classOf(id VariantID) protocol.BudgetClass {
+func classOf(id api.VariantID) protocol.BudgetClass {
 	if vr, ok := variantOf(id); ok {
 		return vr.budget
 	}
 	return protocol.BudgetLight
 }
 
-func classByRank(r int) protocol.BudgetClass {
-	switch {
-	case r <= 1:
-		return protocol.BudgetLight
-	case r == 2:
-		return protocol.BudgetBalanced
-	case r == 3:
-		return protocol.BudgetHeavy
-	default:
-		return protocol.BudgetExtreme
-	}
-}
-
-func minClass(a, b protocol.BudgetClass) protocol.BudgetClass {
-	if a.Rank() <= b.Rank() {
-		return a
-	}
-	return b
-}
-
 // ---- advancement helpers ----
 
-func lastOutcome(prev []RoundOutcome) (RoundOutcome, bool) {
+func lastOutcome(prev []api.RoundOutcome) (api.RoundOutcome, bool) {
 	if len(prev) == 0 {
-		return RoundOutcome{}, false
+		return api.RoundOutcome{}, false
 	}
 	return prev[len(prev)-1], true
 }
 
-func lastNonRescue(prev []RoundOutcome) (RoundOutcome, bool) {
+func lastNonRescue(prev []api.RoundOutcome) (api.RoundOutcome, bool) {
 	for i := len(prev) - 1; i >= 0; i-- {
 		if !prev[i].Rescue {
 			return prev[i], true
 		}
 	}
-	return RoundOutcome{}, false
+	return api.RoundOutcome{}, false
 }
 
-func indexOf(order []VariantID, id VariantID) int {
+func indexOf(order []api.VariantID, id api.VariantID) int {
 	for i, v := range order {
 		if v == id {
 			return i
@@ -808,7 +576,7 @@ func indexOf(order []VariantID, id VariantID) int {
 	return -1
 }
 
-func countNonRescue(prev []RoundOutcome) int {
+func countNonRescue(prev []api.RoundOutcome) int {
 	n := 0
 	for _, p := range prev {
 		if !p.Rescue {
@@ -822,7 +590,7 @@ func countNonRescue(prev []RoundOutcome) int {
 // counted against max_rounds, and a round after which no family
 // has a reachable successor is Final. A successor runs no earlier than
 // the next round, so the extreme gate is evaluated at round+1.
-func isFinal(in RoundInput, picks []familyPick) bool {
+func isFinal(in input, picks []familyPick) bool {
 	if in.MaxRounds > 0 && countNonRescue(in.Prev)+1 >= in.MaxRounds {
 		return true
 	}
@@ -835,7 +603,7 @@ func isFinal(in RoundInput, picks []familyPick) bool {
 			if !ok || !reachable(in, i, vr, in.Round+1) {
 				continue
 			}
-			if vr, ok = forFamily(vr, in.Class.fams[i]); ok && !needsSockets(in, i, vr, p.singleSocket) {
+			if vr, ok = forFamily(vr, in.fams[i]); ok && !needsSockets(in, i, vr, p.singleSocket) {
 				return false
 			}
 		}
@@ -856,9 +624,9 @@ func nominalPackets(picks []familyPick) int {
 }
 
 // prevNominalPackets is nominalPackets of the recorded round prev.
-func prevNominalPackets(in RoundInput, prev RoundOutcome) int {
+func prevNominalPackets(in input, prev api.RoundOutcome) int {
 	m := 0
-	for i, fp := range in.Class.fams {
+	for i, fp := range in.fams {
 		if v, ok := familyVariantOf(prev, i, fp.Family); ok {
 			if vr, ok := familyVariant(v, fp); ok {
 				m = max(m, maxSidePackets(vr))
@@ -869,7 +637,7 @@ func prevNominalPackets(in RoundInput, prev RoundOutcome) int {
 }
 
 // familyVariant is variant id as family fp ran it (forFamily).
-func familyVariant(id VariantID, fp familyPlan) (variant, bool) {
+func familyVariant(id api.VariantID, fp familyPlan) (variant, bool) {
 	vr, ok := variantOf(id)
 	if !ok {
 		return variant{}, false
@@ -888,11 +656,11 @@ func familyVariant(id VariantID, fp familyPlan) (variant, bool) {
 // checked on its own traits and flagged on its own side: the probes of
 // one family bracket that family's punches only. A side that
 // initiates nothing in the family has no first punch to bracket.
-func applySandwich(dec *RoundDecision, in RoundInput, picks []familyPick) {
+func applySandwich(dec *api.RoundDecision, in input, picks []familyPick) {
 	if !in.SandwichOK {
 		return
 	}
-	for i, fp := range in.Class.fams {
+	for i, fp := range in.fams {
 		if !picks[i].running() || fp.Unverified {
 			continue // an unverified family never predicts
 		}
@@ -917,11 +685,11 @@ const DetailNoTarget = "no_target"
 // stopBeforeContact ends a ladder with nothing left to run: before the first
 // round it is candidate_timeout with DetailNoTarget, since no packet could
 // be aimed at all; later the attribution of the evidence.
-func stopBeforeContact(in RoundInput, hopeless bool) RoundDecision {
+func stopBeforeContact(in input, hopeless bool) api.RoundDecision {
 	if len(in.Prev) == 0 {
-		return RoundDecision{Stop: protocol.ReasonCandidateTimeout, StopDetail: DetailNoTarget}
+		return api.RoundDecision{Stop: protocol.ReasonCandidateTimeout, StopDetail: DetailNoTarget}
 	}
-	return RoundDecision{Stop: TerminalReason(in.Evidence, hopeless)}
+	return api.RoundDecision{Stop: TerminalReason(in.Evidence, hopeless)}
 }
 
 // initiates reports whether any side has a stage that sends.
@@ -936,7 +704,7 @@ func initiates(sides [2][]protocol.FamilySide) bool {
 	return false
 }
 
-func hasCandidate(ev Evidence) bool {
+func hasCandidate(ev api.Evidence) bool {
 	return ev.Hit[0] || ev.Hit[1] || len(ev.SeenFrom[0]) > 0 || len(ev.SeenFrom[1]) > 0
 }
 
@@ -944,9 +712,9 @@ func hasCandidate(ev Evidence) bool {
 // predict/random stages to that IP are dropped for the rest of the session: a
 // prior Blocked class, cumulative ICMP at the threshold, or a udp_blocked
 // fatal.
-func pathBlocked(in RoundInput) bool {
+func pathBlocked(in input) bool {
 	for _, p := range in.Prev {
-		if p.Class == RCBlocked {
+		if p.Class == api.RoundBlocked {
 			return true
 		}
 	}

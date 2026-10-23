@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -46,6 +47,19 @@ func (h *handle) Observations(role protocol.Role) []nat.Observation {
 	return out
 }
 
+// Drifted returns role's moved primary mappings: the slots of main-group,
+// public observers on a family's primary socket whose value changed.
+func (h *handle) Drifted(role protocol.Role) []nat.Drift {
+	var out []nat.Drift
+	for _, o := range h.Observations(role) {
+		fam := nat.SocketFamily(o.Socket)
+		if o.Changes > 0 && !o.Alt && !o.LAN && o.Socket == nat.SocketID(fam, nat.IndexPrimary) && fam.UsableTarget(o.Observed) {
+			out = append(out, nat.Drift{Family: fam, Observer: o.Observer, Observed: o.Observed, Cookie: o.Cookie})
+		}
+	}
+	return out
+}
+
 // Announce records the observers announced to role in its punch_start:
 // with ScopeAuto, an observer announced at a private address counts as LAN
 // evidence only. Later calls replace earlier ones.
@@ -59,7 +73,7 @@ func (h *handle) Announce(role protocol.Role, observers []protocol.ObserverSpec)
 	rs.announced, rs.private, rs.anyAnnounced = [4]uint64{}, [4]uint64{}, true
 	for _, o := range observers {
 		rs.announced[o.ID/64] |= 1 << (o.ID % 64)
-		if nat.ScopeOf(o.Addr.Addr()) == nat.ScopePrivate {
+		if netaddr.ScopeOf(o.Addr.Addr()) == netaddr.ScopePrivate {
 			rs.private[o.ID/64] |= 1 << (o.ID % 64)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/msgframe"
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -18,7 +19,7 @@ func TestCategoryString(t *testing.T) {
 }
 
 func TestAttributeWrapper(t *testing.T) {
-	ev := Evidence{Fatal: [2]protocol.Reason{protocol.ReasonUDPBlocked, protocol.ReasonUDPBlocked}}
+	ev := api.Evidence{Fatal: [2]protocol.Reason{protocol.ReasonUDPBlocked, protocol.ReasonUDPBlocked}}
 	if r := Attribute(ev); r != protocol.ReasonUDPBlocked {
 		t.Fatalf("Attribute = %s, want udp_blocked", r)
 	}
@@ -66,7 +67,7 @@ func TestSandwichPerFamily(t *testing.T) {
 	a6, b6 := pdfTraits(protocol.FamilyUDP6), pdfTraits(protocol.FamilyUDP6)
 	b6.Observed = observedFor(protocol.FamilyUDP6, 5)
 	var p DefaultPlanner
-	ci := ClassifyInput{Initiator: dual(a4, a6), Responder: dual(b4, b6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}, Timeouts: protocol.DefaultTimeouts()}
+	ci := api.ClassifyInput{Initiator: dual(a4, a6), Responder: dual(b4, b6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}, Timeouts: protocol.DefaultTimeouts()}
 	cl := p.Classify(ci)
 	in := roundInput(cl, a4, b4, 1, nil)
 	in.Views, in.SandwichOK = [2]protocol.PeerView{dual(a4, a6), dual(b4, b6)}, true
@@ -91,9 +92,9 @@ func TestDualStackSamePairClass(t *testing.T) {
 	a4, b4 := pdfTraits(protocol.FamilyUDP4), seqTraits(protocol.FamilyUDP4)
 	a6, b6 := pdfTraits(protocol.FamilyUDP6), seqTraits(protocol.FamilyUDP6)
 	var p DefaultPlanner
-	ci := ClassifyInput{Initiator: dual(a4, a6), Responder: dual(b4, b6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}, Timeouts: protocol.DefaultTimeouts()}
+	ci := api.ClassifyInput{Initiator: dual(a4, a6), Responder: dual(b4, b6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}, Timeouts: protocol.DefaultTimeouts()}
 	cl := p.Classify(ci)
-	var prev []RoundOutcome
+	var prev []api.RoundOutcome
 	for round := 1; round <= 5; round++ {
 		in := roundInput(cl, a4, b4, round, prev)
 		in.Views = [2]protocol.PeerView{dual(a4, a6), dual(b4, b6)}
@@ -111,7 +112,7 @@ func TestDualStackSamePairClass(t *testing.T) {
 				checkSide(t, fs, dec.Budget, dec.Window)
 			}
 		}
-		prev = append(prev, RoundOutcome{Round: round, Variant: dec.Variant, Class: RCNoContact, Budget: dec.Budget})
+		prev = append(prev, api.RoundOutcome{Round: round, Variant: dec.Variant, Class: api.RoundNoContact, Budget: dec.Budget})
 		if dec.Final {
 			break
 		}
@@ -141,7 +142,7 @@ func TestRescueReplyOnly(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	in := roundInput(cl, a, b, 2, []RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: RCOneWay, Budget: protocol.BudgetBalanced}})
+	in := roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: api.RoundOneWay, Budget: protocol.BudgetBalanced}})
 	// seer = initiator saw a packet; silent = responder, but give the seer
 	// (initiator) no verified endpoints so the silent side has no target.
 	in.Evidence.SeenFrom[0] = []netip.AddrPort{netip.MustParseAddrPort("203.0.113.2:40002")}
@@ -165,7 +166,7 @@ func TestLowTTLDisabled(t *testing.T) {
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
 	off := false
-	in := roundInput(cl, a, b, 2, []RoundOutcome{{Round: 1, Variant: vEasy1, Class: RCNoContact, Budget: protocol.BudgetLight}})
+	in := roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: vEasy1, Class: api.RoundNoContact, Budget: protocol.BudgetLight}})
 	in.Policy.LowTTL = &off
 	dec := p.Round(in)
 	for r := 0; r < 2; r++ {

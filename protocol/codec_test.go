@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // TestWireExamples decodes every JSON example in testdata/examples — one or
@@ -46,7 +47,7 @@ func TestWireExamples(t *testing.T) {
 				t.Fatal(err)
 			}
 			payload = bytes.TrimSpace(payload)
-			m, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(messageTypeNamed(t, e.Type)), Payload: payload})
+			m, err := decodeFrame(controlwire.Frame{Type: wiretype.Type(messageTypeNamed(t, e.Type)), Payload: payload})
 			if err != nil {
 				t.Fatalf("%s: Decode: %v", e.Source, err)
 			}
@@ -166,7 +167,7 @@ func TestRoundTripAllMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: Marshal: %v", m.MessageType(), err)
 		}
-		if f.Type != controlwire.Type(m.MessageType()) || len(f.Payload) > m.MessageType().MaxPayload() {
+		if f.Type != wiretype.Type(m.MessageType()) || len(f.Payload) > m.MessageType().MaxPayload() {
 			t.Fatalf("%s: frame type %d, %d bytes", m.MessageType(), f.Type, len(f.Payload))
 		}
 		got, err := decodeFrame(f)
@@ -245,7 +246,7 @@ func TestDecodePayloadRules(t *testing.T) {
 		{"last_reserved", math.MaxUint8, `{}`, ErrUnexpectedMessage},
 		{"zero", 0, `{}`, ErrUnexpectedMessage},
 	} {
-		_, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(tc.typ), Payload: []byte(tc.payload)})
+		_, err := decodeFrame(controlwire.Frame{Type: wiretype.Type(tc.typ), Payload: []byte(tc.payload)})
 		match := errors.Is(err, tc.err)
 		if errors.Is(tc.err, errViolation) {
 			match = isViolation(err)
@@ -272,18 +273,18 @@ func clientLists() []struct {
 		{MsgProbeReport, "caps.families", maxCapsFamilies},
 		{MsgProbeReport, "caps.port_map", maxPortMapMethods},
 		{MsgProbeReport, "families", maxReportFamilies},
-		{MsgProbeReport, "families[].sockets", maxReportSockets},
-		{MsgProbeReport, "families[].sockets[].rows", maxReportRows},
-		{MsgProbeReport, "families[].filters", maxReportFilters},
-		{MsgProbeReport, "families[].stun", maxReportSTUNRows},
-		{MsgProbeReport, "families[].local_addrs", maxLocalAddrs},
-		{MsgProbeReport, "families[].overlay", maxOverlayAddrs},
+		{MsgProbeReport, "families[].sockets", MaxReportSockets},
+		{MsgProbeReport, "families[].sockets[].rows", MaxReportRows},
+		{MsgProbeReport, "families[].filters", MaxReportFilters},
+		{MsgProbeReport, "families[].stun", MaxReportSTUNRows},
+		{MsgProbeReport, "families[].local_addrs", MaxLocalAddrs},
+		{MsgProbeReport, "families[].overlay", MaxOverlayAddrs},
 		{MsgPunchReady, "families", maxSides},
 		{MsgRoundResult, "families", maxOutcomes},
-		{MsgRoundResult, "families[].seen_from", maxSeenFrom},
+		{MsgRoundResult, "families[].seen_from", MaxSeenFrom},
 		{MsgPunchResult, "extra_paths", MaxPaths - 1},
 		{MsgPunchResult, "traits", maxTraitsUpdates},
-		{MsgPunchResult, "warn", maxWarn},
+		{MsgPunchResult, "warn", MaxWarn},
 	}
 }
 
@@ -317,11 +318,11 @@ func TestDecodeBoundsClientLists(t *testing.T) {
 		}
 		over := nestedList(l.path, (l.typ.MaxPayload()-len(nestedList(l.path, 0)))/len("null,"))
 		var verr *ValidationError
-		if _, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(l.typ), Payload: []byte(over)}); !errors.As(err, &verr) ||
+		if _, err := decodeFrame(controlwire.Frame{Type: wiretype.Type(l.typ), Payload: []byte(over)}); !errors.As(err, &verr) ||
 			verr.Reason != ReasonProtocolViolation || verr.Detail != detail {
 			t.Errorf("%s %s over its limit: %v, want detail %q", l.typ, detail, err, detail)
 		}
-		frame := controlwire.Frame{Type: controlwire.Type(l.typ), Payload: []byte(over)}
+		frame := controlwire.Frame{Type: wiretype.Type(l.typ), Payload: []byte(over)}
 		if alloc := allocBytes(func() { _, _ = decodeFrame(frame) }); alloc > 4<<10 {
 			t.Errorf("%s %s: decoding a %d-byte frame allocated %d bytes", l.typ, detail, len(over), alloc)
 		}
@@ -393,11 +394,11 @@ func maximalReport() ProbeReport {
 		local := netip.AddrPortFrom(a, 5000)
 		row := RowReport{Observer: 1, Observed: local, FirstSeq: 1, SentMs: 2}
 		return FamilyReport{Family: f,
-			Sockets:    repeat(SocketReport{Kind: SocketPrimary, Local: local, Rows: repeat(row, maxReportRows)}, maxReportSockets),
-			Filters:    make([]FilterReport, maxReportFilters),
-			STUN:       repeat(row, maxReportSTUNRows),
-			LocalAddrs: repeat(a, maxLocalAddrs),
-			Overlay:    repeat(a, maxOverlayAddrs),
+			Sockets:    repeat(SocketReport{Kind: SocketPrimary, Local: local, Rows: repeat(row, MaxReportRows)}, MaxReportSockets),
+			Filters:    make([]FilterReport, MaxReportFilters),
+			STUN:       repeat(row, MaxReportSTUNRows),
+			LocalAddrs: repeat(a, MaxLocalAddrs),
+			Overlay:    repeat(a, MaxOverlayAddrs),
 		}
 	}
 	m.Families = []FamilyReport{fam(FamilyUDP4, ip("192.0.2.1")), fam(FamilyUDP6, ip("2001:db8::1"))}
@@ -533,7 +534,7 @@ func marshalFrame(m Message) (controlwire.Frame, error) {
 	if err != nil {
 		return controlwire.Frame{}, err
 	}
-	return controlwire.Frame{Type: controlwire.Type(m.MessageType()), Payload: p}, nil
+	return controlwire.Frame{Type: wiretype.Type(m.MessageType()), Payload: p}, nil
 }
 
 func unmarshalFrame[T any, P interface {

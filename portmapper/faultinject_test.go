@@ -11,6 +11,7 @@ import (
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -117,7 +118,7 @@ func TestFaultPortmapRenew(t *testing.T) {
 		}
 		waitPending(t, fc, 1)
 		fc.Advance(30 * time.Minute)
-		waitFor(t, "renewal panic", func() bool { return faultinject.Fired(pointRenew) == 1 })
+		testkit.WaitFor(t, "renewal panic", func() bool { return faultinject.Fired(pointRenew) == 1 })
 		noLeak(t, base) // the renewal goroutine ended after its panic
 		if err := release(); err != nil {
 			t.Fatalf("release() = %v", err)
@@ -141,10 +142,10 @@ func TestFaultPortmapRenew(t *testing.T) {
 		}
 		waitPending(t, fc, 1)
 		fc.Advance(30 * time.Minute)
-		waitFor(t, "failed renewal", func() bool { return faultinject.Fired(pointRenew) == 1 && fc.Pending() == 1 })
+		testkit.WaitFor(t, "failed renewal", func() bool { return faultinject.Fired(pointRenew) == 1 && fc.Pending() == 1 })
 		disarm()
 		fc.Advance(15 * time.Minute) // retried at a quarter of the lifetime
-		waitFor(t, "retried renewal", func() bool { return gw.counts().pcpRenews == 1 })
+		testkit.WaitFor(t, "retried renewal", func() bool { return gw.counts().pcpRenews == 1 })
 		if err := release(); err != nil {
 			t.Fatal(err)
 		}
@@ -161,7 +162,7 @@ func TestFaultPortmapRenew(t *testing.T) {
 		}
 		waitPending(t, fc, 1)
 		fc.Advance(30 * time.Minute)
-		waitFor(t, "stalled renewal", func() bool { return faultinject.Fired(pointRenew) == 1 })
+		testkit.WaitFor(t, "stalled renewal", func() bool { return faultinject.Fired(pointRenew) == 1 })
 		start := time.Now()
 		if err := release(); !errors.Is(err, errRenewStuck) {
 			t.Fatalf("release() = %v, want errRenewStuck", err)

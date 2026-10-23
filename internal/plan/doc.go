@@ -3,12 +3,18 @@
 //
 // It has two faces, both pure and free of goroutines and I/O:
 //
-//   - The server face. CategoryOf maps one side's protocol.Traits to a NAT
+//   - The server face, the built-in implementation of the public planner
+//     contract (package github.com/djylb/holepunch/plan, whose types it
+//     reads and returns). CategoryOf maps one side's protocol.Traits to a NAT
 //     category and PairClass combines two categories into a ladder
 //     name. DefaultPlanner.Classify turns the merged peer views into a
-//     Classification: the shared families, each family's own ladder, the
-//     canonical side mapping, whether each side may open a birthday round and
-//     the NAT66 birthday cap. The classification is a hint the rounds
+//     per-family plan — each family's own ladder, the canonical side mapping,
+//     whether each side may open a birthday round, the NAT66 birthday cap —
+//     and reports the shared families and the primary family's ladder in the
+//     Classification. Round derives the per-family plans again from its
+//     input (newInput): the classification carries no hidden state, so a
+//     planner that wraps this one may hand it a classification of its own.
+//     The classification is a hint the rounds
 //     correct: Classify ends a session before any punch
 //     (hard_symmetric_random) only when natprobe itself measured both sides
 //     of every shared family as Random with High confidence
@@ -77,9 +83,9 @@
 //     targets: the coordinator pushes them as peer_targets. The
 //     equality "MaxPackets = what the stages expand to" is the planner's
 //     contract; the coordinator's clamps may leave a side with less or
-//     more. coord wraps these two methods; the dependency runs coord ->
-//     internal/plan and never the reverse (this package imports neither
-//     coord nor internal/nat).
+//     more. coord calls these two methods through plan.Planner; the
+//     dependency runs coord -> internal/plan -> plan and never the reverse
+//     (this package imports neither coord nor internal/nat).
 //
 //   - The client face. ExpandStage and DirectOffsets turn one protocol.Stage
 //     plus the 8-byte spray seed into the concrete, ordered target sequence the
@@ -96,7 +102,7 @@
 //
 // Attribute is the failure-attribution decision table shared by both sides.
 //
-// Production code here depends only on the standard library and protocol; the
+// Production code here depends only on the standard library, protocol and plan; the
 // spray seed arrives as a [8]byte, so the package never imports udpwire (only
 // the tests do, to build seeds with udpwire.SpraySeed). It starts no
 // goroutines, does no I/O and keeps no package-level mutable state: the variant

@@ -213,7 +213,7 @@ func TestPipeAddressesThroughNATs(t *testing.T) {
 }
 
 func TestTTL(t *testing.T) {
-	setup := func(t *testing.T) (*Network, *NAT, *NAT, udp, udp, netip.AddrPort, netip.AddrPort) {
+	setup := func(t *testing.T) (*Network, *NAT, *NAT, Conn, Conn, netip.AddrPort, netip.AddrPort) {
 		n := newNet(t) // the core counts as 8 hops
 		_, o := observer(t, n, 3478)
 		na, nb := n.NAT(PortRestricted()), n.NAT(PortRestricted())

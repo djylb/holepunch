@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // FuzzDecodeMessage covers all twelve message types: any
@@ -46,7 +47,7 @@ func FuzzDecodeMessage(f *testing.F) {
 	f.Add(uint8(MsgPunchGo), []byte(`{"session_id":"a","round":2,"window_ms":9,"plan":{"round":2,"variant":"v","budget":"light","window_ms":9,"sides":[{"family":"udp4","role":"both","sockets":1,"stages":[{"kind":"direct","ttl":1,"targets":["1.2.3.4:5"]}]}]}}`))
 	f.Add(uint8(MsgAssist), []byte(`{"session_id":"a","role":"initiator","from":"server","kind":"peer_targets","round":1,"family":"udp4","source":"x"}`))
 	f.Fuzz(func(t *testing.T, typ uint8, payload []byte) {
-		m, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(typ), Payload: payload})
+		m, err := decodeFrame(controlwire.Frame{Type: wiretype.Type(typ), Payload: payload})
 		if err != nil {
 			var verr *ValidationError
 			if !errors.As(err, &verr) && !errors.Is(err, ErrUnexpectedMessage) {

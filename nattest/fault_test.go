@@ -44,7 +44,7 @@ func TestFailWrites(t *testing.T) {
 	n := newNet(t)
 	_, o := observer(t, n, 1)
 	h := n.NAT(FullCone()).Host()
-	bday, err := h.ListenPacket(context.Background(), "udp4", netip.AddrPort{}, "birthday")
+	bday, err := h.ListenUDP(context.Background(), "udp4", netip.AddrPort{}, "birthday")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestFailWrites(t *testing.T) {
 	probe := listen(t, h, 2000)
 	h.FailWrites("birthday", 2, syscall.ENOBUFS)
 	for i := range 3 {
-		_, err := bday.(udp).WriteToUDPAddrPort([]byte("x"), addrOf(o))
+		_, err := bday.WriteToUDPAddrPort([]byte("x"), addrOf(o))
 		if (i < 2) != errors.Is(err, syscall.ENOBUFS) {
 			t.Fatalf("write %d: %v", i, err)
 		}
@@ -212,7 +212,7 @@ func TestMarkHandover(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The application's own calls are not counted.
-	au := app.(udp)
+	au := app
 	if _, err := au.WriteToUDPAddrPort([]byte("app"), addrOf(o)); err != nil {
 		t.Fatal(err)
 	}
@@ -233,11 +233,7 @@ func TestMarkHandover(t *testing.T) {
 	if _, _, err := au.ReadFromUDPAddrPort(b); err != nil {
 		t.Fatal(err)
 	}
-	bufs := app.(interface {
-		SetReadBuffer(int) error
-		SetWriteBuffer(int) error
-	})
-	if bufs.SetReadBuffer(1<<20) != nil || bufs.SetWriteBuffer(1<<20) != nil {
+	if app.SetReadBuffer(1<<20) != nil || app.SetWriteBuffer(1<<20) != nil {
 		t.Fatal("buffers")
 	}
 	if app.LocalAddr().String() != lib.LocalAddr().String() {
@@ -262,7 +258,7 @@ func TestMarkHandover(t *testing.T) {
 	if err := app.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if bufs.SetReadBuffer(1) == nil || bufs.SetWriteBuffer(1) == nil {
+	if app.SetReadBuffer(1) == nil || app.SetWriteBuffer(1) == nil {
 		t.Fatal("a closed socket accepted buffer sizes")
 	}
 	if _, err := h.MarkHandover(netip.AddrPortFrom(netip.Addr{}, 9)); !errors.Is(err, syscall.ENOENT) {
@@ -308,7 +304,7 @@ func TestMarkHandoverPicksTheReceivingSocket(t *testing.T) {
 	listenOn(t, h, "udp4", netip.AddrPortFrom(hi4, 6000))
 	for _, tc := range []struct {
 		local netip.AddrPort
-		want  udp
+		want  Conn
 	}{
 		{netip.AddrPortFrom(v6, 5000), at6},
 		{netip.AddrPortFrom(lo4, 5000), wild4},

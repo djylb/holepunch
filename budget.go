@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/udpwire"
@@ -53,7 +54,9 @@ var (
 	errNoBudgetYet = errors.New("holepunch: no punching budget before the summary")
 )
 
-// Fault-injection point of the send gate.
+// Fault-injection point of the send gate's probe class. A probe the prober
+// sealed passes it in the prober (internal/probe); a probe the runtime
+// sends itself (keepalive, sandwich, refresh, re-observation) here.
 const fiProbeSend = "probe.send"
 
 // bucket is a token bucket on the session clock. A zero rate is unlimited.
@@ -186,6 +189,20 @@ func newRoundMeter(fam protocol.Family, round uint8, side protocol.FamilySide, c
 	}
 }
 
+// meterCount is what a round meter counted, for round_result.
+type meterCount struct {
+	sent          int
+	distinctPorts int
+	budgetHit     bool
+}
+
+// meterStats returns what the round meter m counted so far.
+func (s *sender) meterStats(m *roundMeter) meterCount {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return meterCount{sent: m.sent, distinctPorts: m.distinctPorts(), budgetHit: m.budgetHit}
+}
+
 // ppsBurst is the depth of a pps bucket: max(pps/10, 8).
 func ppsBurst(pps int) float64 { return float64(max(pps/10, 8)) }
 
@@ -305,9 +322,13 @@ type replyKey struct {
 // Each family's packets pass its lane one at a time, so that the run guard
 // (runs.go) sees them in the order they leave.
 type sender struct {
-	rt    *runtime
 	codec *udpwire.Codec
-	lanes [2]*lane // by famIndex
+	clk   clock.Clock
+	pace  *pacer
+	cnt   [2]*famCounters // by Family.Index
+	host  sendHost
+	hits  *punchState // the remotes that answered, which the run guard knows
+	lanes [2]*lane    // by Family.Index
 
 	mu         sync.Mutex
 	budget     protocol.Budget // the session budget; zero until the summary
@@ -330,9 +351,18 @@ type sender struct {
 	pool sync.Pool
 }
 
-func newSender(rt *runtime, codec *udpwire.Codec) *sender {
+// sendHost is what the sender asks the session about: whether a
+// destination is one of natprobe's observers, which the run guard lets
+// pass, and where the ICMP report of an earlier datagram, delivered on a
+// write, goes. The runtime implements it.
+type sendHost interface {
+	isObserver(ap netip.AddrPort) bool
+	noteICMP(s *udpSock)
+}
+
+func newSender(codec *udpwire.Codec, clk clock.Clock, pace *pacer, cnt [2]*famCounters, host sendHost, hits *punchState) *sender {
 	return &sender{
-		rt: rt, codec: codec, lanes: [2]*lane{newLane(), newLane()},
+		codec: codec, clk: clk, pace: pace, cnt: cnt, host: host, hits: hits, lanes: [2]*lane{newLane(), newLane()},
 		targets: map[netip.AddrPort]struct{}{},
 		perIP:   map[netip.Addr]*ipPorts{},
 		replyAt: map[replyKey]time.Time{},
@@ -512,19 +542,12 @@ func (s *sender) Send(ctx context.Context, sock *udpSock, to netip.AddrPort, h *
 // why the packet stopped. A write error may come from the caller's conn,
 // so it is inspected (account) only after the lane is released.
 func (s *sender) sendLaned(ctx context.Context, sock *udpSock, to netip.AddrPort, h *udpwire.Header, t *udpwire.TLVs, o *sendOpt) (wrapped, wrote bool, err error) {
-	if err := ctx.Err(); err != nil {
-		return false, false, context.Cause(ctx)
-	}
-	l := s.lanes[famIndex(sock.fam)]
-	if err := l.acquire(ctx); err != nil {
+	l, now, err := s.enterLane(ctx, sock, to, o)
+	if err != nil {
 		return false, false, err
 	}
 	defer l.release()
-	fc := &s.rt.fam(sock.fam).cnt
-	now := s.rt.clk.Now()
-	if !s.runAllows(l, to, o, now) {
-		return false, false, errRun
-	}
+	fc := s.cnt[sock.fam.Index()]
 	s.mu.Lock()
 	wait, err := s.gateLocked(now, sock, to, o)
 	s.mu.Unlock()
@@ -540,7 +563,7 @@ func (s *sender) sendLaned(ctx context.Context, sock *udpSock, to netip.AddrPort
 		return false, false, err
 	}
 	if wait > 0 {
-		if err := s.rt.sleep(ctx, s.rt.pace.spread(wait, 0.2)); err != nil {
+		if err := sleepOn(ctx, s.clk, s.pace.spread(wait, 0.2)); err != nil {
 			return false, false, err
 		}
 	}
@@ -563,10 +586,7 @@ func (s *sender) sendLaned(ctx context.Context, sock *udpSock, to netip.AddrPort
 			return false, false, err
 		}
 	}
-	wrapped, err = sock.write(ctx, pkt, to, o.hops)
-	if err == nil {
-		l.wrote(to, s.rt.clk.Now())
-	}
+	wrapped, err = s.write(ctx, l, sock, to, pkt, o.hops)
 	return wrapped, true, err
 }
 
@@ -582,26 +602,46 @@ func (s *sender) SendRaw(ctx context.Context, sock *udpSock, to netip.AddrPort, 
 }
 
 // rawLaned is SendRaw up to the write, in the family's lane; see sendLaned.
+// The prober has passed the probe.send fault point for this datagram
+// already, so it is not passed again here.
 func (s *sender) rawLaned(ctx context.Context, sock *udpSock, to netip.AddrPort, pkt []byte, o *sendOpt) (wrapped, wrote bool, err error) {
-	if err := ctx.Err(); err != nil {
-		return false, false, context.Cause(ctx)
-	}
-	l := s.lanes[famIndex(sock.fam)]
-	if err := l.acquire(ctx); err != nil {
+	l, _, err := s.enterLane(ctx, sock, to, o)
+	if err != nil {
 		return false, false, err
 	}
 	defer l.release()
-	if !s.runAllows(l, to, o, s.rt.clk.Now()) {
-		return false, false, errRun
-	}
-	if err := faultinject.Point(fiProbeSend); err != nil {
-		return false, false, err
-	}
-	wrapped, err = sock.write(ctx, pkt, to, 0)
-	if err == nil {
-		l.wrote(to, s.rt.clk.Now())
-	}
+	wrapped, err = s.write(ctx, l, sock, to, pkt, 0)
 	return wrapped, true, err
+}
+
+// enterLane is the prologue of every send: ctx still live, sock's family
+// lane acquired and the run guard passed. On success the caller holds the
+// lane and releases it; on failure nothing is held. now is the clock
+// after the lane was acquired.
+func (s *sender) enterLane(ctx context.Context, sock *udpSock, to netip.AddrPort, o *sendOpt) (l *lane, now time.Time, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, time.Time{}, context.Cause(ctx)
+	}
+	l = s.lanes[sock.fam.Index()]
+	if err := l.acquire(ctx); err != nil {
+		return nil, time.Time{}, err
+	}
+	now = s.clk.Now()
+	if !s.runAllows(l, to, o, now) {
+		l.release()
+		return nil, time.Time{}, errRun
+	}
+	return l, now, nil
+}
+
+// write writes pkt to `to` on sock inside the held lane l and records a
+// successful write in the lane.
+func (s *sender) write(ctx context.Context, l *lane, sock *udpSock, to netip.AddrPort, pkt []byte, hops int) (wrapped bool, err error) {
+	wrapped, err = sock.write(ctx, pkt, to, hops)
+	if err == nil {
+		l.wrote(to, s.clk.Now())
+	}
+	return wrapped, err
 }
 
 // account counts the outcome of a write; one that left as an opener
@@ -614,8 +654,8 @@ func (s *sender) rawLaned(ctx context.Context, sock *udpSock, to netip.AddrPort,
 // target nor counts towards udp_blocked. Only "no route" names this
 // destination.
 func (s *sender) account(ctx context.Context, sock *udpSock, o *sendOpt, wrapped bool, err error) error {
-	fc := &s.rt.fam(sock.fam).cnt
-	now := s.rt.clk.Now()
+	fc := s.cnt[sock.fam.Index()]
+	now := s.clk.Now()
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, errDetached) {
 			return err
@@ -623,7 +663,7 @@ func (s *sender) account(ctx context.Context, sock *udpSock, o *sendOpt, wrapped
 		fc.drop(dropSendErr)
 		noRoute := udpsock.IsNoRoute(err)
 		if !noRoute && udpsock.IsICMPReport(err) {
-			s.rt.noteICMP(sock)
+			s.host.noteICMP(sock)
 			return err
 		}
 		s.mu.Lock()

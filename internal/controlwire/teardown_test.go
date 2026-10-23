@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/faultconn"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/testkit"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // TestTerminatePanicReleasesCallers: a panic in Release's or Close's work —
@@ -51,15 +54,16 @@ func TestTerminatePanicReleasesCallers(t *testing.T) {
 			t.Run(m.name+"/"+rn.name, func(t *testing.T) {
 				a, b := net.Pipe()
 				defer func() { _ = b.Close() }()
-				rc := &recConn{Conn: a}
+				rc := faultconn.Wrap(a)
+				rc.Record()
 				c := mustConn(t, rc, ConnOptions{})
 				// The peer does not read: the first frame blocks the writer in
 				// Write, the second waits in the queue.
-				must(t, c.Send(Frame{Type: TypePong, Payload: []byte("1")}))
-				eventually(t, "the writer to block", func() bool { return rc.writes.Load() > 0 })
+				must(t, c.Send(Frame{Type: wiretype.Pong, Payload: []byte("1")}))
+				testkit.WaitFor(t, "the writer to block", func() bool { return rc.Writes() > 0 })
 				queued := make(chan error, 1)
 				go func() {
-					queued <- c.WriteFrame(context.Background(), Frame{Type: TypePong, Payload: []byte("2")})
+					queued <- c.WriteFrame(context.Background(), Frame{Type: wiretype.Pong, Payload: []byte("2")})
 				}()
 				read := make(chan error, 1)
 				go func() {
@@ -107,7 +111,7 @@ func TestTerminatePanicReleasesCallers(t *testing.T) {
 					if _, err := b.Read(make([]byte, 1)); err == nil {
 						t.Fatal("the connection is open after Close")
 					}
-				} else if late := rc.eventsAfter(returned); len(late) > 0 {
+				} else if late := rc.EventsAfter(returned); len(late) > 0 {
 					t.Fatalf("calls on the connection after Release returned: %+v", late)
 				}
 			})
@@ -131,7 +135,7 @@ func TestReadEndRunsNoUserCode(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = b.Close() }()
 	c := mustConn(t, a, ConnOptions{Intercept: func(*Conn, Frame) bool { panic(isPanics{}) }})
-	go func() { _, _ = b.Write(frameBytes(TypePunchGo, "{}")) }()
+	go func() { _, _ = b.Write(frameBytes(wiretype.PunchGo, "{}")) }()
 	select {
 	case <-c.Done():
 	case <-time.After(time.Second):

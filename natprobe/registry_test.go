@@ -11,7 +11,9 @@ import (
 
 	"go.uber.org/goleak"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -21,7 +23,7 @@ import (
 // that ends meanwhile would lower the count.
 func TestRegistryNoGoroutine(t *testing.T) {
 	base := goleak.IgnoreCurrent()
-	clk := newManualClock()
+	clk := clock.NewFake(t, time.Time{})
 	reg := NewRegistry(RegistryConfig{Clock: clk})
 	for i := range 10000 {
 		var route protocol.RouteID
@@ -51,7 +53,7 @@ func TestRegisterIdempotent(t *testing.T) {
 	r := newRig(t, rigOpts{})
 	h1 := register(t, r.reg, "s1", tok(1), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	if out := r.deliver(0, c.probe(probeOpts{obs: 0}), srcA); len(out) != 1 {
+	if out := r.deliver(0, c.probe(probetest.Probe{Obs: 0}), srcA); len(out) != 1 {
 		t.Fatalf("%d replies", len(out))
 	}
 	r.clk.Advance(30 * time.Second)
@@ -107,7 +109,7 @@ func TestHandleRegistered(t *testing.T) {
 	}
 	r.clk.Advance(1500 * time.Millisecond)
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	if out := r.deliver(0, c.probe(probeOpts{obs: 0}), srcA); len(out) != 1 {
+	if out := r.deliver(0, c.probe(probetest.Probe{Obs: 0}), srcA); len(out) != 1 {
 		t.Fatalf("%d replies", len(out))
 	}
 	h2, err := r.reg.register(nat.Registration{SessionID: "s1", Route: rt(1), Token: tok(1), TTL: time.Minute})
@@ -128,7 +130,7 @@ func TestHandleRegistered(t *testing.T) {
 }
 
 func TestRegistryFull(t *testing.T) {
-	clk := newManualClock()
+	clk := clock.NewFake(t, time.Time{})
 	reg := NewRegistry(RegistryConfig{MaxEntries: 3, Clock: clk})
 	for i := range 3 {
 		register(t, reg, fmt.Sprint("s", i), tok(1), rt(byte(i)))
@@ -162,11 +164,11 @@ func TestRegistryExpiryExtendClose(t *testing.T) {
 	h.Extend(time.Minute)
 	h.Extend(time.Second) // never shortens
 	r.clk.Advance(50 * time.Second)
-	if out := r.deliver(0, c.probe(probeOpts{}), srcA); len(out) != 1 {
+	if out := r.deliver(0, c.probe(probetest.Probe{}), srcA); len(out) != 1 {
 		t.Fatal("the extended entry is not served")
 	}
 	r.clk.Advance(20 * time.Second)
-	if out := r.deliver(0, c.probe(probeOpts{}), srcA); len(out) != 0 || r.stats.unknownRoute.Load() != 1 {
+	if out := r.deliver(0, c.probe(probetest.Probe{}), srcA); len(out) != 0 || r.stats.unknownRoute.Load() != 1 {
 		t.Fatal("an expired entry is served")
 	}
 	if r.reg.sweep(r.clk.Now()) != 1 || r.reg.Len() != 0 {
@@ -182,7 +184,7 @@ func TestRegistryExpiryExtendClose(t *testing.T) {
 	c2 := newClient(t, tok(2), rt(2), udpwire.RoleResponder)
 	h.Close()
 	h.Close()
-	if out := r.deliver(0, c2.probe(probeOpts{}), srcA); len(out) != 0 || r.reg.Len() != 0 {
+	if out := r.deliver(0, c2.probe(probetest.Probe{}), srcA); len(out) != 0 || r.reg.Len() != 0 {
 		t.Fatal("a closed entry is served")
 	}
 	if _, err := r.reg.register(nat.Registration{SessionID: "s3", Route: rt(2), Token: tok(3)}); err != nil {
@@ -198,7 +200,7 @@ func TestRegistryExpiryExtendClose(t *testing.T) {
 
 // Concurrent Handle.Close calls are idempotent.
 func TestHandleCloseIdempotentRace(t *testing.T) {
-	clk := newManualClock()
+	clk := clock.NewFake(t, time.Time{})
 	reg := NewRegistry(RegistryConfig{Clock: clk})
 	var hs []*handle
 	for i := range 50 {
@@ -227,7 +229,7 @@ func TestRegistriesIndependent(t *testing.T) {
 	register(t, a.reg, "s1", tok(1), rt(1))
 	register(t, b.reg, "s1", tok(2), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	if len(a.deliver(0, c.probe(probeOpts{}), srcA)) != 1 || len(b.deliver(0, c.probe(probeOpts{}), srcA)) != 0 {
+	if len(a.deliver(0, c.probe(probetest.Probe{}), srcA)) != 1 || len(b.deliver(0, c.probe(probetest.Probe{}), srcA)) != 0 {
 		t.Fatal("the registries leak into each other")
 	}
 	if b.stats.badAuth.Load() != 1 {
@@ -237,7 +239,7 @@ func TestRegistriesIndependent(t *testing.T) {
 
 // Concurrent readers with registrations and closes (-race).
 func TestRegistryConcurrentReadWrite(t *testing.T) {
-	clk := newManualClock()
+	clk := clock.NewFake(t, time.Time{})
 	reg := NewRegistry(RegistryConfig{Clock: clk})
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -287,7 +289,7 @@ func TestAttachSandwichSinkBridge(t *testing.T) {
 		t.Error("RegisterProbe took a non-Registry")
 	}
 	c := newClient(t, tok(1), rt(1), udpwire.RoleResponder)
-	r.deliver(1, c.probe(probeOpts{obs: 1, sandwich: &[2]uint8{3, nat.SandwichAfter}}), srcA)
+	r.deliver(1, c.probe(probetest.Probe{Obs: 1, Sandwich: &[2]uint8{3, nat.SandwichAfter}}), srcA)
 	mu.Lock()
 	defer mu.Unlock()
 	if len(got) != 1 || got[0].Role != protocol.RoleResponder || got[0].Round != 3 || got[0].Phase != nat.SandwichAfter ||
@@ -321,7 +323,7 @@ func TestExtendDoesNotReviveExpired(t *testing.T) {
 		}
 		c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 		r.clk.Advance(2 * time.Second)
-		if out := r.deliver(0, c.probe(probeOpts{}), srcA); len(out) != 0 {
+		if out := r.deliver(0, c.probe(probetest.Probe{}), srcA); len(out) != 0 {
 			t.Fatal("expired entry served")
 		}
 		if otherWrite {
@@ -332,7 +334,7 @@ func TestExtendDoesNotReviveExpired(t *testing.T) {
 			}
 		}
 		h.Extend(time.Minute)
-		if out := r.deliver(0, c.probe(probeOpts{}), srcA); len(out) != 0 {
+		if out := r.deliver(0, c.probe(probetest.Probe{}), srcA); len(out) != 0 {
 			t.Fatalf("other write %v: an expired entry is served again after Extend", otherWrite)
 		}
 	}
@@ -349,7 +351,7 @@ func TestHugeTTLSaturates(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	if out := r.deliver(0, c.probe(probeOpts{}), srcA); len(out) != 1 {
+	if out := r.deliver(0, c.probe(probetest.Probe{}), srcA); len(out) != 1 {
 		t.Fatalf("a registration with a huge TTL is dead on arrival (expiry %d)", h.e.expiresAt.Load())
 	}
 	if _, err := r.reg.register(reg); err != nil {
@@ -357,7 +359,7 @@ func TestHugeTTLSaturates(t *testing.T) {
 	}
 	h.Extend(time.Duration(math.MaxInt64))
 	r.clk.Advance(time.Hour)
-	if out := r.deliver(0, c.probe(probeOpts{}), srcA); len(out) != 1 || h.e.expiresAt.Load() != math.MaxInt64 {
+	if out := r.deliver(0, c.probe(probetest.Probe{}), srcA); len(out) != 1 || h.e.expiresAt.Load() != math.MaxInt64 {
 		t.Fatalf("renewals wrapped the expiry to %d", h.e.expiresAt.Load())
 	}
 }

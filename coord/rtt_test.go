@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -79,7 +80,7 @@ func TestGoAlignmentAsymmetric(t *testing.T) {
 	}
 	r.clk.Advance(10 * time.Millisecond)
 	p.report(0)
-	eventually(t, "report 0", func() bool { return p.s.Snapshot().Reported[0] })
+	testkit.WaitFor(t, "report 0", func() bool { return p.s.Snapshot().Reported[0] })
 	r.clk.Advance(190 * time.Millisecond)
 	p.report(1)
 	var sums [2]*protocol.ProbeSummary
@@ -122,13 +123,13 @@ func TestPingSchedule(t *testing.T) {
 	p := &pair{r: r, s: s}
 	p.cl[0] = r.attach(s, protocol.RoleInitiator)
 	p.starts[0] = expect[protocol.PunchStart](t, p.cl[0])
-	eventually(t, "ping#1", func() bool { return p.cl[0].Pings() == 1 })
+	testkit.WaitFor(t, "ping#1", func() bool { return p.cl[0].Pings() == 1 })
 	p.report(0)
-	eventually(t, "report", func() bool { return s.Snapshot().Reported[0] })
+	testkit.WaitFor(t, "report", func() bool { return s.Snapshot().Reported[0] })
 	for want := 2; want <= 4; want++ {
 		r.clk.Advance(pingEvery)
 		if want <= 3 {
-			eventually(t, "ping", func() bool { return p.cl[0].Pings() == want })
+			testkit.WaitFor(t, "ping", func() bool { return p.cl[0].Pings() == want })
 		}
 	}
 	if r.clk.Pending() != 2 { // the housekeeping timer and the session's single timer
@@ -143,11 +144,11 @@ func TestPingSchedule(t *testing.T) {
 	sum := expect[protocol.ProbeSummary](t, p.cl[0])
 	expect[protocol.ProbeSummary](t, p.cl[1])
 	send(t, p.cl[0], simclient.Ready(sum, protocol.RoleInitiator, 0))
-	eventually(t, "ready", func() bool { return s.Snapshot().Ready[0] })
+	testkit.WaitFor(t, "ready", func() bool { return s.Snapshot().Ready[0] })
 	for range 3 {
 		r.clk.Advance(pingEvery)
 	}
-	eventually(t, "ready-phase pings", func() bool { return p.cl[0].Pings() == 5 })
+	testkit.WaitFor(t, "ready-phase pings", func() bool { return p.cl[0].Pings() == 5 })
 	if p.cl[1].Pings() != 1 {
 		t.Fatalf("responder pings %d", p.cl[1].Pings())
 	}
@@ -165,13 +166,13 @@ func TestPongSamples(t *testing.T) {
 	s := r.session(SessionOptions{})
 	c := r.attach(s, protocol.RoleInitiator, simclient.Options{NoPong: true})
 	expect[protocol.PunchStart](t, c)
-	eventually(t, "ping#1", func() bool { return c.Pings() == 1 })
+	testkit.WaitFor(t, "ping#1", func() bool { return c.Pings() == 1 })
 	r.clk.Advance(80 * time.Millisecond)
 	skewed := r.clk.Now().Add(-time.Hour).UnixMilli()
 	send(t, c, &protocol.Pong{Seq: 1, HoldUs: 30000, ClientUnixMs: skewed})
 	send(t, c, &protocol.Pong{Seq: 1, HoldUs: 0}) // repeated
 	send(t, c, &protocol.Pong{Seq: 5, HoldUs: 0}) // never sent
-	eventually(t, "sample", func() bool { return s.Snapshot().RTT[0] != 0 })
+	testkit.WaitFor(t, "sample", func() bool { return s.Snapshot().RTT[0] != 0 })
 	if got := s.Snapshot().RTT[0]; got != 50*time.Millisecond {
 		t.Fatalf("rtt %v", got)
 	}

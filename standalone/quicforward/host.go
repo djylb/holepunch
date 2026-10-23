@@ -12,9 +12,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/standalone"
 	"github.com/djylb/holepunch/standalone/client"
+	"github.com/djylb/holepunch/standalone/internal/life"
 	"github.com/djylb/holepunch/standalone/proto"
 )
 
@@ -177,13 +177,14 @@ func serveStream(ctx context.Context, g *life.Group, conn *Conn, st *quic.Stream
 	}
 	target, err := cfg.resolve(req.Target, policy)
 	if err != nil {
-		refuse(st, err.Error())
+		cfg.Logger.Info("target refused", "target", req.Target, "err", err)
+		refuse(st, refusedNotAllowed)
 		return
 	}
 	tc, err := dialTarget(ctx, cfg, target)
 	if err != nil {
 		cfg.Logger.Info("target dial failed", "target", target, "err", err)
-		refuse(st, "target "+target+" unreachable")
+		refuse(st, refusedUnreachable)
 		return
 	}
 	if !g.Own("quicforward.target", tc) {
@@ -200,6 +201,12 @@ func serveStream(ctx context.Context, g *life.Group, conn *Conn, st *quic.Stream
 	defer func() { _ = sc.Close() }() // relay closes both; Close is idempotent
 	relay(g, sc, tc)
 }
+
+// Refusal reasons a host sends: fixed words, the details stay in its log.
+const (
+	refusedNotAllowed  = "target_not_allowed" // not a target of the host, or not one the session's policy allows
+	refusedUnreachable = "target_unreachable" // the host could not connect the target
+)
 
 // refuse answers a stream with a refusal and ends it: the answer is sent
 // with a clean FIN, and the request side is no longer read.

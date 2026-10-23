@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/clock"
 )
 
 // sealedSeeds returns one sealed packet of every type for fuzz corpora.
@@ -266,7 +268,7 @@ func FuzzDropResidual(f *testing.F) {
 	f.Add([]byte{0xFF})
 	ini := newCodec(f, RoleInitiator)
 	f.Fuzz(func(t *testing.T, script []byte) {
-		clk := newManualClock()
+		clk := clock.NewFake(t, clockStart)
 		resp, err := NewCodec(testToken(), testRoute(), RoleResponder, testPad, clk.Now)
 		if err != nil {
 			t.Fatal(err)

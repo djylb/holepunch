@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/netip"
 	"time"
+
+	"github.com/djylb/holepunch/internal/netaddr"
 )
 
 // Retransmission schedule shared by PCP, NAT-PMP and SSDP (RFC 6886, section 3.1:
@@ -100,20 +102,8 @@ func (c *reqConn) readRound(ctx context.Context, deadline time.Time, buf []byte,
 			}
 			return false, err
 		}
-		if done, err := match(buf[:n], addrPortOf(addr)); done || err != nil {
+		if done, err := match(buf[:n], netaddr.Unmap(netaddr.AddrPortOf(addr))); done || err != nil {
 			return done, err
 		}
 	}
-}
-
-// addrPortOf returns the address of a datagram's sender, with an
-// IPv4-mapped address unmapped.
-func addrPortOf(a net.Addr) netip.AddrPort {
-	var ap netip.AddrPort
-	if u, ok := a.(*net.UDPAddr); ok && u != nil {
-		ap = u.AddrPort()
-	} else if a != nil {
-		ap, _ = netip.ParseAddrPort(a.String())
-	}
-	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port())
 }

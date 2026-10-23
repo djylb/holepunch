@@ -11,6 +11,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/probe"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
@@ -171,10 +172,11 @@ func runEndToEnd(t *testing.T, f protocol.Family, ip netip.Addr) {
 		t.Fatal(err)
 	}
 	mem := natprobe.NewTraitsMemory(natprobe.TraitsMemoryConfig{})
-	view, diag, err := h.Merge(protocol.RoleResponder, rep, mem, "c", false)
+	merged, err := h.Merge(protocol.RoleResponder, rep, mem, "c", false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	view, diag := merged.View, merged.Diag
 	if diag != (nat.MergeDiag{}) || len(view.Families) != 1 {
 		t.Fatalf("diag %+v view %+v", diag, view)
 	}
@@ -192,7 +194,7 @@ func runEndToEnd(t *testing.T, f protocol.Family, ip netip.Addr) {
 	// The prober is done once one extra arrived; the server's reader may
 	// still be writing the other two, so their counters settle a little later.
 	st := srv.Stats()
-	for deadline := time.Now().Add(2 * time.Second); st.Extras < 3 && time.Now().Before(deadline); st = srv.Stats() {
+	for deadline := time.Now().Add(testkit.WaitBound(t)); st.Extras < 3 && time.Now().Before(deadline); st = srv.Stats() {
 		time.Sleep(time.Millisecond)
 	}
 	if st.Acks != 3 || st.Extras != 3 || st.BytesOut > st.BytesIn || st.Panics != 0 || st.BadAuth != 0 {

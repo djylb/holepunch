@@ -17,7 +17,7 @@ import (
 // its first mapping; the responder's fresh sockets aim at the initiator's
 // verified endpoint.
 func freshPlan(k int, r protocol.Role, views [2]protocol.PeerView) protocol.RoundPlan {
-	peer := views[1-roleIndex(r)].Families[0].Endpoints[0].Addr
+	peer := peerAddr(r, views)
 	side := protocol.FamilySide{Family: protocol.FamilyUDP4, Role: protocol.SideBoth, Sockets: 1, MaxPackets: 12,
 		MaxPPS: 80, MaxNewPerSec: 100, MaxDistinctPorts: 4}
 	if r == protocol.RoleInitiator {

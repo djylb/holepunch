@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -98,7 +99,7 @@ func TestRound1Baseline(t *testing.T) {
 				if swap == 1 {
 					va, vb = vb, va
 				}
-				ci := ClassifyInput{Initiator: va, Responder: vb, Policy: protocol.Policy{Budget: protocol.DefaultBudget()},
+				ci := api.ClassifyInput{Initiator: va, Responder: vb, Policy: protocol.Policy{Budget: protocol.DefaultBudget()},
 					Timeouts: protocol.DefaultTimeouts(), Mode: c.mode}
 				if c.mode == protocol.ModeBackground {
 					ci.Policy.Budget = protocol.BackgroundBudget()
@@ -109,15 +110,15 @@ func TestRound1Baseline(t *testing.T) {
 				}
 				for start := range cl.Ladder {
 					name := fmt.Sprintf("%s/%d endpoints/swap %d/start %d", c.name, endpoints, swap, start)
-					in := RoundInput{Round: 1, Class: cl, Order: append(slices.Clone(cl.Ladder[start:]), cl.Ladder[:start]...),
+					in := api.RoundInput{Round: 1, Class: cl, Order: append(slices.Clone(cl.Ladder[start:]), cl.Ladder[:start]...),
 						MemoryPromoted: start > 0, RTT: [2]time.Duration{40 * time.Millisecond, 60 * time.Millisecond},
 						Remaining: 58 * time.Second, D: 150 * time.Millisecond, BudgetLeft: [2]int{-1, -1}, Views: [2]protocol.PeerView{va, vb},
 						Policy: ci.Policy, AllowExtreme: true, MaxRounds: 6, HandshakeMs: 60000, SandwichOK: true}
-					dec := p.Round(in)
+					dec := p.Round(classified(in, ci))
 					if dec.Stop != "" {
 						t.Fatalf("%s: round 1 stops (%s)", name, dec.Stop)
 					}
-					for fi, fp := range cl.fams {
+					for fi, fp := range famsOf(ci) {
 						for role := range 2 {
 							fs := dec.Sides[role][fi]
 							if c.mode == protocol.ModeBackground {

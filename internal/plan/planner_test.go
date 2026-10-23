@@ -3,9 +3,12 @@ package plan
 import (
 	"fmt"
 	"net/netip"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -175,7 +178,7 @@ func TestLaddersBudgetInvariant(t *testing.T) {
 					if cl.PairClass != c.pairClass {
 						t.Fatalf("pair class %q, want %q", cl.PairClass, c.pairClass)
 					}
-					var prev []RoundOutcome
+					var prev []api.RoundOutcome
 					prevRank := 0
 					for round := 1; round <= 6; round++ {
 						in := roundInput(cl, c.a, c.b, round, prev)
@@ -210,7 +213,7 @@ func TestLaddersBudgetInvariant(t *testing.T) {
 								t.Fatalf("round %d role %d: %d packets > BudgetLeft %d", round, role, total, budgetLeft)
 							}
 						}
-						prev = append(prev, RoundOutcome{Round: round, Variant: dec.Variant, Class: RCNoContact, Rescue: dec.Rescue,
+						prev = append(prev, api.RoundOutcome{Round: round, Variant: dec.Variant, Class: api.RoundNoContact, Rescue: dec.Rescue,
 							Budget: dec.Budget, Families: dec.Families})
 						if dec.Final {
 							break
@@ -224,7 +227,7 @@ func TestLaddersBudgetInvariant(t *testing.T) {
 
 func TestNoCommonFamily(t *testing.T) {
 	var p DefaultPlanner
-	in := ClassifyInput{
+	in := api.ClassifyInput{
 		Initiator: view(openTraits(protocol.FamilyUDP4)),
 		Responder: view(openTraits(protocol.FamilyUDP6)),
 		Policy:    protocol.Policy{Budget: protocol.DefaultBudget()},
@@ -240,7 +243,7 @@ func TestStopRuleTimeAndBudget(t *testing.T) {
 	var p DefaultPlanner
 	f := protocol.FamilyUDP4
 	cl := p.Classify(classifyInput(openTraits(f), openTraits(f)))
-	prev := []RoundOutcome{{Round: 1, Variant: vEasy1, Class: RCNoContact, Budget: protocol.BudgetLight}}
+	prev := []api.RoundOutcome{{Round: 1, Variant: vEasy1, Class: api.RoundNoContact, Budget: protocol.BudgetLight}}
 
 	low := roundInput(cl, openTraits(f), openTraits(f), 2, prev)
 	low.Remaining = 300 * time.Millisecond
@@ -261,7 +264,7 @@ func TestStopRuleUsesCoordinatorD(t *testing.T) {
 	var p DefaultPlanner
 	f := protocol.FamilyUDP4
 	cl := p.Classify(classifyInput(openTraits(f), openTraits(f)))
-	prev := []RoundOutcome{{Round: 1, Variant: vEasy1, Class: RCNoContact, Budget: protocol.BudgetLight}}
+	prev := []api.RoundOutcome{{Round: 1, Variant: vEasy1, Class: api.RoundNoContact, Budget: protocol.BudgetLight}}
 	in := roundInput(cl, openTraits(f), openTraits(f), 2, prev)
 	in.D = 200 * time.Millisecond
 	in.Remaining = 880 * time.Millisecond // < 700 + 200
@@ -278,7 +281,7 @@ func TestRescueRound(t *testing.T) {
 	var p DefaultPlanner
 	f := protocol.FamilyUDP4
 	cl := p.Classify(classifyInput(pdfTraits(f), seqTraits(f)))
-	in := roundInput(cl, pdfTraits(f), seqTraits(f), 2, []RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: RCOneWay, Budget: protocol.BudgetBalanced}})
+	in := roundInput(cl, pdfTraits(f), seqTraits(f), 2, []api.RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: api.RoundOneWay, Budget: protocol.BudgetBalanced}})
 	in.Evidence.SeenFrom[0] = []netip.AddrPort{observedFor(f, 3)} // the responder's mapping
 	in.Evidence.Hit[0] = true
 	dec := p.Round(in)
@@ -292,13 +295,50 @@ func TestRescueRound(t *testing.T) {
 		t.Fatalf("seer (initiator) not sender: %+v", dec.Sides[0])
 	}
 	// A second one-way after the rescue is used must not insert another rescue.
-	in2 := roundInput(cl, pdfTraits(f), seqTraits(f), 3, []RoundOutcome{
-		{Round: 1, Variant: cl.Ladder[0], Class: RCOneWay, Budget: protocol.BudgetBalanced},
-		{Round: 2, Variant: vRescue, Class: RCOneWay, Rescue: true, Budget: protocol.BudgetLight},
+	in2 := roundInput(cl, pdfTraits(f), seqTraits(f), 3, []api.RoundOutcome{
+		{Round: 1, Variant: cl.Ladder[0], Class: api.RoundOneWay, Budget: protocol.BudgetBalanced},
+		{Round: 2, Variant: vRescue, Class: api.RoundOneWay, Rescue: true, Budget: protocol.BudgetLight},
 	})
 	in2.RescueUsed = true
 	in2.Evidence.SeenFrom[0] = in.Evidence.SeenFrom[0]
 	if dec2 := p.Round(in2); dec2.Rescue {
 		t.Fatal("second rescue round must not be inserted")
+	}
+}
+
+// TestRoundNeedsNoHiddenState: Round derives the per-family plans from its
+// input, so a Classification rebuilt from its exported fields plans the
+// same rounds, and one that names fewer families runs only those.
+func TestRoundNeedsNoHiddenState(t *testing.T) {
+	var p DefaultPlanner
+	a4, b4 := pdfTraits(protocol.FamilyUDP4), seqTraits(protocol.FamilyUDP4)
+	a6, b6 := openTraits(protocol.FamilyUDP6), rndTraits(protocol.FamilyUDP6)
+	ci := api.ClassifyInput{Initiator: dual(a4, a6), Responder: dual(b4, b6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()},
+		Timeouts: protocol.DefaultTimeouts(), Pair: protocol.PairFacts{SharedFamilies: []protocol.Family{protocol.FamilyUDP6, protocol.FamilyUDP4}}}
+	cl := p.Classify(ci)
+	if len(cl.Families) != 2 {
+		t.Fatalf("families %v", cl.Families)
+	}
+	rebuilt := api.Classification{PairClass: cl.PairClass, Families: slices.Clone(cl.Families), SideA: cl.SideA,
+		Ladder: slices.Clone(cl.Ladder), Advice: cl.Advice}
+	in := classified(roundInput(cl, protocol.Traits{}, protocol.Traits{}, 1, nil), ci)
+	in.Views = [2]protocol.PeerView{ci.Initiator, ci.Responder}
+	want := p.Round(in)
+	in.Class = rebuilt
+	if got := p.Round(in); !reflect.DeepEqual(got, want) {
+		t.Fatalf("rebuilt classification plans\n%+v\nwant\n%+v", got, want)
+	}
+
+	// Only the v4 family: its ladder is the primary one now.
+	in.Class = api.Classification{Families: []protocol.Family{protocol.FamilyUDP4}, Ladder: famsOf(ci)[1].Ladder}
+	got := p.Round(in)
+	if got.Stop != "" || len(got.Families) != 1 || got.Families[0].Family != protocol.FamilyUDP4 || len(got.Sides[0]) != 1 ||
+		got.Sides[0][0].Family != protocol.FamilyUDP4 {
+		t.Fatalf("v4 only: %+v", got)
+	}
+	// A family the views do not share is not planned.
+	in.Class.Families = []protocol.Family{"udp9"}
+	if got := p.Round(in); got.Stop == "" {
+		t.Fatalf("unshared family planned: %+v", got)
 	}
 }

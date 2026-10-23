@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 type vectorFile struct {
@@ -62,15 +64,15 @@ func TestTypeTableMatchesVectors(t *testing.T) {
 	if len(v.Types) != 12 {
 		t.Fatalf("vector table has %d types", len(v.Types))
 	}
-	if v.DiscardCap != DiscardCap || v.MaxPayload != MaxPayload {
-		t.Fatalf("caps: vectors %d/%d, Go %d/%d", v.DiscardCap, v.MaxPayload, DiscardCap, MaxPayload)
+	if v.DiscardCap != wiretype.DiscardCap || v.MaxPayload != MaxPayload {
+		t.Fatalf("caps: vectors %d/%d, Go %d/%d", v.DiscardCap, v.MaxPayload, wiretype.DiscardCap, MaxPayload)
 	}
 	seen := 0
 	for typ := range 256 {
 		ty := Type(typ)
-		inf, known := ty.info()
+		inf, known := ty.Info()
 		if !known {
-			if ty.Cap() != DiscardCap || SideClient.Sends(ty) || SideServer.Sends(ty) || SideClient.Receives(ty) || SideServer.Receives(ty) {
+			if ty.Cap() != wiretype.DiscardCap || SideClient.Sends(ty) || SideServer.Sends(ty) || SideClient.Receives(ty) || SideServer.Receives(ty) {
 				t.Errorf("reserved %v: cap %d, sends %v/%v", ty, ty.Cap(), SideClient.Sends(ty), SideServer.Sends(ty))
 			}
 			continue
@@ -81,8 +83,8 @@ func TestTypeTableMatchesVectors(t *testing.T) {
 			t.Errorf("%v (%d) missing from the vector table", ty, typ)
 			continue
 		}
-		if want.Type != typ || want.Cap != ty.Cap() || want.Priority != int(inf.prio) {
-			t.Errorf("%v: Go %d/%d/P%d, vectors %d/%d/P%d", ty, typ, ty.Cap(), inf.prio, want.Type, want.Cap, want.Priority)
+		if want.Type != typ || want.Cap != ty.Cap() || want.Priority != int(inf.Prio) {
+			t.Errorf("%v: Go %d/%d/P%d, vectors %d/%d/P%d", ty, typ, ty.Cap(), inf.Prio, want.Type, want.Cap, want.Priority)
 		}
 		client, server := SideClient.Sends(ty), SideServer.Sends(ty)
 		var sender string
@@ -203,22 +205,22 @@ func TestParseHeader(t *testing.T) {
 		n      int
 		err    error
 	}{
-		{"ok", hdr('h', 'p', Version, TypePunchGo, 5), nil, TypePunchGo, 5, nil},
-		{"at cap", hdr('h', 'p', Version, TypePing, 256), nil, TypePing, 256, nil},
-		{"over cap", hdr('h', 'p', Version, TypePing, 257), nil, 0, 0, ErrFrameTooLarge},
-		{"bad magic", hdr('H', 'p', Version, TypePing, 0), nil, 0, 0, ErrBadMagic},
-		{"bad magic 2", hdr('h', 'P', Version, TypePing, 0), nil, 0, 0, ErrBadMagic},
-		{"major 0", hdr('h', 'p', 0, TypePing, 0), nil, 0, 0, ErrVersion},
-		{"major 2", hdr('h', 'p', 2, TypePing, 0), nil, 0, 0, ErrVersion},
-		{"type 0", hdr('h', 'p', Version, 0, 0), nil, 0, 0, ErrZeroType},
-		{"reserved uses discard cap", hdr('h', 'p', Version, 77, DiscardCap), nil, 77, DiscardCap, nil},
-		{"reserved over discard cap", hdr('h', 'p', Version, 77, DiscardCap+1), nil, 0, 0, ErrFrameTooLarge},
-		{"capFor tighter", hdr('h', 'p', Version, TypeProbeSummary, 100), func(Type) int { return 99 }, 0, 0, ErrFrameTooLarge},
-		{"capFor cannot exceed global", hdr('h', 'p', Version, TypeProbeSummary, MaxPayload+1), func(Type) int { return 1 << 30 }, 0, 0, ErrFrameTooLarge},
-		{"negative capFor admits no payload", hdr('h', 'p', Version, TypeProbeSummary, 1), func(Type) int { return -1 }, 0, 0, ErrFrameTooLarge},
-		{"negative capFor, huge length", hdr('h', 'p', Version, TypeProbeSummary, ^uint32(0)), func(Type) int { return -1 }, 0, 0, ErrFrameTooLarge},
-		{"negative capFor, empty payload", hdr('h', 'p', Version, TypeProbeSummary, 0), func(Type) int { return -1 }, TypeProbeSummary, 0, nil},
-		{"huge length", hdr('h', 'p', Version, TypeProbeSummary, ^uint32(0)), nil, 0, 0, ErrFrameTooLarge},
+		{"ok", hdr('h', 'p', wiretype.Version, wiretype.PunchGo, 5), nil, wiretype.PunchGo, 5, nil},
+		{"at cap", hdr('h', 'p', wiretype.Version, wiretype.Ping, 256), nil, wiretype.Ping, 256, nil},
+		{"over cap", hdr('h', 'p', wiretype.Version, wiretype.Ping, 257), nil, 0, 0, ErrFrameTooLarge},
+		{"bad magic", hdr('H', 'p', wiretype.Version, wiretype.Ping, 0), nil, 0, 0, ErrBadMagic},
+		{"bad magic 2", hdr('h', 'P', wiretype.Version, wiretype.Ping, 0), nil, 0, 0, ErrBadMagic},
+		{"major 0", hdr('h', 'p', 0, wiretype.Ping, 0), nil, 0, 0, ErrVersion},
+		{"major 2", hdr('h', 'p', 2, wiretype.Ping, 0), nil, 0, 0, ErrVersion},
+		{"type 0", hdr('h', 'p', wiretype.Version, 0, 0), nil, 0, 0, ErrZeroType},
+		{"reserved uses discard cap", hdr('h', 'p', wiretype.Version, 77, wiretype.DiscardCap), nil, 77, wiretype.DiscardCap, nil},
+		{"reserved over discard cap", hdr('h', 'p', wiretype.Version, 77, wiretype.DiscardCap+1), nil, 0, 0, ErrFrameTooLarge},
+		{"capFor tighter", hdr('h', 'p', wiretype.Version, wiretype.ProbeSummary, 100), func(Type) int { return 99 }, 0, 0, ErrFrameTooLarge},
+		{"capFor cannot exceed global", hdr('h', 'p', wiretype.Version, wiretype.ProbeSummary, MaxPayload+1), func(Type) int { return 1 << 30 }, 0, 0, ErrFrameTooLarge},
+		{"negative capFor admits no payload", hdr('h', 'p', wiretype.Version, wiretype.ProbeSummary, 1), func(Type) int { return -1 }, 0, 0, ErrFrameTooLarge},
+		{"negative capFor, huge length", hdr('h', 'p', wiretype.Version, wiretype.ProbeSummary, ^uint32(0)), func(Type) int { return -1 }, 0, 0, ErrFrameTooLarge},
+		{"negative capFor, empty payload", hdr('h', 'p', wiretype.Version, wiretype.ProbeSummary, 0), func(Type) int { return -1 }, wiretype.ProbeSummary, 0, nil},
+		{"huge length", hdr('h', 'p', wiretype.Version, wiretype.ProbeSummary, ^uint32(0)), nil, 0, 0, ErrFrameTooLarge},
 	}
 	for _, tc := range cases {
 		typ, n, err := ParseHeader(tc.h, tc.capFor)
@@ -249,15 +251,15 @@ func TestAppendFrameChecks(t *testing.T) {
 		}
 	}
 	dst := []byte("prefix")
-	out, _ := AppendFrame(dst, Frame{Type: TypePing, Payload: []byte("{}")})
+	out, _ := AppendFrame(dst, Frame{Type: wiretype.Ping, Payload: []byte("{}")})
 	if string(out[:6]) != "prefix" || len(out) != 6+HeaderSize+2 {
 		t.Fatalf("AppendFrame did not append: %q", out)
 	}
 }
 
 func TestTypeStrings(t *testing.T) {
-	if TypePunchGo.String() != "punch_go" || Type(200).String() != "type(200)" {
-		t.Fatal(TypePunchGo.String(), Type(200).String())
+	if wiretype.PunchGo.String() != "punch_go" || Type(200).String() != "type(200)" {
+		t.Fatal(wiretype.PunchGo.String(), Type(200).String())
 	}
 	if SideClient.String() != "client" || SideServer.String() != "server" {
 		t.Fatal("side names")
@@ -273,9 +275,9 @@ func TestOversizeReadsOnlyHeader(t *testing.T) {
 			ty := Type(typ)
 			limit := ty.Cap()
 			if !side.Receives(ty) {
-				limit = DiscardCap
+				limit = wiretype.DiscardCap
 			}
-			stream := rawFrame(Version, ty, "")
+			stream := rawFrame(wiretype.Version, ty, "")
 			binary.BigEndian.PutUint32(stream[4:], uint32(limit+1))
 			stream = append(stream, strings.Repeat("x", 64)...)
 			mc := newMemConn(stream, 0)
@@ -295,7 +297,7 @@ func TestOversizeReadsOnlyHeader(t *testing.T) {
 // TestOversizeAllocatesNoPayload: rejecting a header that announces 64 KiB
 // allocates far less than the payload would need.
 func TestOversizeAllocatesNoPayload(t *testing.T) {
-	stream := rawFrame(Version, TypeProbeSummary, "")
+	stream := rawFrame(wiretype.Version, wiretype.ProbeSummary, "")
 	binary.BigEndian.PutUint32(stream[4:], MaxPayload)
 	const runs = 50
 	var before, after runtime.MemStats
@@ -320,7 +322,7 @@ func TestOversizeAllocatesNoPayload(t *testing.T) {
 // frame was read completely.
 func TestFrameAtUsesNow(t *testing.T) {
 	fixed := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	c := mustConn(t, newMemConn(frameBytes(TypePunchGo, "{}"), 0), ConnOptions{Now: func() time.Time { return fixed }})
+	c := mustConn(t, newMemConn(frameBytes(wiretype.PunchGo, "{}"), 0), ConnOptions{Now: func() time.Time { return fixed }})
 	f, err := c.ReadFrame(context.Background())
 	if err != nil {
 		t.Fatal(err)

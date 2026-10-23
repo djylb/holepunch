@@ -1,8 +1,8 @@
 package coord
 
-// Fault injection points of coord.
-// Every name is a constant at its call site, so that the default build compiles
-// each point away.
+// Fault injection points of coord. Every name is a constant, passed down to
+// the point (callout passes its own); the default build compiles each point
+// away.
 const (
 	fiAttach         = "coord.attach"          // Attach, before the connection is wrapped
 	fiHandleReport   = "coord.handle.report"   // a probe_report is being handled

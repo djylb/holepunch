@@ -2,25 +2,23 @@ package coord
 
 import (
 	"encoding/base64"
-	"maps"
-	"net/netip"
 	"slices"
 	"time"
 
-	"github.com/djylb/holepunch/internal/faultinject"
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/netaddr"
+	engine "github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/trunc"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
 // planIn is the planning input taken under the lock.
 type planIn struct {
-	gen        uint64
 	unobserved []protocol.Family // Session.unobserved
 	reports    [2]protocol.ProbeReport
 	echoed     [2]bool
-	planner    Planner
+	planner    plan.Planner
 	memory     StrategyMemory
 }
 
@@ -28,16 +26,16 @@ type planIn struct {
 type planOut struct {
 	views, pviews, raw [2]protocol.PeerView
 	pair               protocol.PairFacts
-	cls                Classification
-	cin                ClassifyInput
-	planner            Planner
+	cls                plan.Classification
+	cin                plan.ClassifyInput
+	planner            plan.Planner
 	memory             StrategyMemory
 	mode               string
 	key                StrategyKey
 	hasKey             bool
-	order              []VariantID
+	order              []plan.VariantID
 	memHit, promoted   bool
-	bgOnly             bool                 // plan.BackgroundOnly by the built-in memory
+	bgOnly             bool                 // engine.BackgroundOnly by the memory's scores
 	sessionMode        protocol.SessionMode // background when offered and both reports accept it
 	stunConflicts      int                  // STUN values contradicting natprobe (MergeDiag)
 	term               *terminal
@@ -48,62 +46,49 @@ type planOut struct {
 // Planner classify the pair and plan round 1 — all outside the lock — and
 // then, if nothing changed meanwhile, writes both summaries.
 func (s *Session) planSession() {
-	in, ok := s.planInput()
-	if !ok {
-		return
-	}
-	out := s.plan(in)
 	var (
-		fx  effects
-		rin RoundInput
-		cin ClassifyInput
-		p   Planner
-		go1 bool
+		t      planTicket
+		round1 bool
 	)
-	planned := s.since(s.c.set.clock.Now())
-	func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		fx, go1 = s.takePlanLocked(in.gen, out, planned)
-		if go1 {
-			rin = s.roundInputLocked(1, s.st.updated)
-			cin, p = s.st.cin, s.st.planner
-		}
-	}()
-	// The sink goes on before round 1 is planned: its anchor refresh hands
-	// the probes over through it.
-	s.apply(fx)
-	if !go1 {
+	offLock(s, s.planInputLocked, s.plan, func(tk planTicket, _ planIn, out planOut, now time.Time) effects {
+		var fx effects
+		fx, round1 = s.takePlanLocked(out, s.since(now))
+		t = tk
+		return fx
+	})
+	if !round1 {
 		return
 	}
-	d := s.decide(p, cin, rin)
-	now := s.c.set.clock.Now()
-	func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		fx = s.applyRound1Locked(in.gen, d, now)
-		if s.st.gen == in.gen && s.st.state == StateSummarized {
+	// The sink went on with the plan's effects, before round 1 is planned:
+	// its anchor refresh hands the probes over through it.
+	offLock(s, func(time.Duration) (planTicket, roundJob, bool) {
+		if !s.validLocked(t) {
+			return t, roundJob{}, false
+		}
+		st := &s.st
+		return t, roundJob{p: st.plan.planner, cin: st.plan.cin, in: s.roundInputLocked(1, st.updated)}, true
+	}, s.decideJob, func(t planTicket, j roundJob, d decision, now time.Time) effects {
+		fx := s.applyRound1Locked(d, now)
+		if t.state = StateSummarized; s.validLocked(t) {
 			// Round 1's anchor refresh runs while the summaries travel and
 			// the readies come back; the go waits for it.
-			s.beginRefreshLocked(1, in.gen, d, cin, rin, s.since(now))
+			s.beginRefreshLocked(t, d, j.cin, j.in, s.since(now))
 		}
-	}()
-	s.apply(fx)
+		return fx
+	})
 }
 
-func (s *Session) planInput() (planIn, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// planInputLocked takes the session plan's input once both reports are in.
+func (s *Session) planInputLocked(time.Duration) (planTicket, planIn, bool) {
 	st := &s.st
-	if st.state != StateProbing || st.reports[0] == nil || st.reports[1] == nil || st.planned {
-		return planIn{}, false
+	if st.state != StateProbing || st.reports[0] == nil || st.reports[1] == nil || st.plan.planned {
+		return planTicket{}, planIn{}, false
 	}
-	return planIn{
-		gen:        st.gen,
+	return s.ticketLocked(1, false), planIn{
 		reports:    [2]protocol.ProbeReport{*st.reports[0], *st.reports[1]},
-		echoed:     st.echoed,
-		planner:    st.planner,
-		memory:     st.memory,
+		echoed:     st.sand.echoed,
+		planner:    st.plan.planner,
+		memory:     st.plan.memory,
 		unobserved: s.unobserved,
 	}, true
 }
@@ -118,19 +103,19 @@ func (s *Session) plan(in planIn) planOut {
 	// The session keeps the input for a fallback classification outside the
 	// lock, so it shares nothing with what it is made of: the planner views
 	// change in place, the views and pair facts become the admission sets
-	// (indexViewsLocked), and raw still feeds the traits memory at the end.
+	// (admission.index), and raw still feeds the traits memory at the end.
 	// classify hands the planner a copy of its own.
-	cin := ClassifyInput{
-		Initiator: clonePeerView(out.pviews[0]),
-		Responder: clonePeerView(out.pviews[1]),
+	cin := plan.ClassifyInput{
+		Initiator: out.pviews[0],
+		Responder: out.pviews[1],
 		// natprobe's own measurements, without the traits memory: the only
 		// evidence the early verdict trusts.
-		Measured: [2]protocol.PeerView{clonePeerView(out.raw[0]), clonePeerView(out.raw[1])},
-		Pair:     clonePairFacts(out.pair),
-		Policy:   clonePolicy(*s.starts[0].Policy),
+		Measured: out.raw,
+		Pair:     out.pair,
+		Policy:   *s.starts[0].Policy,
 		Timeouts: s.to,
 		Mode:     sessionMode(s.offer, in.reports),
-	}
+	}.Clone()
 	out.sessionMode = cin.Mode
 	if in.echoed[0] && in.echoed[1] {
 		cin.Features = []protocol.Feature{protocol.FeatureSandwich}
@@ -171,7 +156,7 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 	if s.handle == nil {
 		for r := range in.reports {
 			out.views[r] = selfView(in.reports[r])
-			out.pviews[r] = clonePeerView(out.views[r])
+			out.pviews[r] = out.views[r].Clone()
 		}
 		return true
 	}
@@ -181,31 +166,16 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 	}
 	verifiedOnly := s.c.cfg.Targets == TargetsVerifiedOnly
 	for r := range in.reports {
-		var (
-			err  error
-			diag nat.MergeDiag
-		)
-		if perr := life.Safe("coord.merge", func() {
-			out.views[r], diag, err = s.handle.Merge(roleOf(r), in.reports[r], mem, s.keys[r], verifiedOnly)
-			if err == nil && mem != nil {
-				// The memory's own conclusions must not renew it:
-				// the traits fed back at the end come from this
-				// session's evidence only.
-				out.raw[r], _, err = s.handle.Merge(roleOf(r), in.reports[r], nil, s.keys[r], verifiedOnly)
-			}
-		}); perr != nil {
-			out.term = &terminal{code: protocol.ReasonInternal, detail: detailMergePanic}
-			return false
-		}
+		m, err := s.handle.Merge(roleOf(r), in.reports[r], mem, s.keys[r], verifiedOnly)
 		if err != nil {
-			out.term = &terminal{code: protocol.ReasonInternal, detail: truncate("merge: "+err.Error(), maxDetail)}
+			out.term = &terminal{code: protocol.ReasonInternal, detail: trunc.String("merge: "+err.Error(), protocol.MaxDetail)}
 			return false
 		}
-		if mem == nil {
-			out.raw[r] = out.views[r]
-		}
-		out.stunConflicts += diag.STUNConflicts
-		out.pviews[r] = clonePeerView(out.views[r])
+		// The memory's own conclusions must not renew it: the traits fed
+		// back at the end come from this session's evidence only (Raw).
+		out.views[r], out.raw[r] = m.View, m.Raw
+		out.stunConflicts += m.Diag.STUNConflicts
+		out.pviews[r] = out.views[r].Clone()
 	}
 	// A family no observer covers has nothing verified: it runs on the
 	// clients' own reports in the restricted mode, or not at all. It never
@@ -220,9 +190,9 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 			}
 			for _, fr := range in.reports[r].Families {
 				if fr.Family == f {
-					fv := selfFamilyView(fr)
+					fv := nat.SelfReportedView(fr)
 					out.views[r].Families = append(out.views[r].Families, fv)
-					out.pviews[r].Families = append(out.pviews[r].Families, cloneFamilyView(fv))
+					out.pviews[r].Families = append(out.pviews[r].Families, fv.Clone())
 					break
 				}
 			}
@@ -232,153 +202,19 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 }
 
 // selfView is a client's view built from its own report (NoObserver mode):
-// every family's selfFamilyView.
+// every family's nat.SelfReportedView.
 func selfView(rep protocol.ProbeReport) protocol.PeerView {
 	var v protocol.PeerView
 	for _, fr := range rep.Families {
-		v.Families = append(v.Families, selfFamilyView(fr))
+		v.Families = append(v.Families, nat.SelfReportedView(fr))
 	}
 	return v
 }
-
-// selfFamilyView is a family view built from the client's own report, for a
-// family the server cannot verify: its provisional traits and the
-// addresses it reports — the observed values of its probe rows, STUN rows
-// and its port mapping, then as LAN endpoints at most four local addresses
-// (those of the primary and sibling sockets, and the host's global addresses
-// at the primary socket's port: a host without NAT is reached there), then
-// its overlay addresses at that port — none of them verified.
-func selfFamilyView(fr protocol.FamilyReport) protocol.FamilyView {
-	fv := protocol.FamilyView{Family: fr.Family, Traits: fr.Traits}
-	fv.Traits.Family = fr.Family
-	// PortAnchorMs is on the server's axis, which a client cannot know; the
-	// punch-time mappings re-anchor the prediction instead.
-	fv.Traits.PortAnchorMs = 0
-	seen := map[netip.AddrPort]bool{}
-	add := func(a netip.AddrPort, src protocol.EndpointSource, sock uint8) bool {
-		if len(fv.Endpoints) >= maxViewEndpoints || seen[a] || !usableAddr(a, fr.Family) || a.Addr().IsLoopback() {
-			return false
-		}
-		seen[a] = true
-		fv.Endpoints = append(fv.Endpoints, protocol.Endpoint{Addr: a, Source: src, Socket: sock})
-		return true
-	}
-	var primary *protocol.SocketReport
-	for i, sk := range fr.Sockets {
-		src := protocol.EndpointServer
-		switch sk.Kind {
-		case protocol.SocketPrimary:
-			if primary == nil {
-				primary = &fr.Sockets[i]
-			}
-		case protocol.SocketSecond:
-			src = protocol.EndpointSecond
-		case protocol.SocketSibling:
-			src = protocol.EndpointSibling
-		}
-		for _, row := range sk.Rows {
-			add(row.Observed, src, sk.ID)
-		}
-	}
-	for _, row := range fr.STUN {
-		add(row.Observed, protocol.EndpointSTUN, 0)
-	}
-	if fr.PortMap != nil {
-		add(fr.PortMap.External, protocol.EndpointPortmap, 0)
-	}
-	lan := 0
-	for _, sk := range fr.Sockets {
-		if lan < maxLANTargets && (sk.Kind == protocol.SocketPrimary || sk.Kind == protocol.SocketSibling) &&
-			add(sk.Local, protocol.EndpointLAN, sk.ID) {
-			lan++
-		}
-	}
-	if primary != nil {
-		for _, ip := range fr.LocalAddrs {
-			if lan < maxLANTargets && nat.ScopeOf(ip) == nat.ScopeGlobal &&
-				add(netip.AddrPortFrom(ip, primary.Local.Port()), protocol.EndpointLAN, primary.ID) {
-				lan++
-			}
-		}
-		for i, ip := range fr.Overlay {
-			if i < maxOverlay {
-				add(netip.AddrPortFrom(ip, primary.Local.Port()), protocol.EndpointOverlay, primary.ID)
-			}
-		}
-	}
-	if fv.Traits.Samples == 0 && len(fv.Endpoints) > 0 {
-		fv.Traits.Samples = 1
-	}
-	return fv
-}
-
-// maxViewEndpoints bounds a family view (protocol: 12).
-const maxViewEndpoints = 12
 
 // withoutFamily is v without family f.
 func withoutFamily(v protocol.PeerView, f protocol.Family) protocol.PeerView {
 	v.Families = slices.DeleteFunc(slices.Clone(v.Families), func(fv protocol.FamilyView) bool { return fv.Family == f })
 	return v
-}
-
-func clonePeerView(v protocol.PeerView) protocol.PeerView {
-	v.Families = slices.Clone(v.Families)
-	for i := range v.Families {
-		v.Families[i] = cloneFamilyView(v.Families[i])
-	}
-	return v
-}
-
-func cloneFamilyView(fv protocol.FamilyView) protocol.FamilyView {
-	fv.Endpoints = slices.Clone(fv.Endpoints)
-	return fv
-}
-
-func cloneClassifyInput(in ClassifyInput) ClassifyInput {
-	in.Initiator, in.Responder = clonePeerView(in.Initiator), clonePeerView(in.Responder)
-	in.Measured = [2]protocol.PeerView{clonePeerView(in.Measured[0]), clonePeerView(in.Measured[1])}
-	in.Pair = clonePairFacts(in.Pair)
-	in.Policy = clonePolicy(in.Policy)
-	in.Features = slices.Clone(in.Features)
-	return in
-}
-
-func clonePairFacts(p protocol.PairFacts) protocol.PairFacts {
-	p.SharedFamilies = slices.Clone(p.SharedFamilies)
-	p.SamePublicIP = maps.Clone(p.SamePublicIP)
-	p.LikelySameLAN = maps.Clone(p.LikelySameLAN)
-	p.SharedOverlay = maps.Clone(p.SharedOverlay)
-	p.ProbeRTTMs = maps.Clone(p.ProbeRTTMs)
-	p.ClockOffsetMs = maps.Clone(p.ClockOffsetMs)
-	p.Unverified = maps.Clone(p.Unverified)
-	return p
-}
-
-// clonePolicy deep-copies a policy: its switches are pointers into the
-// session's punch_start.
-func clonePolicy(p protocol.Policy) protocol.Policy {
-	p.LowTTL = cloneBool(p.LowTTL)
-	p.LowTTLHops = slices.Clone(p.LowTTLHops)
-	pm := &p.PortMapping
-	pm.EnableUPnP, pm.EnablePCP, pm.EnableNATPMP = cloneBool(pm.EnableUPnP), cloneBool(pm.EnablePCP), cloneBool(pm.EnableNATPMP)
-	return p
-}
-
-func cloneBool(b *bool) *bool {
-	if b == nil {
-		return nil
-	}
-	v := *b
-	return &v
-}
-
-// cloneClassification copies the parts of a classification a planner can
-// write: its slices and its map.
-func cloneClassification(c Classification) Classification {
-	c.Families = slices.Clone(c.Families)
-	c.Ladder = slices.Clone(c.Ladder)
-	c.Budgets = maps.Clone(c.Budgets)
-	return c
 }
 
 // pairFacts computes what only a server seeing both clients knows. A shared
@@ -487,7 +323,7 @@ func familyView(v protocol.PeerView, f protocol.Family) (protocol.FamilyView, bo
 func selfReportedOnly(v protocol.FamilyView) bool {
 	return v.Traits.LANObserved && slices.ContainsFunc(v.Endpoints, func(e protocol.Endpoint) bool {
 		return !e.Verified && (e.Source == protocol.EndpointSTUN || e.Source == protocol.EndpointPortmap) &&
-			nat.ScopeOf(e.Addr.Addr()) == nat.ScopeGlobal
+			netaddr.Public(e.Addr.Addr())
 	})
 }
 
@@ -520,36 +356,20 @@ func sameLAN(a, b protocol.FamilyView) bool {
 // classify runs the planner's Classify; after a panic it falls back to the
 // default planner, which then plans the rest of the session. The planner
 // gets a copy: in is the session's own, kept for a later fallback.
-func (s *Session) classify(p Planner, in ClassifyInput) (Classification, Planner, bool) {
-	var cls Classification
-	err := life.Safe("coord.plan", func() {
-		if err := faultinject.Point(fiPlan); err != nil {
-			panic(err)
-		}
-		cls = p.Classify(cloneClassifyInput(in))
-	})
-	if err == nil {
-		return cls, p, true
-	}
-	s.c.noteCallbackPanic(s.id, err)
-	if _, isDefault := p.(plan.DefaultPlanner); isDefault {
-		return cls, p, false
-	}
-	def := plan.DefaultPlanner{}
-	if life.Safe("coord.plan.default", func() { cls = def.Classify(in) }) != nil {
-		return cls, def, false
-	}
-	return cls, def, true
+func (s *Session) classify(p plan.Planner, in plan.ClassifyInput) (plan.Classification, plan.Planner, bool) {
+	var cls plan.Classification
+	p, _, ok := s.callPlanner(p, func(p plan.Planner) { cls = p.Classify(in.Clone()) }, func(def plan.Planner) { cls = def.Classify(in) })
+	return cls, p, ok
 }
 
 // plannerEnd is the end a planner asked for; a planner that names no known
 // reason is defective (internal).
 func plannerEnd(code protocol.Reason, detail string) *terminal {
 	if !code.Known() {
-		return &terminal{code: protocol.ReasonInternal, detail: truncate("planner reason "+string(code), maxDetail)}
+		return &terminal{code: protocol.ReasonInternal, detail: trunc.String("planner reason "+string(code), protocol.MaxDetail)}
 	}
 	// The detail goes out in punch_abort, whose encoding refuses a longer one.
-	return &terminal{code: code, detail: truncate(detail, maxDetail)}
+	return &terminal{code: code, detail: trunc.String(detail, protocol.MaxDetail)}
 }
 
 // pickTransport settles the upper-layer transport: equal modes, or the
@@ -575,9 +395,10 @@ func pickTransport(a, b, fallback string) (string, bool) {
 	return mode, true
 }
 
-// recommend asks the strategy memory for the ladder order. Only a
-// variant the built-in memory proved for this pair (score >= +1) may lift
-// the first round's budget cap (escalation guard).
+// recommend asks the strategy memory for the ladder order and what it knows
+// of the variants (StrategyMemory). Only a variant the memory proved for
+// this pair (a positive score) may lift the first round's budget cap
+// (escalation guard).
 func (s *Session) recommend(out *planOut) {
 	cls := out.cls
 	out.order = slices.Clone(cls.Ladder)
@@ -602,34 +423,34 @@ func (s *Session) recommend(out *planOut) {
 		sides[i] = StrategySide{IPPrefix: pfx, ClassBits: nat.ClassBits(fv.Traits)}
 	}
 	out.key, out.hasKey = DeriveStrategyKey(s.c.salt, sides[0], sides[1]), true
-	var order []VariantID
-	if err := life.Safe("coord.memory", func() {
-		if err := faultinject.Point(fiMemory); err != nil {
-			panic(err)
-		}
+	var (
+		order  []plan.VariantID
+		first  int
+		bgOnly bool
+		valid  bool
+	)
+	if !s.callout("coord.memory", fiMemory, func() {
 		// A copy: the memory may sort what it is given, and the ladder
 		// stays the classification's.
 		order = out.memory.Recommend(out.key, slices.Clone(cls.Ladder))
-	}); err != nil {
-		s.c.noteCallbackPanic(s.id, err)
+		if valid = samePermutation(order, cls.Ladder); valid {
+			first = out.memory.Score(out.key, order[0])
+			bgOnly = engine.BackgroundOnly(func(v plan.VariantID) int { return out.memory.Score(out.key, v) })
+		}
+	}) {
 		out.memory = nil
 		return
 	}
-	if !samePermutation(order, cls.Ladder) {
+	if !valid {
 		return
 	}
 	out.order = order
-	if m, ok := out.memory.(*memory); ok {
-		sc := m.score(out.key, order[0])
-		out.memHit = sc > 0
-		out.promoted = sc >= 1 && order[0] != cls.Ladder[0]
-		out.bgOnly = plan.BackgroundOnly(func(v VariantID) int8 { return m.score(out.key, v) })
-	} else {
-		out.memHit = order[0] != cls.Ladder[0]
-	}
+	out.memHit = first > 0
+	out.promoted = first > 0 && order[0] != cls.Ladder[0]
+	out.bgOnly = bgOnly
 }
 
-func samePermutation(a, b []VariantID) bool {
+func samePermutation(a, b []plan.VariantID) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -639,40 +460,36 @@ func samePermutation(a, b []VariantID) bool {
 	return slices.Equal(x, y)
 }
 
-// takePlanLocked stores the planning result if the session did not move on;
-// it reports whether round 1 is to be planned. A rejected pair or a
+// takePlanLocked stores the planning result; it reports whether round 1 is to be planned. A rejected pair or a
 // transport conflict ends the session here, right after the second
 // report.
-func (s *Session) takePlanLocked(gen uint64, out planOut, now time.Duration) (effects, bool) {
+func (s *Session) takePlanLocked(out planOut, now time.Duration) (effects, bool) {
 	st := &s.st
 	var fx effects
-	if st.gen != gen || st.state != StateProbing {
-		return fx, false
-	}
 	st.updated = now
-	st.planned = true
-	st.views, st.pviews, st.rawViews = out.views, out.pviews, out.raw
-	st.pair, st.cls, st.cin, st.planner, st.memory = out.pair, out.cls, out.cin, out.planner, out.memory
-	st.transport = out.mode
-	st.memKey, st.hasKey, st.order = out.key, out.hasKey, out.order
-	st.memHit, st.promoted, st.bgOnly, st.mode = out.memHit, out.promoted, out.bgOnly, out.sessionMode
+	st.plan.planned = true
+	st.plan.views, st.plan.pviews, st.plan.rawViews = out.views, out.pviews, out.raw
+	st.adm.pair, st.plan.cls, st.plan.cin, st.plan.planner, st.plan.memory = out.pair, out.cls, out.cin, out.planner, out.memory
+	st.plan.transport = out.mode
+	st.plan.memKey, st.plan.hasKey, st.plan.order = out.key, out.hasKey, out.order
+	st.plan.memHit, st.plan.promoted, st.plan.bgOnly, st.plan.mode = out.memHit, out.promoted, out.bgOnly, out.sessionMode
 	st.ctr.STUNConflicts = uint64(out.stunConflicts)
-	s.indexViewsLocked()
-	if len(st.pair.Unverified) > 0 {
+	st.adm.index(st.plan.pviews)
+	if len(st.adm.pair.Unverified) > 0 {
 		st.addWarn(protocol.WarnUnverifiedTargets)
 	}
-	if lanObserved(st.views) {
+	if lanObserved(st.plan.views) {
 		st.addWarn(protocol.WarnLANObserved)
 	}
 	if out.term == nil {
-		st.sandwich = s.handle != nil && st.echoed[0] && st.echoed[1]
-		st.pairRND = pairRND(st.views, st.cls)
+		st.sand.negotiated = s.handle != nil && st.sand.echoed[0] && st.sand.echoed[1]
+		st.plan.pairRND = pairRND(st.plan.views, st.plan.cls)
 		// natprobe hands over the anchor refresh's probes from now on, the
 		// sandwich's once punching.
 		fx.sink = s.handle != nil
 		return fx, true
 	}
-	st.planning = false
+	st.plan.end()
 	s.c.emit(Event{Kind: EvPlanned, At: s.at(now), SessionID: s.id, Labels: s.labels,
 		Data: PlannedData{PairClass: out.cls.PairClass, Rejected: out.term.code}})
 	s.planEndLocked(&fx, out.term, now)
@@ -691,20 +508,17 @@ func (s *Session) planEndLocked(fx *effects, term *terminal, now time.Duration) 
 	}
 	st.deferred = term
 	if st.state == StatePunching {
-		st.deadline = st.punchDeadline
+		st.deadline = st.rounds.punchDeadline
 	}
 	s.rearmLocked(now)
 }
 
 // applyRound1Locked clamps round 1, writes both summaries and moves to
 // summarized.
-func (s *Session) applyRound1Locked(gen uint64, d decision, nowT time.Time) effects {
+func (s *Session) applyRound1Locked(d decision, nowT time.Time) effects {
 	st := &s.st
 	var fx effects
-	if st.gen != gen || st.state != StateProbing {
-		return fx
-	}
-	st.planning = false
+	st.plan.end()
 	now := s.since(nowT)
 	st.updated = now
 	if !s.takeDecisionLocked(d) {
@@ -724,27 +538,27 @@ func (s *Session) applyRound1Locked(gen uint64, d decision, nowT time.Time) effe
 		planID[i] = byte(st.rng.Uint32())
 	}
 	pid := base64.RawURLEncoding.EncodeToString(planID[:])
-	pairClass := st.cls.PairClass
+	pairClass := st.plan.cls.PairClass
 	if !isName(pairClass) {
 		pairClass = ""
 	}
 	for r, l := range st.links {
 		sum := protocol.ProbeSummary{
 			SessionID: s.id,
-			Self:      st.views[r],
+			Self:      st.plan.views[r],
 			Peer:      s.peerViewLocked(1 - r),
-			Pair:      st.pair,
-			Transport: protocol.TransportPick{Mode: st.transport, PeerData: st.reports[1-r].Transport.Data},
+			Pair:      st.adm.pair,
+			Transport: protocol.TransportPick{Mode: st.plan.transport, PeerData: st.reports[1-r].Transport.Data},
 			Timeouts:  s.starts[r].Timeouts,
 			Plan: protocol.PlanSpec{
 				ID:             pid,
 				PairClass:      pairClass,
 				RoundsMax:      s.to.MaxRounds,
 				Budget:         s.budget,
-				Round1:         st.cur.plans[r],
-				Mode:           st.mode,
-				Advice:         st.cls.Advice,
-				BackgroundOnly: st.bgOnly,
+				Round1:         st.rounds.cur.plans[r],
+				Mode:           st.plan.mode,
+				Advice:         st.plan.cls.Advice,
+				BackgroundOnly: st.plan.bgOnly,
 			},
 		}
 		if fx.merge(s.sendMarkedLocked(r, sum, &l.markSummary)); fx.term != nil {
@@ -760,13 +574,13 @@ func (s *Session) applyRound1Locked(gen uint64, d decision, nowT time.Time) effe
 		// takes the sandwich probes; the first confirmation closes it. An
 		// expired entry is gone, Extend cannot revive it: renew it now,
 		// while it is alive, to the latest possible punch deadline + 1 s.
-		fx.sink = st.sandwich
+		fx.sink = st.sand.negotiated
 		fx.extend = s.ttl.ready + ms(s.to.HandshakeTimeoutMs) + s.ttl.punchSlack + time.Second
 	}
 	s.rearmLocked(now)
 	s.c.emit(Event{Kind: EvPlanned, At: nowT, SessionID: s.id, Labels: s.labels, Data: PlannedData{
-		PairClass: st.cls.PairClass, Variant: st.cur.name, Budget: st.cur.class, MemoryHit: st.memHit,
-		Transport: st.transport,
+		PairClass: st.plan.cls.PairClass, Variant: st.rounds.cur.name, Budget: st.rounds.cur.class, MemoryHit: st.plan.memHit,
+		Transport: st.plan.transport,
 	}})
 	return fx
 }
@@ -778,83 +592,26 @@ func (s *Session) applyRound1Locked(gen uint64, d decision, nowT time.Time) effe
 // addresses only for a peer that has some too.
 func (s *Session) peerViewLocked(p int) protocol.PeerView {
 	st := &s.st
-	v := clonePeerView(st.views[p])
+	v := st.plan.views[p].Clone()
 	for i := range v.Families {
 		fv := &v.Families[i]
 		fv.Endpoints = slices.DeleteFunc(fv.Endpoints, func(e protocol.Endpoint) bool {
 			if e.Source == protocol.EndpointOverlay {
-				return !st.pair.SharedOverlay[fv.Family]
+				return !st.adm.pair.SharedOverlay[fv.Family]
 			}
-			if !isLAN(e.Addr.Addr()) {
+			if !netaddr.Private(e.Addr.Addr()) {
 				return false
 			}
 			switch e.Source {
 			case protocol.EndpointLAN:
-				return !st.pair.LikelySameLAN[fv.Family]
+				return !st.adm.pair.LikelySameLAN[fv.Family]
 			case protocol.EndpointPortmap:
-				return !st.pair.SamePublicIP[fv.Family]
+				return !st.adm.pair.SamePublicIP[fv.Family]
 			}
 			return false
 		})
 	}
 	return v
-}
-
-// indexViewsLocked builds the admission sets of both sides, the same sets
-// the clients build from their summaries: the
-// verified IPs per family — in an unverified family the first four
-// distinct global unicast IPs the side reported — the overlay
-// addresses a peer with an overlay may aim at, the private LAN
-// addresses a peer on the same LAN may aim at, and the private port-mapping
-// addresses (upstream-LAN candidates) a peer behind the same public IP may
-// aim at.
-func (s *Session) indexViewsLocked() {
-	st := &s.st
-	for r := range st.views {
-		st.verified[r] = map[protocol.Family][]netip.Addr{}
-		st.lan[r] = map[protocol.Family][]netip.Addr{}
-		st.overlay[r] = map[protocol.Family][]netip.Addr{}
-		st.upstream[r] = map[protocol.Family][]netip.AddrPort{}
-		for _, fv := range st.pviews[r].Families {
-			unverified, reported := st.pair.Unverified[fv.Family], 0
-			for _, e := range fv.Endpoints {
-				ip := e.Addr.Addr()
-				switch {
-				case e.Source == protocol.EndpointOverlay:
-					if len(st.overlay[r][fv.Family]) < maxOverlay && !slices.Contains(st.overlay[r][fv.Family], ip) {
-						st.overlay[r][fv.Family] = append(st.overlay[r][fv.Family], ip)
-					}
-				case e.Verified:
-					if !slices.Contains(st.verified[r][fv.Family], ip) {
-						st.verified[r][fv.Family] = append(st.verified[r][fv.Family], ip)
-					}
-				case unverified && ip.IsGlobalUnicast() && !isLAN(ip):
-					if reported < reportedIPs && !slices.Contains(st.verified[r][fv.Family], ip) {
-						st.verified[r][fv.Family] = append(st.verified[r][fv.Family], ip)
-						reported++
-					}
-				case !isLAN(ip):
-				case e.Source == protocol.EndpointLAN:
-					if len(st.lan[r][fv.Family]) < maxLANTargets && !slices.Contains(st.lan[r][fv.Family], ip) {
-						st.lan[r][fv.Family] = append(st.lan[r][fv.Family], ip)
-					}
-				case e.Source == protocol.EndpointPortmap:
-					st.addUpstream(r, fv.Family, e.Addr)
-				}
-			}
-		}
-	}
-}
-
-// addUpstream records a private port-mapping address of side r: an
-// upstream-LAN candidate.
-func (st *sessionState) addUpstream(r int, fam protocol.Family, a netip.AddrPort) {
-	if st.upstream[r] == nil {
-		st.upstream[r] = map[protocol.Family][]netip.AddrPort{}
-	}
-	if list := st.upstream[r][fam]; len(list) < maxLANTargets && !slices.Contains(list, a) {
-		st.upstream[r][fam] = append(list, a)
-	}
 }
 
 // prependPlannerEndpointLocked puts an admitted endpoint of side r first in
@@ -863,24 +620,24 @@ func (st *sessionState) addUpstream(r int, fam protocol.Family, a netip.AddrPort
 // takes one server endpoint on it. A full view loses its last
 // endpoint.
 func (s *Session) prependPlannerEndpointLocked(r int, fam protocol.Family, e protocol.Endpoint) {
-	v := &s.st.pviews[r]
+	v := &s.st.plan.pviews[r]
 	for i := range v.Families {
 		fv := &v.Families[i]
 		if fv.Family != fam {
 			continue
 		}
 		rest := slices.DeleteFunc(fv.Endpoints, func(x protocol.Endpoint) bool { return x.Addr == e.Addr })
-		fv.Endpoints = append([]protocol.Endpoint{e}, rest[:min(len(rest), maxViewEndpoints-1)]...)
+		fv.Endpoints = append([]protocol.Endpoint{e}, rest[:min(len(rest), protocol.MaxEndpoints-1)]...)
 	}
 }
 
 // addPlannerEndpointLocked adds an admitted endpoint of side r to the
 // planner's view, so that later rounds aim at it.
 func (s *Session) addPlannerEndpointLocked(r int, fam protocol.Family, e protocol.Endpoint) {
-	v := &s.st.pviews[r]
+	v := &s.st.plan.pviews[r]
 	for i := range v.Families {
 		fv := &v.Families[i]
-		if fv.Family != fam || len(fv.Endpoints) >= maxViewEndpoints {
+		if fv.Family != fam || len(fv.Endpoints) >= protocol.MaxEndpoints {
 			continue
 		}
 		for _, x := range fv.Endpoints {
@@ -896,16 +653,16 @@ func (s *Session) addPlannerEndpointLocked(r int, fam protocol.Family, e protoco
 // endpoint-dependent mapping) — in the views, or as the planner classified
 // it: a side a STUN server contradicted is planned as random.
 // Random-EDM evidence lets heavy start in round 2.
-func pairRND(views [2]protocol.PeerView, cls Classification) bool {
+func pairRND(views [2]protocol.PeerView, cls plan.Classification) bool {
 	if len(cls.Families) == 0 {
 		return false
 	}
 	switch cls.PairClass {
-	case plan.PairPDFRnd, plan.PairSeqRnd, plan.PairRndRnd:
+	case engine.PairPDFRnd, engine.PairSeqRnd, engine.PairRndRnd:
 		return true
 	}
 	for _, v := range views {
-		if fv, ok := familyView(v, cls.Families[0]); ok && plan.CategoryOf(fv.Traits) == plan.CatRND {
+		if fv, ok := familyView(v, cls.Families[0]); ok && engine.CategoryOf(fv.Traits) == engine.CatRND {
 			return true
 		}
 	}

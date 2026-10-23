@@ -11,6 +11,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // The ctl.read and ctl.write points fail the side they
@@ -57,7 +58,7 @@ func TestFaultWritePanicAndError(t *testing.T) {
 			defer disarm()
 			c := mustConn(t, a, ConnOptions{})
 			err := within(t, "WriteFrame", time.Second, func() error {
-				return c.WriteFrame(context.Background(), Frame{Type: TypePong, Payload: []byte("{}")})
+				return c.WriteFrame(context.Background(), Frame{Type: wiretype.Pong, Payload: []byte("{}")})
 			})
 			if !errors.Is(err, faultinject.ErrInjected) {
 				t.Fatalf("WriteFrame = %v", err)
@@ -80,7 +81,7 @@ func TestFaultWriteStallIsBounded(t *testing.T) {
 	disarm := faultinject.Arm("ctl.write", faultinject.Stall(0), 1)
 	c := mustConn(t, a, ConnOptions{WriteTimeout: 50 * time.Millisecond})
 	err := within(t, "WriteFrame", time.Second, func() error {
-		return c.WriteFrame(context.Background(), Frame{Type: TypePong, Payload: []byte("{}")})
+		return c.WriteFrame(context.Background(), Frame{Type: wiretype.Pong, Payload: []byte("{}")})
 	})
 	if !isTimeout(err) {
 		t.Fatalf("WriteFrame = %v", err)

@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -60,7 +62,7 @@ func TestDeadlines(t *testing.T) {
 			}
 			for _, i := range c.reports {
 				p.report(i)
-				eventually(t, "report", func() bool { return s.Snapshot().Reported[i] })
+				testkit.WaitFor(t, "report", func() bool { return s.Snapshot().Reported[i] })
 			}
 			r.clk.Advance(c.advance - time.Millisecond)
 			if snap := s.Snapshot(); snap.State == StateClosed {
@@ -91,7 +93,7 @@ func TestSummarizedDeadline(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	sums := p.summaries()
 	send(t, p.cl[0], simclient.Ready(sums[0], protocol.RoleInitiator, 1))
-	eventually(t, "ready", func() bool { return p.s.Snapshot().Ready[0] })
+	testkit.WaitFor(t, "ready", func() bool { return p.s.Snapshot().Ready[0] })
 	r.clk.Advance(5 * time.Second)
 	if a := expectAbort(t, p.cl[0]); a.By != protocol.RoleResponder || a.Reason != protocol.ReasonNotSynchronized {
 		t.Fatalf("abort %+v", a)
@@ -128,7 +130,7 @@ func TestRoundDeadline(t *testing.T) {
 	}
 	p.s.Abort(protocol.ReasonCanceled, "")
 	res := r.wait(p.s)
-	if len(res.Rounds) != 2 || res.Rounds[0].Class != RoundNoReport {
+	if len(res.Rounds) != 2 || res.Rounds[0].Class != plan.RoundNoReport {
 		t.Fatalf("rounds %+v", res.Rounds)
 	}
 }
@@ -149,10 +151,10 @@ func TestPunchDeadline(t *testing.T) {
 		if snap := p.s.Snapshot(); snap.State == StateClosed {
 			break
 		}
-		eventually(t, "round planned", func() bool {
+		testkit.WaitFor(t, "round planned", func() bool {
 			p.s.mu.Lock()
 			defer p.s.mu.Unlock()
-			return !p.s.st.planning
+			return !p.s.st.plan.planning
 		})
 	}
 	res := r.wait(p.s)
@@ -191,13 +193,13 @@ type blockPlanner struct {
 	once    sync.Once
 }
 
-func (b *blockPlanner) Classify(_ ClassifyInput) Classification {
+func (b *blockPlanner) Classify(_ plan.ClassifyInput) plan.Classification {
 	b.once.Do(func() { close(b.entered) })
 	<-b.release
-	return Classification{}
+	return plan.Classification{}
 }
 
-func (b *blockPlanner) Round(_ RoundInput) RoundDecision { return RoundDecision{} }
+func (b *blockPlanner) Round(_ plan.RoundInput) plan.RoundDecision { return plan.RoundDecision{} }
 
 // TestPlannerBlockedDoesNotLeakResources: a planner that never returns does
 // not keep the session: the probing deadline ends it with internal
@@ -216,7 +218,7 @@ func TestPlannerBlockedDoesNotLeakResources(t *testing.T) {
 			t.Fatalf("abort %+v", a)
 		}
 	}
-	eventually(t, "released", func() bool { return r.c.Len() == 0 && r.c.Stats().ActiveByKey == 0 })
+	testkit.WaitFor(t, "released", func() bool { return r.c.Len() == 0 && r.c.Stats().ActiveByKey == 0 })
 	select {
 	case <-p.s.Done():
 		t.Fatal("Done before the planner returned")

@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/coord/internal/simclient"
-	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/testkit"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -57,7 +58,7 @@ func FuzzCoordFrames(f *testing.F) {
 		}
 		select {
 		case <-r.results:
-		case <-time.After(waitLimit):
+		case <-time.After(testkit.WaitBound(t)):
 			t.Fatal("no OnResult")
 		}
 		select {
@@ -105,8 +106,8 @@ func fuzzStep(cx context.Context, r *rig, p *pair, i int, op, arg byte, rest []b
 	case 8:
 		sendM(peerSeen(p, i, round, netip.AddrPortFrom(pubR.Addr(), uint16(arg)+1)))
 	case 9:
-		types := []controlwire.Type{controlwire.TypeProbeReport, controlwire.TypePunchReady, controlwire.TypeProgress,
-			controlwire.TypeAssist, controlwire.TypePong, controlwire.TypeRoundResult, controlwire.TypePunchResult}
+		types := []wiretype.Type{wiretype.ProbeReport, wiretype.PunchReady, wiretype.Progress,
+			wiretype.Assist, wiretype.Pong, wiretype.RoundResult, wiretype.PunchResult}
 		payload := rest
 		if len(payload) > 200 {
 			payload = payload[:200]

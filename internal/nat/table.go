@@ -6,14 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
 // Table bounds per family.
 const (
-	maxSockets = 6
 	maxRows    = 64
-	maxFilters = 24
 	maxInbound = 8
 )
 
@@ -110,12 +109,12 @@ func NewTable(f protocol.Family, sockets []SocketMeta, observers []Observer) *Ob
 		t.addSocketLocked(s)
 	}
 	for _, o := range observers {
-		o.Addr = unmap(o.Addr)
-		if o.Scope == ScopeNone {
-			o.Scope = ScopeOf(o.Addr.Addr())
+		o.Addr = netaddr.Unmap(o.Addr)
+		if o.Scope == netaddr.ScopeNone {
+			o.Scope = netaddr.ScopeOf(o.Addr.Addr())
 		}
 		otherFamily := o.Addr.IsValid() && !f.Matches(o.Addr.Addr())
-		if o.Scope != ScopeNone && !otherFamily && len(t.observers) < maxObservers && t.observerLocked(o.ID) == nil {
+		if o.Scope != netaddr.ScopeNone && !otherFamily && len(t.observers) < maxTableObservers && t.observerLocked(o.ID) == nil {
 			t.observers = append(t.observers, o)
 		}
 	}
@@ -137,10 +136,10 @@ func (t *ObsTable) addSocketLocked(m SocketMeta) bool {
 	if t.socketLocked(m.ID) != nil {
 		return true
 	}
-	if len(t.sockets) == maxSockets {
+	if len(t.sockets) == protocol.MaxReportSockets {
 		return false
 	}
-	m.Local = unmap(m.Local)
+	m.Local = netaddr.Unmap(m.Local)
 	t.sockets = append(t.sockets, m)
 	return true
 }
@@ -172,8 +171,8 @@ func (t *ObsTable) NoteSent(k PointKey, seq uint32, at time.Duration) {
 // more different values (drift). A value that is not a unicast address
 // of the table's family with a port is ignored.
 func (t *ObsTable) Record(k PointKey, observed netip.AddrPort, at, rtt time.Duration, cookie uint32) (drift bool) {
-	observed = unmap(observed)
-	if !usableIn(t.family, observed) {
+	observed = netaddr.Unmap(observed)
+	if !protocol.UsableEndpoint(t.family, observed) {
 		return false
 	}
 	t.mu.Lock()
@@ -221,8 +220,8 @@ func (t *ObsTable) otherValueLocked(k PointKey, v netip.AddrPort) bool {
 // A row whose value is not a unicast address of the table's family with a
 // port is ignored.
 func (t *ObsTable) RecordServer(r Row) {
-	r.Observed = unmap(r.Observed)
-	if !usableIn(t.family, r.Observed) {
+	r.Observed = netaddr.Unmap(r.Observed)
+	if !protocol.UsableEndpoint(t.family, r.Observed) {
 		return
 	}
 	t.mu.Lock()
@@ -261,7 +260,7 @@ func (t *ObsTable) AddFilter(f FilterEvidence) {
 			return
 		}
 	}
-	if len(t.filters) < maxFilters {
+	if len(t.filters) < protocol.MaxReportFilters {
 		t.filters = append(t.filters, f)
 	}
 }

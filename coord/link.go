@@ -17,9 +17,6 @@ import (
 // is full the link's reader waits, which pushes back on the client.
 const linkInbox = 16
 
-// maxRound is the wire limit on round numbers, rescue round included.
-const maxRound = 8
-
 // link is one attached control stream: a controlwire.Conn (one reading and one
 // writing goroutine) whose accepted frames go to the session goroutine
 // through in.
@@ -36,7 +33,7 @@ type link struct {
 	// time in ns plus one (0: not written).
 	markStart   atomic.Int64
 	markSummary atomic.Int64
-	markGo      [maxRound + 1]atomic.Int64
+	markGo      [protocol.MaxRound + 1]atomic.Int64
 	markPing    [pingsPerLink + 1]atomic.Int64
 
 	// Guarded by the session mutex.
@@ -150,8 +147,7 @@ func classifyLoss(err error) linkLoss {
 // boundary. An error that panics there is a plain link failure.
 func (s *Session) classifyLink(err error) linkLoss {
 	var loss linkLoss
-	if perr := life.Safe("coord.link_error", func() { loss = classifyLoss(err) }); perr != nil {
-		s.c.noteCallbackPanic(s.id, perr)
+	if !s.callout("coord.link_error", "", func() { loss = classifyLoss(err) }) {
 		return linkLoss{code: protocol.ReasonPeerOffline, kind: lossLink}
 	}
 	return loss
@@ -163,8 +159,6 @@ func (s *Session) classifyLink(err error) linkLoss {
 // so this runs outside the session mutex and in a recover boundary.
 func (s *Session) queueFull(err error) bool {
 	full := false
-	if perr := life.Safe("coord.send_error", func() { full = errors.Is(err, controlwire.ErrQueueFull) }); perr != nil {
-		s.c.noteCallbackPanic(s.id, perr)
-	}
+	s.callout("coord.send_error", "", func() { full = errors.Is(err, controlwire.ErrQueueFull) })
 	return full
 }

@@ -1,29 +1,18 @@
 package plan
 
+import "github.com/djylb/holepunch/internal/netaddr"
+
 // Port filtering shared by every generated stage. The sensitive-UDP list is the
 // one the previous implementation's portspray used, carried over verbatim.
 
 // minUserPort is the lowest port a spray or predict stage may target; ports
 // below it are only ever used when they are an observed peer mapping (exempt
 // through the caller's allow set).
-const minUserPort = 1024
+const minUserPort = netaddr.MinUserPort
 
 // portRange is the width of [1024, 65535], the range a sequential
 // allocator wraps around in.
-const portRange = 65536 - minUserPort
-
-// portDelta is b − a the short way round the wrapping range: a downward
-// allocator that wrapped from 1024 to 65535 moved one step, not 64511.
-func portDelta(a, b int) int {
-	d := b - a
-	switch {
-	case d > portRange/2:
-		d -= portRange
-	case d < -portRange/2:
-		d += portRange
-	}
-	return d
-}
+const portRange = netaddr.PortRange
 
 // SensitivePort reports whether p is on the fixed UDP avoid-list. A
 // generated stage never targets such a port unless it is exactly an observed

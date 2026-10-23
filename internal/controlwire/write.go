@@ -10,6 +10,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // outFrame is a frame in a write queue.
@@ -174,8 +175,8 @@ func (c *Conn) checkSend(t Type, n int) error {
 }
 
 func (c *Conn) enqueue(f *outFrame, coalesce bool) error {
-	inf, _ := f.typ.info()
-	p := inf.prio
+	inf, _ := f.typ.Info()
+	p := inf.Prio
 	c.qmu.Lock()
 	defer c.qmu.Unlock()
 	if c.wstop != nil {
@@ -190,8 +191,8 @@ func (c *Conn) enqueue(f *outFrame, coalesce bool) error {
 			}
 		}
 	}
-	if len(q) >= p.queueCap() {
-		if p != prioP3 {
+	if len(q) >= queueCap(p) {
+		if p != wiretype.P3 {
 			return fmt.Errorf("%w: %v", ErrQueueFull, f.typ)
 		}
 		evicted := q[0]
@@ -210,15 +211,15 @@ func (c *Conn) enqueue(f *outFrame, coalesce bool) error {
 
 // withdraw removes f from its queue if it has not been picked by the writer.
 func (c *Conn) withdraw(f *outFrame) bool {
-	inf, _ := f.typ.info()
+	inf, _ := f.typ.Info()
 	c.qmu.Lock()
 	defer c.qmu.Unlock()
-	q := c.queues[inf.prio]
+	q := c.queues[inf.Prio]
 	for i, x := range q {
 		if x == f {
 			copy(q[i:], q[i+1:])
 			q[len(q)-1] = nil
-			c.queues[inf.prio] = q[:len(q)-1]
+			c.queues[inf.Prio] = q[:len(q)-1]
 			c.bumpProgress()
 			return true
 		}

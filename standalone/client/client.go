@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch"
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone"
+	"github.com/djylb/holepunch/standalone/internal/life"
 	"github.com/djylb/holepunch/standalone/proto"
 )
 
@@ -159,7 +159,7 @@ func (c *Client) Close() error {
 		for s := range stuck {
 			_ = s.Close()
 		}
-		if n := c.group.Stats().Leaked; n > 0 {
+		if n := c.group.Leaked(); n > 0 {
 			c.closeErr = fmt.Errorf("%w: %d left", ErrCloseTimeout, n)
 		}
 	})

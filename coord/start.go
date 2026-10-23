@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/ablation"
-	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/udpwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -97,13 +97,13 @@ func (c *Coordinator) newSession(opts SessionOptions) (*Session, error) {
 		features = []protocol.Feature{protocol.FeatureSandwich}
 	}
 	for r := range s.starts {
-		p := pol
+		p := pol.Clone()
 		s.starts[r] = protocol.PunchStart{
 			SessionID: id,
 			Role:      roleOf(r),
 			Token:     token,
 			Wire:      wire,
-			Control:   protocol.ControlSpec{Version: controlwire.Version, Features: features},
+			Control:   protocol.ControlSpec{Version: wiretype.Version, Features: slices.Clone(features)},
 			Probe:     probes[r],
 			Timeouts:  to,
 			Policy:    &p,
@@ -159,11 +159,10 @@ func (c *Coordinator) newSession(opts SessionOptions) (*Session, error) {
 		expireAt: lifetime(t, to),
 		rng:      rng,
 		quota:    q,
-		planner:  c.set.planner,
-		memory:   c.set.memory,
+		plan:     planState{planner: c.set.planner, memory: c.set.memory},
 	}
 	if ab.NoMemory {
-		s.st.memory = nil
+		s.st.plan.memory = nil
 	}
 	s.refs.Store(1)
 	if perr := life.Safe("coord.new_session", func() { err = s.start(now, &ok) }); perr != nil {
@@ -312,8 +311,7 @@ func (c *Coordinator) sessionPolicy(p *protocol.Policy, background bool) protoco
 	}
 	var pol protocol.Policy
 	if src != nil {
-		pol = *src
-		pol.LowTTLHops = slices.Clone(src.LowTTLHops)
+		pol = src.Clone()
 	}
 	if background {
 		// A field the policy leaves unset takes the Background default, the
@@ -352,8 +350,7 @@ func (c *Coordinator) probeSpec(role protocol.Role, opts *SessionOptions, single
 	default:
 		spec = c.cfg.DefaultProbe
 	}
-	spec.Observers = slices.Clone(spec.Observers)
-	spec.STUN = slices.Clone(spec.STUN)
+	spec = spec.Clone()
 	if spec.V == 0 {
 		spec.V = protocol.ProbeSpecVersion
 	}
@@ -392,19 +389,6 @@ func summaryWaitMs(untilBind time.Duration, to protocol.Timeouts, t ttl) uint32 
 func lifetime(t ttl, to protocol.Timeouts) time.Duration {
 	return t.bind + ms(to.ProbeTimeoutMs) + t.reportSlack + t.ready + ms(to.HandshakeTimeoutMs) + t.punchSlack +
 		max(t.linger, 0) + max(t.grace, 0) + time.Second
-}
-
-// cloneStart deep-copies a punch_start.
-func cloneStart(p protocol.PunchStart) protocol.PunchStart {
-	p.Control.Features = slices.Clone(p.Control.Features)
-	p.Probe.Observers = slices.Clone(p.Probe.Observers)
-	p.Probe.STUN = slices.Clone(p.Probe.STUN)
-	if p.Policy != nil {
-		pol := *p.Policy
-		pol.LowTTLHops = slices.Clone(pol.LowTTLHops)
-		p.Policy = &pol
-	}
-	return p
 }
 
 // unobservedFamilies lists the families for which a role's probe spec has

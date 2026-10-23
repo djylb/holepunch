@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/udpwire"
@@ -47,28 +48,45 @@ type candEvent struct {
 	slot, paths   uint8 // PATH_SLOT and PATHS of a handshake packet
 }
 
+// nominationHost is what the nomination goroutine drives besides the state
+// machine: the description of a pair, the handshake packets and the
+// outcomes. The runtime implements it; every method runs on the nomination
+// goroutine.
+type nominationHost interface {
+	pathKind(fam protocol.Family, remote netip.AddrPort, k candidate.Kind) protocol.PathKind
+	sendHandshake(ctx context.Context, a candidate.Action, ann *announced)
+	onConfirm(a candidate.Action, c candidate.Candidate, at time.Time)
+	onHandOver(a candidate.Action, winner candidate.Candidate, extras []candidate.Candidate)
+	onHandoverFailed()
+}
+
+// announced is the last epoch whose nomination and whose adoption the
+// progress events reported, so that each is reported once however often its
+// packets are resent. The nomination goroutine owns it.
+type announced struct{ nominate, adopt uint16 }
+
 // nominator owns the session's candidate.Manager on one goroutine
 // ("nominate"): the read loops post packet facts, the goroutine feeds them to
 // the pure state machine, runs its timers and performs the actions it returns
 // (nominate, accept, ready, handover_ack through the Handshake class; Confirm;
-// HandOver; Fail). Owning the machine on one goroutine needs no lock around
-// it. It runs in the punching group and is joined by finish.
+// HandOver; Fail) through its host. Owning the machine on one goroutine needs
+// no lock around it. It runs in the punching group and is joined by finish.
 //
 // The nominator is created with the runtime, because the read loops post to
 // it from the probing phase on, but the machine is not: run builds it from
 // the configuration it is started with, once the summary has settled the
 // handover timeout. The read loops thus only ever touch events and pair.
 type nominator struct {
-	rt     *runtime
+	clk    clock.Clock
+	host   nominationHost
 	events chan candEvent
 	pair   atomic.Pointer[pairKey]   // the pair being nominated or adopted, for upper-layer evidence
 	extra  atomic.Pointer[[]pairKey] // the committed extra paths' pairs, upper-layer evidence too
 
 	// owned by the goroutine; states is read only after it was joined
-	mgr         *candidate.Manager // built by run
-	lastNomEp   uint16
-	lastAdoptEp uint16
-	states      map[pairKey]pairState // the pairs that carried traffic, for Diagnostics
+	mgr    *candidate.Manager    // built by run
+	states map[pairKey]pairState // the pairs that carried traffic, for Diagnostics
+	ann    announced
 }
 
 // pairState is a pair's furthest candidate state as this side saw it.
@@ -86,8 +104,8 @@ var candidateStateNames = map[candidate.State]string{
 	candidate.StateClosed:     "closed",
 }
 
-func newNominator(rt *runtime) *nominator {
-	return &nominator{rt: rt, events: make(chan candEvent, nominationEvents), states: map[pairKey]pairState{}}
+func newNominator(clk clock.Clock, host nominationHost) *nominator {
+	return &nominator{clk: clk, host: host, events: make(chan candEvent, nominationEvents), states: map[pairKey]pairState{}}
 }
 
 // raise records that a pair reached state s.
@@ -111,7 +129,7 @@ func (n *nominator) post(ev candEvent) {
 // wake while no handshake is in progress.
 func (n *nominator) run(ctx context.Context, cfg candidate.Config) {
 	n.mgr = candidate.NewManager(cfg)
-	t := n.rt.clk.NewTimer(time.Hour)
+	t := n.clk.NewTimer(time.Hour)
 	t.Stop()
 	defer t.Stop()
 	for {
@@ -130,10 +148,10 @@ func (n *nominator) run(ctx context.Context, cfg candidate.Config) {
 				}
 			}
 		case <-t.C():
-			n.perform(ctx, n.mgr.Tick(n.rt.clk.Now()))
+			n.perform(ctx, n.mgr.Tick(n.clk.Now()))
 		}
 		if at, ok := n.mgr.NextDeadline(); ok {
-			t.Reset(max(at.Sub(n.rt.clk.Now()), 0))
+			t.Reset(max(at.Sub(n.clk.Now()), 0))
 		} else {
 			t.Stop()
 		}
@@ -152,7 +170,7 @@ func (n *nominator) handle(ctx context.Context, ev candEvent) {
 			m.Observe(ev.at, ev.local, ev.remote, ev.fam, ev.ckind)
 		}
 		m.Success(ev.at, ev.local, ev.remote, ev.fam, ev.rtt)
-		m.Describe(ev.local, ev.remote, n.rt.pathKind(ev.fam, ev.remote, ev.ckind), ev.peerSock)
+		m.Describe(ev.local, ev.remote, n.host.pathKind(ev.fam, ev.remote, ev.ckind), ev.peerSock)
 		n.raise(pairKey{ev.local, ev.remote}, ev.fam, candidate.StateSucceeded)
 	case evNominate:
 		if ev.slot != 0 {
@@ -180,7 +198,6 @@ func (n *nominator) handle(ctx context.Context, ev candEvent) {
 
 // perform carries out the state machine's actions in order.
 func (n *nominator) perform(ctx context.Context, acts []candidate.Action) {
-	rt := n.rt
 	for _, a := range acts {
 		switch a.Kind {
 		case candidate.SendNominate, candidate.SendAccept, candidate.SendReady, candidate.SendAck:
@@ -192,15 +209,17 @@ func (n *nominator) perform(ctx context.Context, acts []candidate.Action) {
 			if a.Kind == candidate.SendReady {
 				n.noteExtras()
 			}
-			n.sendHandshake(ctx, a)
+			n.host.sendHandshake(ctx, a, &n.ann)
 		case candidate.Confirm:
 			n.raise(pairKey{a.Local, a.Remote}, a.Family, candidate.StateConfirmed)
 			n.noteExtras()
-			rt.onConfirm(a, rt.clk.Now())
+			c, _ := n.mgr.Winner()
+			n.host.onConfirm(a, c, n.clk.Now())
 		case candidate.HandOver:
-			rt.onHandOver(a, n.mgr.Extras())
+			c, _ := n.mgr.Winner()
+			n.host.onHandOver(a, c, n.mgr.Extras())
 		case candidate.Fail:
-			rt.onHandoverFailed()
+			n.host.onHandoverFailed()
 		}
 	}
 }
@@ -240,9 +259,9 @@ func (n *nominator) watched(local, remote netip.AddrPort) bool {
 // sendHandshake sends nominate, accept, ready or handover_ack on the pair's
 // socket (Handshake class: the 256-packet reserve, never MaxPackets). An
 // extra path's nominate and accept carry its slot, the primary path's
-// accept the room for extra paths and ready the committed slots.
-func (n *nominator) sendHandshake(ctx context.Context, a candidate.Action) {
-	rt := n.rt
+// accept the room for extra paths and ready the committed slots. The first
+// nominate and the first accept of an epoch are reported (ann).
+func (rt *runtime) sendHandshake(ctx context.Context, a candidate.Action, ann *announced) {
 	s := rt.socks.byAddr(a.Local)
 	if s == nil {
 		return
@@ -258,15 +277,15 @@ func (n *nominator) sendHandshake(ctx context.Context, a candidate.Action) {
 		}
 		if a.Slot != 0 {
 			t = &udpwire.TLVs{Slot: a.Slot}
-		} else if a.Epoch != n.lastNomEp {
-			n.lastNomEp = a.Epoch
+		} else if a.Epoch != ann.nominate {
+			ann.nominate = a.Epoch
 			rt.progress(progressEvent{stage: stageNominated, status: protocol.StatusInfo, family: a.Family, remote: a.Remote})
 		}
 	case candidate.SendAccept:
 		h.Type = udpwire.TAccept
-		t = &udpwire.TLVs{RxCount: uint32(rt.punch.rx.Load()), HasRx: true, Slot: a.Slot, Paths: a.Paths}
-		if a.Slot == 0 && a.Epoch != n.lastAdoptEp {
-			n.lastAdoptEp = a.Epoch
+		t = &udpwire.TLVs{RxCount: uint32(rt.punch.received()), HasRx: true, Slot: a.Slot, Paths: a.Paths}
+		if a.Slot == 0 && a.Epoch != ann.adopt {
+			ann.adopt = a.Epoch
 			rt.phases.advanceFamily(a.Family, protocol.PhaseNegotiating, stageAdopted, rt.clk.Now())
 			rt.progress(progressEvent{stage: stageAdopted, status: protocol.StatusInfo, family: a.Family, remote: a.Remote})
 		}
@@ -280,11 +299,24 @@ func (n *nominator) sendHandshake(ctx context.Context, a candidate.Action) {
 		if faultinject.Point(fiHandoverAck) != nil {
 			return
 		}
-		t = &udpwire.TLVs{RxCount: uint32(rt.punch.rx.Load()), HasRx: true}
+		t = &udpwire.TLVs{RxCount: uint32(rt.punch.received()), HasRx: true}
 	case candidate.Confirm, candidate.HandOver, candidate.Fail:
 		return // not a handshake packet
 	}
 	_ = rt.sender.Send(ctx, s, a.Remote, &h, t, sendOpt{class: classHandshake, stage: stage})
+}
+
+// startPunching opens the punching state once the workers exist: it starts
+// the nomination goroutine with the handover timeout the summary settled
+// and then lets the read loops in. Neither object is replaced: the read
+// loops have been reading both pointers since the probing sockets opened,
+// so the summary only hands the nomination goroutine its parameters as it
+// starts.
+func (rt *runtime) startPunching() {
+	cfg := candidate.Config{Role: rt.role, HandoverTimeout: time.Duration(rt.timeouts.HandoverTimeoutMs) * time.Millisecond,
+		MaxPaths: rt.opts.MaxPaths}
+	rt.pg.Go("nominate", func(ctx context.Context) { rt.nom.run(ctx, cfg) })
+	rt.punch.activate()
 }
 
 // candidates counts the pairs of family f by state for Diagnostics, the

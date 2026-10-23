@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -22,7 +23,7 @@ func TestTemplateTTLKept(t *testing.T) {
 	lim, _ := protocol.BudgetExtreme.Limits()
 	sessB := protocol.TightenBudget(protocol.CeilingBudget())
 	for _, lowTTL := range []bool{true, false} {
-		in := roundInput(Classification{}, peer, peer, 2, nil)
+		in := roundInput(api.Classification{}, peer, peer, 2, nil)
 		if !lowTTL {
 			in.Policy.LowTTL = &off
 		}
@@ -31,7 +32,7 @@ func TestTemplateTTLKept(t *testing.T) {
 			vr, _ := variantOf(id)
 			for role := range 2 {
 				tmpl := roleTemplate(vr, fp.SideA, role)
-				sb := buildSideTemplate(in, fp, tmpl, vr, true, role, false, false)
+				sb := buildSideTemplate(input{RoundInput: in}, fp, tmpl, vr, true, role, false, false)
 				fs := emitFamilySide(sb, f, lim, sessB, int(tmpl.sockets), 0, 1<<20, 1<<20)
 				for _, kind := range []protocol.StageKind{protocol.StageDirect, protocol.StagePredict, protocol.StageRandom} {
 					var want []uint8
@@ -82,7 +83,7 @@ func TestSprayTTLOnWire(t *testing.T) {
 	if cl.PairClass != PairSeqSeq {
 		t.Fatalf("pair class %q", cl.PairClass)
 	}
-	decs := chain(p, cl, a, b, 2, false, RCNoContact, nil)
+	decs := chain(p, cl, a, b, 2, false, api.RoundNoContact, nil)
 	if len(decs) != 2 || decs[1].Variant != vSeqSeq2 {
 		t.Fatalf("round 2 is not seq_x_seq_r2: %+v", decs)
 	}
@@ -96,7 +97,7 @@ func TestSprayTTLOnWire(t *testing.T) {
 	}
 
 	// The rescue round: the silent side is the template's low-TTL receiver.
-	in := roundInput(cl, a, b, 2, []RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: RCOneWay, Budget: protocol.BudgetBalanced}})
+	in := roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: api.RoundOneWay, Budget: protocol.BudgetBalanced}})
 	in.Evidence.SeenFrom[0] = []netip.AddrPort{b.Observed}
 	dec := p.Round(in)
 	rv, _ := variantOf(vRescue)

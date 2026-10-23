@@ -1,10 +1,13 @@
 package plan
 
 import (
+	"cmp"
 	"net/netip"
 	"slices"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -24,7 +27,7 @@ import (
 // peer goes to the Direct stage, a LAN address of a peer on the same LAN to
 // the LAN stage, anything else is left out. With a shared LAN both sides
 // also aim the LAN stage at the peer's LAN endpoints, as in every round.
-func buildRescue(in RoundInput, last RoundOutcome) RoundDecision {
+func buildRescue(in input, last api.RoundOutcome) api.RoundDecision {
 	vr, _ := variantOf(vRescue)
 	seer, seen, rescued := oneWayScope(in, last)
 	silent := 1 - seer
@@ -39,14 +42,14 @@ func buildRescue(in RoundInput, last RoundOutcome) RoundDecision {
 		}
 	}
 
-	dec := RoundDecision{Variant: vr.id, VariantName: vr.name, Budget: protocol.BudgetLight, Rescue: true,
+	dec := api.RoundDecision{Variant: vr.id, VariantName: vr.name, Budget: protocol.BudgetLight, Rescue: true,
 		Window: clampWindow(time.Duration(vr.windowMs)*time.Millisecond, in.Remaining-in.D, vr.budget)}
-	for _, fp := range in.Class.fams {
+	for _, fp := range in.fams {
 		fam := fp.Family
 		if !rescued[fam] {
 			dec.Sides[seer] = append(dec.Sides[seer], replyOnlySide(fam))
 			dec.Sides[silent] = append(dec.Sides[silent], replyOnlySide(fam))
-			dec.Families = append(dec.Families, FamilyRound{Family: fam})
+			dec.Families = append(dec.Families, api.FamilyRound{Family: fam})
 			continue
 		}
 		// One allotment per rescued family: their sum stays within the
@@ -65,17 +68,17 @@ func buildRescue(in RoundInput, last RoundOutcome) RoundDecision {
 		for _, ap := range dedupAddrs(seen) {
 			ip := ap.Addr().Unmap()
 			switch {
-			case protocol.FamilyOf(ip) != fam || !usableTarget(ap):
+			case protocol.FamilyOf(ip) != fam || !netaddr.UsableTarget(ap):
 			case slices.Contains(toSilent.public, ip):
 				if len(sources) < fp.MaxTargets && !replyOnly {
 					sources = append(sources, ap)
 				}
-			case slices.Contains(toSilent.lanIPs, ip) && len(lan) < maxLANTargets:
+			case slices.Contains(toSilent.lanIPs, ip) && len(lan) < protocol.MaxLANTargets:
 				lan = append(lan, ap)
 			}
 		}
 		for _, ap := range toSilent.lan {
-			if len(lan) < maxLANTargets && !slices.Contains(lan, ap) {
+			if len(lan) < protocol.MaxLANTargets && !slices.Contains(lan, ap) {
 				lan = append(lan, ap)
 			}
 		}
@@ -83,7 +86,7 @@ func buildRescue(in RoundInput, last RoundOutcome) RoundDecision {
 			rescueSide(fam, protocol.SideSender, vr.a, sources, lanStage(lan, toSilent.overlay), ttlOK, lim, sessB, share[0]))
 		dec.Sides[silent] = append(dec.Sides[silent],
 			rescueSide(fam, protocol.SideReceiver, vr.b, toHearer.direct, lanStage(toHearer.lan, toHearer.overlay), ttlOK, lim, sessB, share[1]))
-		dec.Families = append(dec.Families, FamilyRound{Family: fam, Variant: vr.id, Budget: protocol.BudgetLight})
+		dec.Families = append(dec.Families, api.FamilyRound{Family: fam, Variant: vr.id, Budget: protocol.BudgetLight})
 	}
 	return dec
 }
@@ -118,7 +121,7 @@ func rescueSide(fam protocol.Family, role protocol.SideRole, tmpl sideTmpl, targ
 		SendDelayMs:      tmpl.sendDelayMs,
 		Sockets:          1,
 		MaxPackets:       uint32(packets),
-		MaxPPS:           minU16(tmpl.maxPPS, minU16(lim.MaxPPS, nonZeroU16(sessB.MaxPPS, lim.MaxPPS))),
+		MaxPPS:           protocol.MinSet(tmpl.maxPPS, protocol.MinSet(lim.MaxPPS, cmp.Or(sessB.MaxPPS, lim.MaxPPS))),
 		MaxNewPerSec:     uint16(effNPS0(sessB)),
 		MaxDistinctPorts: uint16(min(distinct, int(lim.MaxDistinctPorts))),
 		Stages:           stages,
@@ -140,7 +143,7 @@ func dedupAddrs(in []netip.AddrPort) []netip.AddrPort {
 // when only a hit without a source was reported. The round's own evidence
 // decides; an outcome recorded without it falls back to the cumulative
 // Evidence.
-func oneWayScope(in RoundInput, last RoundOutcome) (seer int, seen []netip.AddrPort, fams map[protocol.Family]bool) {
+func oneWayScope(in input, last api.RoundOutcome) (seer int, seen []netip.AddrPort, fams map[protocol.Family]bool) {
 	from, hit := last.SeenFrom, last.Hit
 	if len(from[0])+len(from[1]) == 0 && !hit[0] && !hit[1] {
 		from, hit = in.Evidence.SeenFrom, in.Evidence.Hit
@@ -150,12 +153,12 @@ func oneWayScope(in RoundInput, last RoundOutcome) (seer int, seen []netip.AddrP
 	}
 	fams = map[protocol.Family]bool{}
 	for _, ap := range from[seer] {
-		if f := protocol.FamilyOf(ap.Addr().Unmap()); slices.Contains(in.Class.Families, f) {
+		if f := protocol.FamilyOf(ap.Addr().Unmap()); slices.ContainsFunc(in.fams, func(fp familyPlan) bool { return fp.Family == f }) {
 			fams[f] = true
 		}
 	}
 	if len(fams) == 0 {
-		fams[in.Class.Families[0]] = true
+		fams[in.fams[0].Family] = true
 	}
 	return seer, from[seer], fams
 }
@@ -166,9 +169,9 @@ func oneWayScope(in RoundInput, last RoundOutcome) (seer int, seen []netip.AddrP
 // silent side never sent to, so replying from them cannot reach
 // that side; the birthday round that follows on the ladder is the remedy,
 // its sockets aimed at the sources heard (seenTargets).
-func birthdayFollows(in RoundInput, last RoundOutcome) bool {
+func birthdayFollows(in input, last api.RoundOutcome) bool {
 	seer, _, fams := oneWayScope(in, last)
-	for _, fp := range in.Class.fams {
+	for _, fp := range in.fams {
 		if fams[fp.Family] && (fp.PairClass != PairPDFRnd || fp.Unverified || roleIndex(fp.SideA) == seer) {
 			return false
 		}

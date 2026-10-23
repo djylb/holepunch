@@ -80,11 +80,11 @@ func (so *solo) report() (protocol.ProbeReport, protocol.PeerView) {
 		so.t.Fatal("no probe_report")
 	}
 	rep := *m.(*protocol.ProbeReport)
-	v, _, err := so.s.h.Merge(so.role, rep, nil, "", false)
+	res, err := so.s.h.Merge(so.role, rep, nil, "", false)
 	if err != nil {
 		so.t.Fatal(err)
 	}
-	return rep, v
+	return rep, res.View
 }
 
 // fakePeer is a peer view whose endpoint is the given address, verified.

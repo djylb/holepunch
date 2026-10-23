@@ -12,6 +12,7 @@ import (
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -221,7 +222,8 @@ func TestFaultFinishSteps(t *testing.T) {
 	}
 }
 
-// TestFaultCallback: an injected fault skips one callback delivery.
+// TestFaultCallback: an injected fault fails one callback delivery, which
+// counts as a panic of that callback.
 func TestFaultCallback(t *testing.T) {
 	r := newRig(t)
 	arm(t, fiCallback, faultinject.Error(nil), 0)
@@ -279,7 +281,7 @@ func TestFaultClosePanic(t *testing.T) {
 			} else if err != first {
 				t.Fatalf("callers got different errors: %v, %v", first, err)
 			}
-		case <-time.After(waitLimit):
+		case <-time.After(testkit.WaitBound(t)):
 			t.Fatal("Close blocked")
 		}
 	}
@@ -307,7 +309,7 @@ func TestFaultClosePanic(t *testing.T) {
 		if err != first {
 			t.Fatalf("second close: %v, want %v", err, first)
 		}
-	case <-time.After(waitLimit):
+	case <-time.After(testkit.WaitBound(t)):
 		t.Fatal("second Close blocked")
 	}
 }

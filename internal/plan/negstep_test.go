@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -27,10 +28,10 @@ func TestPredictWindowWrapsDown(t *testing.T) {
 			t.Errorf("window %v lacks %d", got, p)
 		}
 	}
-	if d := portDelta(1024, 65535); d != -1 {
+	if d := netaddr.PortDelta(1024, 65535); d != -1 {
 		t.Errorf("portDelta(1024, 65535) = %d, want -1", d)
 	}
-	if d := portDelta(65535, 1024); d != 1 {
+	if d := netaddr.PortDelta(65535, 1024); d != 1 {
 		t.Errorf("portDelta(65535, 1024) = %d, want 1", d)
 	}
 	// A whole-range window ends once both directions met.

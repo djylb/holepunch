@@ -12,11 +12,14 @@ import (
 
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/internal/plan"
+	engine "github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/internal/probe"
+	"github.com/djylb/holepunch/internal/probetest"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -34,16 +37,9 @@ type udpClient struct {
 	conns []net.PacketConn
 }
 
-// udpConn is the part of a nattest socket the scripted client uses.
-type udpConn interface {
-	net.PacketConn
-	ReadFromUDPAddrPort(b []byte) (int, netip.AddrPort, error)
-	WriteToUDPAddrPort(b []byte, to netip.AddrPort) (int, error)
-}
-
 type udpSock struct {
 	id   uint8
-	conn udpConn
+	conn nattest.Conn
 }
 
 func (s *udpSock) ID() uint8             { return s.id }
@@ -69,12 +65,11 @@ func newUDPClient(t *testing.T, host *nattest.Host, start *protocol.PunchStart) 
 }
 
 func (c *udpClient) open(id uint8) *udpSock {
-	pc, err := c.host.Listen("udp4", netip.AddrPortFrom(c.host.Addrs()[0], 0))
+	conn, err := c.host.ListenUDP(context.Background(), "udp4", netip.AddrPortFrom(c.host.Addrs()[0], 0), "listen")
 	if err != nil {
 		c.t.Fatal(err)
 	}
-	c.conns = append(c.conns, pc)
-	conn := pc.(udpConn)
+	c.conns = append(c.conns, conn)
 	s := &udpSock{id: id, conn: conn}
 	c.wg.Add(1)
 	go func() {
@@ -88,9 +83,8 @@ func (c *udpClient) open(id uint8) *udpSock {
 				}
 				continue
 			}
-			var h udpwire.Header
-			var tl udpwire.TLVs
-			if c.codec.Open(buf[:n], scratch, &h, &tl) != udpwire.OK || c.codec.CheckRole(&h) != udpwire.OK {
+			h, tl, ok := probetest.Open(c.codec, buf[:n], scratch)
+			if !ok {
 				continue
 			}
 			c.mu.Lock()
@@ -144,13 +138,7 @@ func (c *udpClient) probeReport(start *protocol.PunchStart) protocol.ProbeReport
 // socket id sock, optionally with a SANDWICH TLV.
 func (c *udpClient) probeFrom(obs protocol.ObserverSpec, sock uint8, sandwich *[2]uint8) {
 	s := c.open(sock)
-	h := udpwire.Header{Type: udpwire.TProbe, Role: c.codec.Role(), Sock: sock, Cand: udpwire.NoCand, Aux: uint16(obs.ID),
-		Seq: c.codec.NextSeq(), TS: c.codec.Now()}
-	var tl udpwire.TLVs
-	if sandwich != nil {
-		tl.Sandwich.Round, tl.Sandwich.Phase, tl.Sandwich.Set = sandwich[0], sandwich[1], true
-	}
-	pkt, err := c.codec.Seal(nil, &h, &tl, 120)
+	pkt, err := probetest.Seal(c.codec, probetest.Probe{Sandwich: sandwich, PlainLen: 120, Sock: sock, Obs: obs.ID})
 	if err != nil {
 		c.t.Fatal(err)
 	}
@@ -249,14 +237,14 @@ func TestNatprobeEndToEnd(t *testing.T) {
 	// Sandwich: the responder's helper probes reach natprobe, whose reader
 	// hands them to the session; the window goes to the initiator.
 	p.s.mu.Lock()
-	p.s.st.cur.sandwich[1][0] = true
+	p.s.st.rounds.cur.sandwich[1][0] = true
 	p.s.mu.Unlock()
 	obs := srv.Observers(protocol.FamilyUDP4)
 	helper := nat.SocketID(protocol.FamilyUDP4, nat.IndexSandwich)
 	udp[1].probeFrom(obs[0], helper, &[2]uint8{1, nat.SandwichBefore})
 	udp[1].probeFrom(obs[1], helper, &[2]uint8{1, nat.SandwichAfter})
 	var win *protocol.Assist
-	for deadline := time.Now().Add(waitLimit); win == nil; {
+	for deadline := time.Now().Add(testkit.WaitBound(t)); win == nil; {
 		if time.Now().After(deadline) {
 			t.Fatal("no sandwich window")
 		}
@@ -275,7 +263,7 @@ func TestNatprobeEndToEnd(t *testing.T) {
 
 	// Drift: the initiator's primary socket shows up at a new port.
 	udp[0].probeFrom(obs[0], nat.SocketID(protocol.FamilyUDP4, nat.IndexPrimary), nil)
-	eventually(t, "drift observed", func() bool {
+	testkit.WaitFor(t, "drift observed", func() bool {
 		for _, o := range p.s.handle.Observations(protocol.RoleInitiator) {
 			if o.Changes > 0 {
 				return true
@@ -300,7 +288,7 @@ func TestNatprobeEndToEnd(t *testing.T) {
 
 	p.confirm(0, 2)
 	p.confirm(1, 2)
-	eventually(t, "handle closed at the first confirmation", func() bool { return reg.Len() == 0 })
+	testkit.WaitFor(t, "handle closed at the first confirmation", func() bool { return reg.Len() == 0 })
 	p.succeed(0, 2)
 	p.succeed(1, 2)
 	res := r.wait(p.s)
@@ -368,19 +356,19 @@ func TestSandwichRegistrationOutlivesReadyWait(t *testing.T) {
 
 // classifyLog is the default planner, recording the classification input.
 type classifyLog struct {
-	plan.DefaultPlanner
+	engine.DefaultPlanner
 	mu  sync.Mutex
-	ins []ClassifyInput
+	ins []plan.ClassifyInput
 }
 
-func (p *classifyLog) Classify(in ClassifyInput) Classification {
+func (p *classifyLog) Classify(in plan.ClassifyInput) plan.Classification {
 	p.mu.Lock()
 	p.ins = append(p.ins, in)
 	p.mu.Unlock()
 	return p.DefaultPlanner.Classify(in)
 }
 
-func (p *classifyLog) input(t *testing.T) ClassifyInput {
+func (p *classifyLog) input(t *testing.T) plan.ClassifyInput {
 	t.Helper()
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -482,7 +470,7 @@ func TestSeqRndVerdict(t *testing.T) {
 			for i := range 2 {
 				sums[i] = expect[protocol.ProbeSummary](t, p.cl[i])
 			}
-			if sums[0].Plan.PairClass != plan.PairSeqRnd {
+			if sums[0].Plan.PairClass != engine.PairSeqRnd {
 				t.Fatalf("pair class %q; measured %+v", sums[0].Plan.PairClass, cl.input(t).Measured)
 			}
 			for i := range 2 {
@@ -678,7 +666,7 @@ func TestRemapPushedAfterEcho(t *testing.T) {
 		sums[i] = expect[protocol.ProbeSummary](t, p.cl[i])
 	}
 	p.s.mu.Lock()
-	sandwich := p.s.st.sandwich
+	sandwich := p.s.st.sand.negotiated
 	p.s.mu.Unlock()
 	if sandwich || reg.Len() != 1 {
 		t.Fatalf("sandwich %v, %d registrations after the summary", sandwich, reg.Len())
@@ -695,7 +683,7 @@ func TestRemapPushedAfterEcho(t *testing.T) {
 	udp[1].host = n.PublicHost() // the same client, now at another address
 	udp[1].probeFrom(obs, primary, nil)
 	var slot nat.Observation
-	eventually(t, "the moved mapping", func() bool {
+	testkit.WaitFor(t, "the moved mapping", func() bool {
 		for _, o := range p.s.handle.Observations(protocol.RoleResponder) {
 			if o.Socket == primary && o.Observer == obs.ID && o.Changes > 0 {
 				slot = o
@@ -710,7 +698,7 @@ func TestRemapPushedAfterEcho(t *testing.T) {
 	helper := nat.SocketID(u4, nat.IndexSandwich)
 	udp[1].probeFrom(obs, helper, nil)
 	udp[1].probeFrom(obs, helper, nil)
-	eventually(t, "the helper's moved slot", func() bool {
+	testkit.WaitFor(t, "the helper's moved slot", func() bool {
 		for _, o := range p.s.handle.Observations(protocol.RoleResponder) {
 			if o.Socket == helper && o.Changes > 0 {
 				return true
@@ -718,14 +706,14 @@ func TestRemapPushedAfterEcho(t *testing.T) {
 		}
 		return false
 	})
-	if d := p.s.observeDrift(); len(d[0]) != 0 || len(d[1]) != 1 || d[1][0].Socket != primary {
+	if d := p.s.observeDrift(); len(d[0]) != 0 || len(d[1]) != 1 || d[1][0].Family != u4 || d[1][0].Observed != moved {
 		t.Fatalf("drift %+v", d)
 	}
 	known := func() (verified, first bool, samples int) {
 		p.s.mu.Lock()
 		defer p.s.mu.Unlock()
-		fv, _ := familyView(p.s.st.pviews[1], u4)
-		return p.s.st.knownIP(1, u4, moved.Addr()), len(fv.Endpoints) > 0 && fv.Endpoints[0].Addr == moved, len(p.s.st.mappings[1])
+		fv, _ := familyView(p.s.st.plan.pviews[1], u4)
+		return p.s.st.adm.knownIP(1, u4, moved.Addr()), len(fv.Endpoints) > 0 && fv.Endpoints[0].Addr == moved, len(p.s.st.rounds.mappings[1])
 	}
 
 	if g := p.endRound(1, [2]simclient.Outcome{fired(5), fired(5)}); g[0] == nil || g[0].Round != 2 {

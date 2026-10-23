@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -30,7 +31,7 @@ func TestReleaseStopsRenewalAndDeletes(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		waitPending(t, fc, 1)
 		fc.Advance(30 * time.Minute)
-		waitFor(t, "PCP renewal", func() bool { return gw.counts().pcpRenews == i })
+		testkit.WaitFor(t, "PCP renewal", func() bool { return gw.counts().pcpRenews == i })
 	}
 	if c := gw.counts(); c.pcpRejects != 0 || c.natCreates != 0 {
 		t.Fatalf("counts = %+v: renewals must reuse the nonce and NAT-PMP must not be used", c)
@@ -113,7 +114,7 @@ func TestRenewalRecreatesAfterGatewayReboot(t *testing.T) {
 	waitPending(t, fc, 1)
 	before := gw.counts().received
 	fc.Advance(time.Minute)
-	waitFor(t, "failed renewal", func() bool { return gw.counts().received > before && fc.Pending() == 1 })
+	testkit.WaitFor(t, "failed renewal", func() bool { return gw.counts().received > before && fc.Pending() == 1 })
 	// It comes back after a reboot with an empty table: the next renewal,
 	// 30 s later, re-creates the mapping.
 	gw.set(func(f *fakeGW) { f.pcpMode = serveOK; clear(f.pcpActive) })
@@ -122,7 +123,7 @@ func TestRenewalRecreatesAfterGatewayReboot(t *testing.T) {
 		t.Fatalf("retry scheduled in %v (ok=%v), want 30 s after the failure", next.Sub(fc.Now()), ok)
 	}
 	fc.Advance(30 * time.Second)
-	waitFor(t, "mapping re-created by renewal", func() bool { return gw.counts().pcpCreates == 2 })
+	testkit.WaitFor(t, "mapping re-created by renewal", func() bool { return gw.counts().pcpCreates == 2 })
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +138,7 @@ func TestRenewalRetriesAtQuarterLease(t *testing.T) {
 	// Every exchange here is answered at once — the failing renewal with a
 	// SOAP fault — so AttemptTimeout only bounds them: it is as long as the
 	// test may wait, not a guess at how fast a loaded loopback answers.
-	m := newTestMapper(t, Config{AttemptTimeout: waitBound(t)}, testEnv{igd: igd, clk: fc})
+	m := newTestMapper(t, Config{AttemptTimeout: testkit.WaitBound(t)}, testEnv{igd: igd, clk: fc})
 	_, release, err := m.Map(context.Background(), listenLoopback(t), policy(600))
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +147,7 @@ func TestRenewalRetriesAtQuarterLease(t *testing.T) {
 	igd.set(func(f *fakeIGD) { f.failAdds = true })
 	waitPending(t, fc, 1)
 	fc.Advance(5 * time.Minute)
-	waitFor(t, "failed renewal", func() bool {
+	testkit.WaitFor(t, "failed renewal", func() bool {
 		next, ok := fc.Next()
 		return ok && next.Sub(fc.Now()) == 150*time.Second
 	})

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -18,24 +19,6 @@ func TestSocketIDs(t *testing.T) {
 	}
 	if SocketID(protocol.FamilyUDP6, IndexSandwich) != 0x84 {
 		t.Fatal("sandwich helper id")
-	}
-}
-
-func TestScope(t *testing.T) {
-	cases := map[string]Scope{
-		"203.0.113.5": ScopeGlobal, "2001:db8::1": ScopeGlobal, "10.1.2.3": ScopePrivate, "192.168.0.1": ScopePrivate,
-		"172.16.0.1": ScopePrivate, "100.64.0.1": ScopePrivate, "100.127.255.255": ScopePrivate, "100.128.0.1": ScopeGlobal,
-		"127.0.0.1": ScopePrivate, "169.254.1.1": ScopePrivate, "fe80::1": ScopePrivate, "fd00::1": ScopePrivate,
-		"::1": ScopePrivate, "0.0.0.0": ScopeNone, "::": ScopeNone, "224.0.0.1": ScopeNone, "ff02::1": ScopeNone,
-		"255.255.255.255": ScopeNone, "::ffff:10.0.0.1": ScopePrivate, "::ffff:203.0.113.1": ScopeGlobal,
-	}
-	for s, want := range cases {
-		if got := ScopeOf(ip(s)); got != want {
-			t.Errorf("ScopeOf(%s) = %d, want %d", s, got, want)
-		}
-	}
-	if ScopeOf(netip.Addr{}) != ScopeNone || IsCGN(ip("2001:db8::1")) {
-		t.Error("zero address / v6 CGN")
 	}
 }
 
@@ -54,7 +37,7 @@ func TestObserversParse(t *testing.T) {
 	}
 	got := Observers(protocol.FamilyUDP4, specs)
 	if len(got) != 4 || got[0].ID != 0 || got[1].ID != 1 || got[2].ID != 6 || got[2].Addr != ap("198.51.100.2:3478") ||
-		got[3].Scope != ScopePrivate || !got[3].Alt || got[3].Group != 1 || got[0].Scope != ScopeGlobal {
+		got[3].Scope != netaddr.ScopePrivate || !got[3].Alt || got[3].Group != 1 || got[0].Scope != netaddr.ScopeGlobal {
 		t.Fatalf("observers %+v", got)
 	}
 	if v6 := Observers(protocol.FamilyUDP6, specs); len(v6) != 1 || v6[0].ID != 3 {
@@ -67,7 +50,7 @@ func TestObserversParse(t *testing.T) {
 	for i := range 40 {
 		many = append(many, protocol.ObserverSpec{ID: uint8(i), Addr: netip.AddrPortFrom(ip("198.51.100.1"), uint16(1000+i))})
 	}
-	if n := len(Observers(protocol.FamilyUDP4, many)); n != maxObservers {
+	if n := len(Observers(protocol.FamilyUDP4, many)); n != protocol.MaxObservers {
 		t.Fatalf("%d observers", n)
 	}
 }
@@ -81,7 +64,7 @@ func TestNewTableFilters(t *testing.T) {
 		{ID: v4B, Kind: protocol.SocketSibling, Local: ap("[::ffff:10.0.0.3]:1")},
 	}
 	obs := append(mainObservers(), Observer{ID: 0, Addr: ap("198.51.100.3:1")}, Observer{ID: 30, Addr: ap("[2001:db8::1]:1")},
-		Observer{ID: 31}, Observer{ID: 40, Scope: ScopePrivate, Alt: true})
+		Observer{ID: 31}, Observer{ID: 40, Scope: netaddr.ScopePrivate, Alt: true})
 	tb := NewTable(protocol.FamilyUDP4, socks, obs)
 	if s := tb.Sockets(); len(s) != 2 || s[1].ID != v4B || s[1].Local != ap("10.0.0.3:1") {
 		t.Fatalf("sockets %+v", s)
@@ -95,7 +78,7 @@ func TestNewTableFilters(t *testing.T) {
 	for i := uint8(5); i < 12; i++ {
 		tb.AddSocket(SocketMeta{ID: i, Kind: protocol.SocketSibling, Local: ap("10.0.0.9:1")})
 	}
-	if len(tb.Sockets()) != maxSockets || tb.AddSocket(SocketMeta{ID: 20, Kind: protocol.SocketSibling}) {
+	if len(tb.Sockets()) != protocol.MaxReportSockets || tb.AddSocket(SocketMeta{ID: 20, Kind: protocol.SocketSibling}) {
 		t.Fatalf("%d sockets", len(tb.Sockets()))
 	}
 	if tb.family != protocol.FamilyUDP4 {
@@ -172,7 +155,7 @@ func TestRowBound(t *testing.T) {
 		tb.AddFilter(FilterEvidence{Socket: v4P, Observer: uint8(len(tb.filters))})
 		tb.NoteUnsolicitedInbound(v4P, netip.AddrFrom4([4]byte{192, 0, 2, byte(len(tb.inbound) + 1)}))
 	}
-	if len(tb.filters) != maxFilters || len(tb.inbound) != maxInbound {
+	if len(tb.filters) != protocol.MaxReportFilters || len(tb.inbound) != maxInbound {
 		t.Fatalf("filters %d inbound %d", len(tb.filters), len(tb.inbound))
 	}
 	tb.NoteUnsolicitedInbound(v4P, netip.Addr{})
@@ -255,7 +238,7 @@ func TestSnapshotBounds(t *testing.T) {
 		tb.Record(PointKey{Socket: v4P, Source: SourceSTUN, Observer: uint8(i)}, ap("203.0.113.5:9"), 0, 0, 0)
 	}
 	fr := tb.Snapshot()
-	if len(fr.Sockets[0].Rows) != maxReportRows || len(fr.STUN) != maxReportSTUN || validReport(fr) != nil {
+	if len(fr.Sockets[0].Rows) != protocol.MaxReportRows || len(fr.STUN) != protocol.MaxReportSTUNRows || validReport(fr) != nil {
 		t.Fatalf("rows %d stun %d", len(fr.Sockets[0].Rows), len(fr.STUN))
 	}
 }

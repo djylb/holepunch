@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -57,7 +58,7 @@ func TestLocalPortGuess(t *testing.T) {
 
 	heard := netip.AddrPortFrom(a.Observed.Addr(), 40007)
 	in.Round, in.Evidence.SeenFrom[1] = 2, []netip.AddrPort{heard, netip.MustParseAddrPort("198.18.0.9:1234")}
-	in.Prev = []RoundOutcome{{Round: 1, Variant: dec.Variant, Class: RCOneWay, Budget: dec.Budget, Rescue: true}}
+	in.Prev = []api.RoundOutcome{{Round: 1, Variant: dec.Variant, Class: api.RoundOneWay, Budget: dec.Budget, Rescue: true}}
 	in.RescueUsed = true
 	g := directOf(DefaultPlanner{}.Round(in).Sides[1][0])
 	if len(g) != 1 || g[heard] == 0 {
@@ -67,13 +68,13 @@ func TestLocalPortGuess(t *testing.T) {
 
 // oneWay is an outcome of family udp4 in which side seer heard its peer
 // (and the other side did not), or nobody heard when seer < 0.
-func oneWay(round int, dec RoundDecision, seer int, rescue bool) RoundOutcome {
-	o := RoundOutcome{Round: round, Variant: dec.Variant, Class: RCNoContact, Budget: dec.Budget, Rescue: rescue, Families: slices.Clone(dec.Families)}
+func oneWay(round int, dec api.RoundDecision, seer int, rescue bool) api.RoundOutcome {
+	o := api.RoundOutcome{Round: round, Variant: dec.Variant, Class: api.RoundNoContact, Budget: dec.Budget, Rescue: rescue, Families: slices.Clone(dec.Families)}
 	for i := range o.Families {
 		o.Families[i].NoContact = seer < 0
 		if seer >= 0 {
 			o.Families[i].Heard[seer] = true
-			o.Class = RCOneWay
+			o.Class = api.RoundOneWay
 		}
 	}
 	return o
@@ -94,12 +95,12 @@ func TestOneWaySwitch(t *testing.T) {
 			in.Mode = protocol.ModeBackground
 		}
 		cl := DefaultPlanner{}.Classify(in)
-		var prev []RoundOutcome
+		var prev []api.RoundOutcome
 		var names []string
-		var last RoundDecision
+		var last api.RoundDecision
 		rescued := false
 		for round := 1; round <= 4; round++ {
-			ri := roundInput(cl, a, b, round, prev)
+			ri := classified(roundInput(cl, a, b, round, prev), in)
 			ri.MaxRounds, ri.RescueUsed, ri.HandshakeMs = 6, rescued, 60000
 			ri.Remaining = 60e9
 			if round > 1 {
@@ -138,21 +139,21 @@ func TestOneWaySwitch(t *testing.T) {
 // TestOneWaySeer checks the evidence oneWaySeer reads: two one-way rounds
 // of the same hearer, the other side never hearing.
 func TestOneWaySeer(t *testing.T) {
-	r := func(h0, h1 bool) RoundOutcome {
-		return RoundOutcome{Families: []FamilyRound{{Family: protocol.FamilyUDP4, Heard: [2]bool{h0, h1}}}}
+	r := func(h0, h1 bool) api.RoundOutcome {
+		return api.RoundOutcome{Families: []api.FamilyRound{{Family: protocol.FamilyUDP4, Heard: [2]bool{h0, h1}}}}
 	}
 	for _, c := range []struct {
 		name string
-		prev []RoundOutcome
+		prev []api.RoundOutcome
 		seer int
 		from int
 		ok   bool
 	}{
-		{"twice", []RoundOutcome{r(false, true), r(false, false), r(false, true)}, 1, 3, true},
-		{"once", []RoundOutcome{r(true, false), r(false, false)}, 0, 0, false},
-		{"other heard once", []RoundOutcome{r(false, true), r(true, true), r(false, true)}, 0, 0, false},
-		{"both ways", []RoundOutcome{r(true, false), r(false, true), r(true, false), r(false, true)}, 0, 0, false},
-		{"initiator", []RoundOutcome{r(true, false), r(true, false), r(false, false)}, 0, 2, true},
+		{"twice", []api.RoundOutcome{r(false, true), r(false, false), r(false, true)}, 1, 3, true},
+		{"once", []api.RoundOutcome{r(true, false), r(false, false)}, 0, 0, false},
+		{"other heard once", []api.RoundOutcome{r(false, true), r(true, true), r(false, true)}, 0, 0, false},
+		{"both ways", []api.RoundOutcome{r(true, false), r(false, true), r(true, false), r(false, true)}, 0, 0, false},
+		{"initiator", []api.RoundOutcome{r(true, false), r(true, false), r(false, false)}, 0, 2, true},
 	} {
 		seer, from, ok := oneWaySeer(c.prev, protocol.FamilyUDP4)
 		if ok != c.ok || ok && (seer != c.seer || from != c.from) {
@@ -177,7 +178,7 @@ func TestNoRescueForRandomHearer(t *testing.T) {
 	heard := netip.AddrPortFrom(pdf.Observed.Addr(), 40007)
 	o := oneWay(1, dec, 1, false)
 	o.SeenFrom[1] = []netip.AddrPort{heard}
-	in = roundInput(cl, pdf, rnd, 2, []RoundOutcome{o})
+	in = roundInput(cl, pdf, rnd, 2, []api.RoundOutcome{o})
 	in.Policy.Budget.Birthday = protocol.BirthdayConservative
 	in.Evidence.SeenFrom[1] = []netip.AddrPort{heard}
 	dec = DefaultPlanner{}.Round(in)
@@ -190,7 +191,7 @@ func TestNoRescueForRandomHearer(t *testing.T) {
 	// The PDF side heard instead: the rescue runs as before.
 	o = oneWay(1, dec, 0, false)
 	o.SeenFrom[0] = []netip.AddrPort{rnd.Observed}
-	in = roundInput(cl, pdf, rnd, 2, []RoundOutcome{o})
+	in = roundInput(cl, pdf, rnd, 2, []api.RoundOutcome{o})
 	if dec := (DefaultPlanner{}).Round(in); !dec.Rescue {
 		t.Fatalf("PDF side heard: %s", dec.VariantName)
 	}

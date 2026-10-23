@@ -18,14 +18,6 @@ type network interface {
 	LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error)
 }
 
-// udpConn is what the sockets of a Host offer beyond net.PacketConn.
-type udpConn interface {
-	net.PacketConn
-	ReadFromUDPAddrPort([]byte) (int, netip.AddrPort, error)
-	WriteToUDPAddrPort([]byte, netip.AddrPort) (int, error)
-	SetHopLimit(int) error
-}
-
 // A rendezvous server observes both mappings; then a host behind a
 // port-restricted NAT and a host behind a sequential symmetric NAT punch
 // through. The port-restricted side opens its NAT with a low-TTL packet that
@@ -46,9 +38,9 @@ func Example() {
 	srv, _ := server.Listen("udp4", stun)
 	pa, _ := a.ListenPacket(ctx, "udp4", netip.AddrPortFrom(netip.Addr{}, 40000), "probe")
 	pb, _ := b.ListenPacket(ctx, "udp4", netip.AddrPortFrom(netip.Addr{}, 40000), "probe")
-	ca, cb, cs := pa.(udpConn), pb.(udpConn), srv.(udpConn)
+	ca, cb, cs := pa.(nattest.Conn), pb.(nattest.Conn), srv.(nattest.Conn)
 
-	observe := func(c udpConn) netip.AddrPort {
+	observe := func(c nattest.Conn) netip.AddrPort {
 		_, _ = c.WriteToUDPAddrPort([]byte{0x05}, stun)
 		_, from, _ := cs.ReadFromUDPAddrPort(make([]byte, 16))
 		return from

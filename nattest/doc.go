@@ -69,7 +69,7 @@
 //
 // By default the network runs on the real clock, and its single scheduler
 // goroutine waits for the earliest event. With [WithClock] and a
-// *clock.Fake no goroutine runs:
+// *clock.Fake (or a clock that keeps its AdvanceTo) no goroutine runs:
 // packets with a delay, pipe data and deadlines move only while the test
 // advances the Fake, which makes a single-goroutine test reproducible packet
 // by packet. Randomness (port allocation, port noise, loss, jitter,

@@ -12,8 +12,10 @@ import (
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/ablation"
-	"github.com/djylb/holepunch/internal/plan"
+	engine "github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -67,11 +69,11 @@ func TestRoundsAdvance(t *testing.T) {
 	p.s.Abort(protocol.ReasonCanceled, "")
 	res := r.wait(p.s)
 	for _, rr := range res.Rounds[:len(res.Rounds)-1] {
-		if rr.Class != RoundNoContact {
+		if rr.Class != plan.RoundNoContact {
 			t.Fatalf("rounds %+v", res.Rounds)
 		}
 	}
-	if st := r.c.Stats(); st.RoundsByClass[RoundNoContact] == 0 {
+	if st := r.c.Stats(); st.RoundsByClass[plan.RoundNoContact] == 0 {
 		t.Fatalf("stats %+v", st)
 	}
 }
@@ -97,7 +99,7 @@ func TestRescueRound(t *testing.T) {
 	if res.Reason != protocol.ReasonOneWayUDPOnly || res.Detail != "initiator_hears_responder" || res.Outcome != OutcomeFailed {
 		t.Fatalf("result %+v", res)
 	}
-	if len(res.Rounds) != 2 || !res.Rounds[1].Rescue || res.Rounds[0].Class != RoundOneWay {
+	if len(res.Rounds) != 2 || !res.Rounds[1].Rescue || res.Rounds[0].Class != plan.RoundOneWay {
 		t.Fatalf("rounds %+v", res.Rounds)
 	}
 }
@@ -154,7 +156,7 @@ func TestBudgetAudit(t *testing.T) {
 func grantOf(p *pair, r int) int {
 	p.s.mu.Lock()
 	defer p.s.mu.Unlock()
-	return p.s.st.cur.granted[r]
+	return p.s.st.rounds.cur.granted[r]
 }
 
 func maxPackets(rp *protocol.RoundPlan) int {
@@ -210,15 +212,15 @@ func TestRoundClassTable(t *testing.T) {
 	cases := []struct {
 		name string
 		a, b *protocol.RoundResult
-		want RoundClass
+		want plan.RoundClass
 	}{
-		{"missing", rr(protocol.RoundWindowEnd, hit), nil, RoundNoReport},
-		{"both hit", rr(protocol.RoundWindowEnd, hit), rr(protocol.RoundWindowEnd, hit), RoundConfirmLost},
-		{"both seen", rr(protocol.RoundWindowEnd, seen), rr(protocol.RoundWindowEnd, seen), RoundConfirmLost},
-		{"one way", rr(protocol.RoundWindowEnd, seen), rr(protocol.RoundWindowEnd, none), RoundOneWay},
-		{"icmp", rr(protocol.RoundWindowEnd, icmp), rr(protocol.RoundWindowEnd, none), RoundBlocked},
-		{"udp blocked", blockedFatal, rr(protocol.RoundWindowEnd, none), RoundBlocked},
-		{"nothing", rr(protocol.RoundWindowEnd, none), rr(protocol.RoundBudgetExhausted, none), RoundNoContact},
+		{"missing", rr(protocol.RoundWindowEnd, hit), nil, plan.RoundNoReport},
+		{"both hit", rr(protocol.RoundWindowEnd, hit), rr(protocol.RoundWindowEnd, hit), plan.RoundConfirmLost},
+		{"both seen", rr(protocol.RoundWindowEnd, seen), rr(protocol.RoundWindowEnd, seen), plan.RoundConfirmLost},
+		{"one way", rr(protocol.RoundWindowEnd, seen), rr(protocol.RoundWindowEnd, none), plan.RoundOneWay},
+		{"icmp", rr(protocol.RoundWindowEnd, icmp), rr(protocol.RoundWindowEnd, none), plan.RoundBlocked},
+		{"udp blocked", blockedFatal, rr(protocol.RoundWindowEnd, none), plan.RoundBlocked},
+		{"nothing", rr(protocol.RoundWindowEnd, none), rr(protocol.RoundBudgetExhausted, none), plan.RoundNoContact},
 	}
 	for _, c := range cases {
 		if got := roundClass([2]*protocol.RoundResult{c.a, c.b}); got != c.want {
@@ -227,7 +229,7 @@ func TestRoundClassTable(t *testing.T) {
 	}
 	// The attribution uses both sides' evidence.
 	ev := plan.Evidence{Sent: [2]uint32{5, 5}, Fired: [2]bool{true, true}, ICMPUnreach: [2]uint16{60, 0}}
-	if code, detail := plan.AttributeDetail(ev); code != protocol.ReasonCandidateTimeout || detail != "icmp_unreachable" {
+	if code, detail := engine.AttributeDetail(ev); code != protocol.ReasonCandidateTimeout || detail != "icmp_unreachable" {
 		t.Fatalf("attribution %s %s", code, detail)
 	}
 }
@@ -294,30 +296,30 @@ func TestRoundsShareDeadline(t *testing.T) {
 func roundTimes(s *Session) (end, punchEnd, d time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.st.cur.deadline, s.st.punchDeadline, s.st.cur.align.d
+	return s.st.rounds.cur.deadline, s.st.rounds.punchDeadline, s.st.rounds.cur.align.d
 }
 
 // recordingPlanner is the default planner, recording what it is asked and
 // what it answers.
 type recordingPlanner struct {
 	mu   sync.Mutex
-	ins  []RoundInput
-	outs []RoundDecision
+	ins  []plan.RoundInput
+	outs []plan.RoundDecision
 }
 
-func (p *recordingPlanner) Classify(in ClassifyInput) Classification {
-	return plan.DefaultPlanner{}.Classify(in)
+func (p *recordingPlanner) Classify(in plan.ClassifyInput) plan.Classification {
+	return engine.DefaultPlanner{}.Classify(in)
 }
 
-func (p *recordingPlanner) Round(in RoundInput) RoundDecision {
-	d := plan.DefaultPlanner{}.Round(in)
+func (p *recordingPlanner) Round(in plan.RoundInput) plan.RoundDecision {
+	d := engine.DefaultPlanner{}.Round(in)
 	p.mu.Lock()
 	p.ins, p.outs = append(p.ins, in), append(p.outs, d)
 	p.mu.Unlock()
 	return d
 }
 
-func (p *recordingPlanner) round(k int) (RoundInput, RoundDecision) {
+func (p *recordingPlanner) round(k int) (plan.RoundInput, plan.RoundDecision) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.ins[k-1], p.outs[k-1]
@@ -337,7 +339,7 @@ func TestRoundInputEvidence(t *testing.T) {
 		t.Fatalf("round 1 input: fire_at %v, D %v, mappings %+v", in1.FireAt, in1.D, in1.Mappings)
 	}
 	p.s.mu.Lock()
-	fire1 := p.s.st.fireAt[1] - p.s.regAt
+	fire1 := p.s.st.rounds.fireAt[1] - p.s.regAt
 	p.s.mu.Unlock()
 
 	// The responder heard the initiator at pubI (peer_seen) and the
@@ -347,7 +349,7 @@ func TestRoundInputEvidence(t *testing.T) {
 	heard := simclient.Outcome{Family: protocol.FamilyUDP4, Sent: 3, SeenFrom: []netip.AddrPort{pubR, pubR}}
 	p.endRound(1, [2]simclient.Outcome{heard, fired(3)})
 	in2, _ := rp.round(2)
-	want := [2][]MappingSample{{{Addr: pubI, At: fire1, Round: 1}}, {{Addr: pubR, At: fire1, Round: 1}}}
+	want := [2][]plan.MappingSample{{{Addr: pubI, At: fire1, Round: 1}}, {{Addr: pubR, At: fire1, Round: 1}}}
 	if !reflect.DeepEqual(in2.Mappings, want) {
 		t.Fatalf("mappings %+v, want %+v", in2.Mappings, want)
 	}
@@ -399,7 +401,7 @@ func TestMappedAccounting(t *testing.T) {
 		return &protocol.RoundResult{Families: []protocol.FamilyOutcome{o}}
 	}
 	s := &Session{}
-	cur := &s.st.cur
+	cur := &s.st.rounds.cur
 
 	// Round 1: two sockets, one of which failed to bind; 9 distinct ports
 	// sent (2 Direct + 7 of the 16 predicted: the side heard its peer and
@@ -420,14 +422,14 @@ func TestMappedAccounting(t *testing.T) {
 
 	// Round 2: four sockets now; the one socket that sent last round holds
 	// both targets' mappings.
-	s.st.cur = roundState{}
+	s.st.rounds.cur = roundState{}
 	cur.plans[0].Sides = []protocol.FamilySide{side(4, 48)}
 	cur.results[0] = result(protocol.FamilyOutcome{DistinctPorts: 200})
 	if got, want := s.mappedLocked(0, f), 3*2+48; got != want {
 		t.Fatalf("round 2: mapped %d, want %d", got, want)
 	}
-	if got := s.st.directSent[0][0][pub[1]]; got != 4 {
-		t.Fatalf("ledger %v", s.st.directSent[0][0])
+	if got := s.st.rounds.directSent[0][0][pub[1]]; got != 4 {
+		t.Fatalf("ledger %v", s.st.rounds.directSent[0][0])
 	}
 	// A reply-only side maps only what it was pushed.
 	cur.plans[1].Sides = []protocol.FamilySide{{Family: f, Role: protocol.SideReplyOnly, Sockets: 1,
@@ -505,14 +507,14 @@ func TestMappings(t *testing.T) {
 	r := newRig(t)
 	s := r.session(SessionOptions{})
 	s.mu.Lock()
-	s.st.fireAt[1], s.st.fireAt[2] = time.Second, 2*time.Second
+	s.st.rounds.fireAt[1], s.st.rounds.fireAt[2] = time.Second, 2*time.Second
 	s.addMappingLocked(0, 1, netip.AddrPort{})
 	s.addMappingLocked(0, 1, mustAP("192.0.2.1:0"))
 	for i := range maxMappings + 1 {
 		s.addMappingLocked(0, 1, netip.AddrPortFrom(pubI.Addr(), uint16(1000+i)))
 	}
 	s.addMappingLocked(0, 2, netip.AddrPortFrom(pubI.Addr(), 1005))
-	got := slices.Clone(s.st.mappings[0])
+	got := slices.Clone(s.st.rounds.mappings[0])
 	s.mu.Unlock()
 	if len(got) != maxMappings || got[0].Addr.Port() != 1001 || got[maxMappings-1].Addr.Port() != 1016 || got[4].At != time.Second {
 		t.Fatalf("mappings %+v", got)
@@ -531,8 +533,8 @@ func TestPushCharge(t *testing.T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := &s.st
-	st.cur = roundState{n: 1, class: protocol.BudgetLight}
-	st.granted[1] = int(s.budget.MaxPackets) - 41 // room for 20 targets
+	st.rounds.cur = roundState{n: 1, class: protocol.BudgetLight}
+	st.audit.granted[1] = int(s.budget.MaxPackets) - 41 // room for 20 targets
 	targets := []netip.AddrPort{netip.AddrPortFrom(pubI.Addr(), 7), netip.AddrPortFrom(pubI.Addr(), 8),
 		netip.AddrPortFrom(pubI.Addr(), 9), netip.AddrPortFrom(pubI.Addr(), 10)}
 	a := protocol.Assist{Family: protocol.FamilyUDP4, Targets: slices.Clone(targets),
@@ -541,15 +543,15 @@ func TestPushCharge(t *testing.T) {
 		t.Fatalf("trimmed to %d: %+v %+v", n, a.Targets, a.Window)
 	}
 	s.chargePushLocked(1, 0, 20, 0)
-	if st.granted[1] != int(s.budget.MaxPackets)-1 || st.credit[1] != 40 || st.cur.pushed[1][0] != 20 || st.recentPorts[1][1] != 20 {
-		t.Fatalf("charge: granted %d credit %v pushed %v ports %v", st.granted[1], st.credit, st.cur.pushed, st.recentPorts[1])
+	if st.audit.granted[1] != int(s.budget.MaxPackets)-1 || st.audit.credit[1] != 40 || st.rounds.cur.pushed[1][0] != 20 || st.rounds.recentPorts[1][1] != 20 {
+		t.Fatalf("charge: granted %d credit %v pushed %v ports %v", st.audit.granted[1], st.audit.credit, st.rounds.cur.pushed, st.rounds.recentPorts[1])
 	}
 	a = protocol.Assist{Family: protocol.FamilyUDP4, Targets: slices.Clone(targets), Window: &protocol.PortWindow{IP: pubI.Addr(), Lo: 1, Hi: 2}}
 	if n := s.trimPushLocked(1, &a, 0); n != 0 || len(a.Targets) != 0 || a.Window != nil {
 		t.Fatalf("no budget left: %d %+v", n, a)
 	}
-	st.granted[1] = 0
-	st.cur.pushed[0][0] = maxPushPerRound - 3
+	st.audit.granted[1] = 0
+	st.rounds.cur.pushed[0][0] = protocol.MaxPushPerRound - 3
 	a = protocol.Assist{Family: protocol.FamilyUDP4, Targets: slices.Clone(targets[:2]), Window: &protocol.PortWindow{IP: pubR.Addr(), Lo: 5, Hi: 9}}
 	if n := s.trimPushLocked(0, &a, 0); n != 3 || len(a.Targets) != 2 || a.Window.Lo != 7 || a.Window.Hi != 7 {
 		t.Fatalf("the client's cap: %d %+v %+v", n, a.Targets, a.Window)
@@ -557,14 +559,14 @@ func TestPushCharge(t *testing.T) {
 
 	// The audit: 10 granted, 40 credit. Sending 30 pays 20 from the credit;
 	// sending 60 more than the credit covers is a strike.
-	st.cur.granted[1] = 10
+	st.rounds.cur.granted[1] = 10
 	if term := s.auditLocked(1, &protocol.RoundResult{Families: []protocol.FamilyOutcome{{Sent: 30}}}); term != nil ||
-		st.credit[1] != 20 || st.strikes[1] != 0 {
-		t.Fatalf("paid audit: %v credit %v strikes %v", term, st.credit, st.strikes)
+		st.audit.credit[1] != 20 || st.audit.strikes[1] != 0 {
+		t.Fatalf("paid audit: %v credit %v strikes %v", term, st.audit.credit, st.audit.strikes)
 	}
 	if term := s.auditLocked(1, &protocol.RoundResult{Families: []protocol.FamilyOutcome{{Sent: 60}}}); term != nil ||
-		st.credit[1] != 0 || st.strikes[1] != 1 || !st.halve[1] {
-		t.Fatalf("over the credit: %v credit %v strikes %v", term, st.credit, st.strikes)
+		st.audit.credit[1] != 0 || st.audit.strikes[1] != 1 || !st.audit.halve[1] {
+		t.Fatalf("over the credit: %v credit %v strikes %v", term, st.audit.credit, st.audit.strikes)
 	}
 }
 
@@ -607,7 +609,7 @@ func TestNoAdmissibleTarget(t *testing.T) {
 		for i := range 2 {
 			p.windowEnd(i, 1, refused)
 		}
-		eventually(t, "deferred", func() bool {
+		testkit.WaitFor(t, "deferred", func() bool {
 			p.s.mu.Lock()
 			defer p.s.mu.Unlock()
 			return p.s.st.deferred != nil
@@ -630,7 +632,7 @@ func TestGoneAtRoundEnd(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	p.punching()
 	_ = p.cl[1].Close()
-	eventually(t, "gone", func() bool {
+	testkit.WaitFor(t, "gone", func() bool {
 		p.s.mu.Lock()
 		defer p.s.mu.Unlock()
 		return p.s.st.gone[1]

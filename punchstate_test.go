@@ -72,3 +72,7 @@ func TestPunchStateStableUnderReadLoops(t *testing.T) {
 	so.link.send(protocol.Abort{SessionID: so.s.sid, By: protocol.RoleServer, Reason: protocol.ReasonCanceled})
 	so.wantFailure(so.result(5*time.Second), protocol.ReasonCanceled)
 }
+
+// setActive opens or closes the punching state, which a session only ever
+// opens.
+func (st *punchState) setActive(v bool) { st.active.Store(v) }

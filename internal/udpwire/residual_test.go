@@ -9,12 +9,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/clock"
 )
 
 // residualFixture is a responder-side listener after handover: its codec is
 // bound to the initiator's address.
 type residualFixture struct {
-	clk     *manualClock
+	clk     *clock.Fake
 	ini     *Codec // the remote side, source of residuals
 	resp    *Codec // the codec given to DropResidual
 	counter *countingAEAD
@@ -24,7 +26,7 @@ type residualFixture struct {
 
 func newResidualFixture(t *testing.T) *residualFixture {
 	t.Helper()
-	f := &residualFixture{clk: newManualClock(), conn: &queueConn{}, peer: udpAddr("203.0.113.5:40000")}
+	f := &residualFixture{clk: clock.NewFake(t, clockStart), conn: &queueConn{}, peer: udpAddr("203.0.113.5:40000")}
 	var err error
 	f.resp, err = NewCodec(testToken(), testRoute(), RoleResponder, testPad, f.clk.Now)
 	if err != nil {

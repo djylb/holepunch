@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // Conn limits and timings.
@@ -107,7 +108,7 @@ type Conn struct {
 	// held while calling into the connection.
 	qmu        sync.Mutex
 	qcond      sync.Cond
-	queues     [numPriorities][]*outFrame
+	queues     [wiretype.NumPriorities][]*outFrame
 	seq        uint64
 	flight     *outFrame
 	flightDone chan struct{} // closed when the in-flight frame leaves the writer

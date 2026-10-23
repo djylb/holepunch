@@ -10,6 +10,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -53,7 +54,7 @@ func (s *session) probe(sock uint8, i int, src netip.AddrPort, extra, lose bool)
 		s.rows[k] = &protocol.RowReport{Observer: obs, FirstSeq: seq, SentMs: uint32(len(s.ord))}
 		s.ord = append(s.ord, k)
 	}
-	out := s.r.deliver(i, s.c.probe(probeOpts{sock: sock, obs: obs, extra: extra, seq: seq}), src)
+	out := s.r.deliver(i, s.c.probe(probetest.Probe{Sock: sock, Obs: obs, Extra: extra, Seq: seq}), src)
 	if lose {
 		return
 	}
@@ -521,5 +522,9 @@ func TestMergeOverlay(t *testing.T) {
 
 // mergeTest is Merge with a typed memory and key and the default options.
 func (h *handle) mergeTest(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey) (protocol.PeerView, nat.MergeDiag, error) {
-	return h.mergeWith(role, rep, mem, key, mergeOptions{})
+	res, err := h.mergeWith(role, rep, mem, key, mergeOptions{})
+	if err != nil {
+		return protocol.PeerView{}, nat.MergeDiag{}, err
+	}
+	return res.View, res.Diag, nil
 }

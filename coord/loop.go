@@ -8,6 +8,7 @@ import (
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -194,22 +195,22 @@ func (s *Session) linkLostLocked(r int, loss linkLoss, now time.Duration) effect
 	role := roleOf(r)
 	switch st.state {
 	case StateConfirming:
-		if !st.confirmed[r] {
+		if !st.confirm.confirmed[r] {
 			fx.end(&terminal{})
 		}
 		return fx
 	case StatePunching:
 		if loss.kind == lossLink {
 			st.gone[r] = true
-			st.gen++ // a next round being planned must not start
+			st.plan.void() // a next round being planned must not start
 			switch {
 			case st.gone[1-r]:
 				fx.end(goneTerm(role))
-			case st.cur.evaluating:
+			case st.rounds.cur.evaluating:
 				// The round already ended: there is nothing left to wait for.
 				fx.end(goneTerm(role))
 			default:
-				st.deadline = min(st.deadline, st.cur.deadline)
+				st.deadline = min(st.deadline, st.rounds.cur.deadline)
 				s.rearmLocked(now)
 			}
 			return fx
@@ -252,10 +253,7 @@ func (s *Session) handleFrame(r int, f controlwire.Frame) {
 			s.lostNow(r, err)
 			return
 		}
-		code, detail, ok := msgframe.Reason(err)
-		if !ok {
-			code, detail = protocol.ReasonProtocolViolation, detailUnexpected
-		}
+		code, detail := msgframe.ReasonOr(err, protocol.ReasonProtocolViolation, detailUnexpected)
 		s.apply(effects{term: &terminal{code: code, detail: detail, failed: role,
 			notifyFailed: code != protocol.ReasonControlVersionMismatch}})
 		return
@@ -278,11 +276,11 @@ func (s *Session) handleFrame(r int, f controlwire.Frame) {
 }
 
 // faultFor is the injected fault of the frame's handling point, if any.
-func (s *Session) faultFor(t controlwire.Type) error {
+func (s *Session) faultFor(t wiretype.Type) error {
 	switch t {
-	case controlwire.TypeProbeReport:
+	case wiretype.ProbeReport:
 		return faultinject.Point(fiHandleReport)
-	case controlwire.TypePunchReady:
+	case wiretype.PunchReady:
 		return faultinject.Point(fiHandleReady)
 	}
 	return nil
@@ -316,7 +314,7 @@ func (s *Session) admitFrame(r int, f controlwire.Frame, fx *effects) bool {
 			notifyFailed: true})
 		return false
 	}
-	if f.Type == controlwire.TypeProgress {
+	if f.Type == wiretype.Progress {
 		if lim := s.c.set.limits.ProgressPerLink; lim >= 0 && l.progress >= lim {
 			st.ctr.ProgressDropped++
 			return false

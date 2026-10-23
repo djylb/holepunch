@@ -6,6 +6,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -72,7 +73,7 @@ func (s *runState) onAck(in inbound, at time.Time, el time.Duration) {
 	tg := r.tg
 	if !tg.acked {
 		tg.acked = true
-		tg.observed = unmap(in.t.Observed)
+		tg.observed = netaddr.Unmap(in.t.Observed)
 	}
 	rtt := max(el-r.at, 0)
 	s.table.Record(tg.key, in.t.Observed, el, rtt, in.t.Cookie)

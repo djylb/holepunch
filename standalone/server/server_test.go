@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -15,10 +17,11 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch/coord"
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone/broker"
+	"github.com/djylb/holepunch/standalone/internal/life"
+	"github.com/djylb/holepunch/standalone/internal/testkit"
 	"github.com/djylb/holepunch/standalone/internal/tlsid"
 	"github.com/djylb/holepunch/standalone/proto"
 )
@@ -128,19 +131,47 @@ func expectFail(t *testing.T, c net.Conn, code proto.Code) {
 	}
 }
 
-// punchStart reads the next frame and checks that it is holepunch's
-// punch_start: the stream has become a control connection.
-func punchStart(t *testing.T, c net.Conn) {
+// punchStart checks that c, the stream of role in session cs, carries
+// holepunch's punch_start next — the stream has become a control
+// connection: a payload that protocol.Unmarshal takes as the PunchStart of
+// cs for role, whatever frames it.
+func punchStart(t *testing.T, c net.Conn, cs *coord.Session, role protocol.Role) {
 	t.Helper()
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
-	var hdr [8]byte
-	if _, err := io.ReadFull(c, hdr[:]); err != nil {
-		t.Fatal(err)
+	var got []byte
+	buf := make([]byte, 4<<10)
+	for !carries(got, cs.ID(), role) {
+		n, err := c.Read(buf)
+		if err != nil {
+			t.Fatalf("no punch_start in %q: %v", got, err)
+		}
+		got = append(got, buf[:n]...)
 	}
-	if hdr[0] != 'h' || hdr[1] != 'p' || hdr[3] != 1 /* punch_start */ {
-		t.Fatalf("header % x", hdr)
-	}
+	_ = c.SetReadDeadline(time.Time{})
 	go func() { _, _ = io.Copy(io.Discard, c) }()
+}
+
+// carries reports whether b holds a JSON object that is the punch_start of
+// session id for role.
+func carries(b []byte, id string, role protocol.Role) bool {
+	for i := bytes.IndexByte(b, '{'); i >= 0; i = nextObject(b, i) {
+		var raw json.RawMessage
+		if json.NewDecoder(bytes.NewReader(b[i:])).Decode(&raw) != nil {
+			continue
+		}
+		if ps, err := protocol.Unmarshal[protocol.PunchStart](protocol.MsgPunchStart, raw); err == nil && ps.SessionID == id && ps.Role == role {
+			return true
+		}
+	}
+	return false
+}
+
+// nextObject is the position of the next '{' in b after i, or -1.
+func nextObject(b []byte, i int) int {
+	if j := bytes.IndexByte(b[i+1:], '{'); j >= 0 {
+		return i + 1 + j
+	}
+	return -1
 }
 
 // register2 registers a host over a plain stream (a server without TLS).
@@ -171,7 +202,7 @@ func TestFlow(t *testing.T) {
 	if regd.Credential == "" || regd.HeartbeatMs != uint32(DefaultHeartbeat/time.Millisecond) {
 		t.Fatalf("registered %+v", regd)
 	}
-	waitFor(t, func() bool { return r.s.Stats().Hosts == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return r.s.Stats().Hosts == 1 })
 
 	dc := r.dial()
 	send(t, dc, &proto.Open{HostID: "office", DialerID: "laptop", AuthToken: token})
@@ -179,7 +210,11 @@ func TestFlow(t *testing.T) {
 	if info.HostID != "office" || info.DialerID != "laptop" {
 		t.Fatalf("info %+v", info)
 	}
-	punchStart(t, dc)
+	cs, ok := r.b.Coordinator().Lookup(info.SessionID)
+	if !ok {
+		t.Fatal("no coord session")
+	}
+	punchStart(t, dc, cs, protocol.RoleInitiator)
 	in := expect[*proto.Incoming](t, hl)
 	if in.SessionID != info.SessionID {
 		t.Fatalf("incoming %+v", in)
@@ -189,13 +224,12 @@ func TestFlow(t *testing.T) {
 	if j := expect[*proto.SessionInfo](t, jc); j.SessionID != info.SessionID {
 		t.Fatalf("join info %+v", j)
 	}
-	punchStart(t, jc)
+	punchStart(t, jc, cs, protocol.RoleResponder)
 	st := r.s.Stats()
 	if st.Registered != 1 || st.Opened != 1 || st.Joined != 1 || st.Conns != 1 || st.Refused != 0 {
 		t.Fatalf("stats %+v", st)
 	}
-	cs, ok := r.b.Coordinator().Lookup(info.SessionID)
-	if !ok || !cs.Snapshot().Attached[0] || !cs.Snapshot().Attached[1] {
+	if !cs.Snapshot().Attached[0] || !cs.Snapshot().Attached[1] {
 		t.Fatal("streams not attached")
 	}
 
@@ -313,11 +347,11 @@ func TestHeartbeats(t *testing.T) {
 			t.Fatal("no report")
 		}
 	}
-	waitFor(t, func() bool { return len(r.b.Snapshot().Hosts) == 0 })
+	testkit.WaitFor(t, "the host to leave the broker", func() bool { return len(r.b.Snapshot().Hosts) == 0 })
 	if d := time.Since(start); d < 3*time.Second {
 		t.Fatalf("silent link dropped after %v", d)
 	}
-	waitFor(t, func() bool { return r.s.Stats().Hosts == 0 && r.s.Stats().Panics == 1 })
+	testkit.WaitFor(t, "the panicking host to be dropped", func() bool { return r.s.Stats().Hosts == 0 && r.s.Stats().Panics == 1 })
 }
 
 // TestLinkProtocolError: anything but heartbeats and reports ends a link.
@@ -325,7 +359,7 @@ func TestLinkProtocolError(t *testing.T) {
 	r := newRig(t, nil)
 	hl, _ := r.register("office")
 	send(t, hl, &proto.Open{HostID: "x"})
-	waitFor(t, func() bool { return len(r.b.Snapshot().Hosts) == 0 })
+	testkit.WaitFor(t, "the host to leave the broker", func() bool { return len(r.b.Snapshot().Hosts) == 0 })
 }
 
 // TestTakeoverRevokesLink: a registration with the credential takes the ID
@@ -355,14 +389,14 @@ func TestHandshakeTimeout(t *testing.T) {
 	if _, err := c.Read(make([]byte, 1)); err == nil {
 		t.Fatal("read data")
 	}
-	waitFor(t, func() bool { return r.s.Stats().HandshakeFailed == 1 && r.s.Stats().Conns == 0 })
+	testkit.WaitFor(t, "the failed handshake", func() bool { return r.s.Stats().HandshakeFailed == 1 && r.s.Stats().Conns == 0 })
 
 	a, b := net.Pipe()
 	defer func() { _ = a.Close() }()
 	if err := r.s.ServeConn(b); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return r.s.Stats().HandshakeFailed == 2 })
+	testkit.WaitFor(t, "the second failed handshake", func() bool { return r.s.Stats().HandshakeFailed == 2 })
 }
 
 // memListener is an in-memory net.Listener.
@@ -407,7 +441,7 @@ func TestServeAndClose(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = a.Close() }()
 	l.conns <- b
-	waitFor(t, func() bool { return r.s.Stats().Accepted == 1 })
+	testkit.WaitFor(t, "the connection to be accepted", func() bool { return r.s.Stats().Accepted == 1 })
 	if err := r.s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +522,7 @@ func TestPanicEndsOneConnection(t *testing.T) {
 	if err := r.s.ServeConn(&panicConn{all: true}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { st := r.s.Stats(); return st.Panics == 3 && st.Conns == 0 })
+	testkit.WaitFor(t, "the three panics", func() bool { st := r.s.Stats(); return st.Panics == 3 && st.Conns == 0 })
 	r.register2(t)
 }
 
@@ -601,8 +635,7 @@ func TestNotifyPanicClosesLink(t *testing.T) {
 	send(t, a, &proto.Register{HostID: "office", AuthToken: token})
 	expect[*proto.Registered](t, a)
 	conn.armed.Store(true)
-	var pe *life.PanicError
-	if _, err := r.b.Open(broker.OpenRequest{HostID: "office"}); !errors.As(err, &pe) {
+	if _, err := r.b.Open(broker.OpenRequest{HostID: "office"}); !life.IsPanic(err) {
 		t.Fatalf("open: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -610,7 +643,7 @@ func TestNotifyPanicClosesLink(t *testing.T) {
 	if m, err := proto.Read(ctx, a); err == nil || ctx.Err() != nil {
 		t.Fatalf("link still open after the panic: %v, %v", m, err)
 	}
-	waitFor(t, func() bool { return len(r.b.Snapshot().Hosts) == 0 && r.s.Stats().Hosts == 0 })
+	testkit.WaitFor(t, "the host to be dropped", func() bool { return len(r.b.Snapshot().Hosts) == 0 && r.s.Stats().Hosts == 0 })
 }
 
 // TestDeliverPanicFreesLock: a Write that panics leaves the link's lock free
@@ -672,16 +705,5 @@ func TestClientKey(t *testing.T) {
 	c := &panicConn{}
 	if got := clientKey(c); !strings.HasPrefix(got, "ip:") {
 		t.Fatalf("%q", got)
-	}
-}
-
-func waitFor(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not met in time")
-		}
-		time.Sleep(5 * time.Millisecond)
 	}
 }

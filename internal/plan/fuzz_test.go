@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/msgframe"
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -181,11 +182,11 @@ func FuzzRound(f *testing.F) {
 		}
 		start := int(bits>>32&7) % len(cl.Ladder) // where the strategy memory starts the primary ladder
 		order := append(slices.Clone(cl.Ladder[start:]), cl.Ladder[:start]...)
-		var prev []RoundOutcome
+		var prev []api.RoundOutcome
 		ledger := mappingLedger{}
 		rescueUsed := false
 		for round := 1; round <= 6; round++ {
-			in := roundInput(cl, a, b, round, prev)
+			in := classified(roundInput(cl, a, b, round, prev), ci)
 			in.Views, in.RescueUsed = views, rescueUsed
 			in.Order, in.MemoryPromoted = order, round == 1 && start > 0
 			in.BudgetLeft = [2]int{int(left), int(left>>1) + 60}
@@ -193,11 +194,11 @@ func FuzzRound(f *testing.F) {
 			in.AllowExtreme, in.MaxRounds, in.HandshakeMs = bits&1 != 0, 6, 40000
 			in.Policy.Budget.Birthday = []protocol.BirthdayTier{protocol.BirthdayOff, protocol.BirthdayConservative, protocol.BirthdayBalanced, protocol.BirthdayAggressive}[bits>>1&3]
 			in.FireAt = time.Duration(fireMs) * time.Millisecond
-			in.Mappings[1] = []MappingSample{{Addr: netip.AddrPortFrom(b.Observed.Addr(), uint16(bits>>8)), At: time.Duration(fireMs/2) * time.Millisecond,
+			in.Mappings[1] = []api.MappingSample{{Addr: netip.AddrPortFrom(b.Observed.Addr(), uint16(bits>>8)), At: time.Duration(fireMs/2) * time.Millisecond,
 				Round: round - 1}}
 			if mode := bits >> 24 & 3; mode != 0 { // 1: both probes came, 2: the first only, 3: the second only
 				for r, tr := range []protocol.Traits{a, b} {
-					ar := AnchorRefresh{Family: tr.Family}
+					ar := api.AnchorRefresh{Family: tr.Family}
 					port := tr.Observed.Port() + uint16(bits>>26&0x3f)
 					if mode != 3 {
 						ar.First, ar.FirstAt = netip.AddrPortFrom(tr.Observed.Addr(), port), in.FireAt-150*time.Millisecond
@@ -205,14 +206,14 @@ func FuzzRound(f *testing.F) {
 					if mode != 2 {
 						ar.Second, ar.SecondAt = netip.AddrPortFrom(tr.Observed.Addr(), port+uint16(bits>>40&7)), in.FireAt-90*time.Millisecond
 					}
-					in.Refresh[r] = []AnchorRefresh{ar}
+					in.Refresh[r] = []api.AnchorRefresh{ar}
 				}
 			}
 			dec := p.Round(in)
 			if dec.Stop != "" {
 				return
 			}
-			checkAdmitted(t, "fuzz", dec, views, pair, maxRelayOnlyTargets)
+			checkAdmitted(t, "fuzz", dec, views, pair, protocol.MaxRelayOnlyTargets)
 			for r := range 2 {
 				total := 0
 				for _, fs := range dec.Sides[r] {
@@ -231,12 +232,12 @@ func FuzzRound(f *testing.F) {
 					t.Fatalf("round %d role %d: the client's Normalize clamps %+v", round, r, rp.Sides)
 				}
 			}
-			class := []RoundClass{RCNoContact, RCConfirmLost, RCOneWay, RCBlocked}[bits>>(3+2*uint(round))&3]
+			class := []api.RoundClass{api.RoundNoContact, api.RoundConfirmLost, api.RoundOneWay, api.RoundBlocked}[bits>>(3+2*uint(round))&3]
 			o := ledger.outcome(round, dec, class)
 			for i := range o.Families {
-				o.Families[i].NoContact = class == RCNoContact // two in a row escalate an easy family
+				o.Families[i].NoContact = class == api.RoundNoContact // two in a row escalate an easy family
 			}
-			if class == RCOneWay {
+			if class == api.RoundOneWay {
 				seer := round % 2
 				if bits>>30&1 == 1 {
 					seer = 1 // the same side hears every time: two make a PDF×RND pair

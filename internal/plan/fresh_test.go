@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -74,7 +75,7 @@ func TestPDFPresRound(t *testing.T) {
 		checkSide(t, fs, dec.Budget, dec.Window)
 	}
 	// Round 2 is pres_r2 on heavy, 24 fresh sockets.
-	dec2 := p.Round(roundInput(cl, a, b, 2, []RoundOutcome{outcomeOf(1, dec, RCNoContact)}))
+	dec2 := p.Round(roundInput(cl, a, b, 2, []api.RoundOutcome{outcomeOf(1, dec, api.RoundNoContact)}))
 	if dec2.VariantName != "pres_r2" || mustStageOf(t, dec2.Sides[1][0], protocol.StageFresh).Count != 24 {
 		t.Fatalf("round 2 %q %s", dec2.VariantName, describe(dec2.Sides[1][0]))
 	}
@@ -127,7 +128,7 @@ func TestPresNeedsEvidence(t *testing.T) {
 	ci := classifyInput(a, b)
 	ci.Pair.Unverified = map[protocol.Family]bool{f: true}
 	cl := p.Classify(ci)
-	for r, sides := range p.Round(roundInput(cl, a, b, 1, nil)).Sides {
+	for r, sides := range p.Round(classified(roundInput(cl, a, b, 1, nil), ci)).Sides {
 		for _, fs := range sides {
 			if fs.FreshSockets() > 0 || stageOf(fs, protocol.StageFreshPeer) != nil {
 				t.Fatalf("role %d: fresh stage in an unverified family: %s", r, describe(fs))

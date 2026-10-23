@@ -3,6 +3,8 @@ package protocol
 import (
 	"fmt"
 	"net/netip"
+
+	"github.com/djylb/holepunch/internal/netaddr"
 )
 
 // Enumerations. String-kind enums (Role, Family, Phase, BudgetClass,
@@ -83,6 +85,23 @@ func (f Family) Matches(a netip.Addr) bool {
 		return a.Is6() && !a.Is4In6()
 	}
 	return false
+}
+
+// Index is f's index in arrays by family: 1 for udp6, 0 for udp4 and
+// anything else.
+func (f Family) Index() int {
+	if f == FamilyUDP6 {
+		return 1
+	}
+	return 0
+}
+
+// UsableTarget reports whether a can be the destination of a packet a
+// client initiates in family f: an address of f with a port that is not
+// netaddr.Unusable (unspecified, multicast, the IPv4 broadcast, loopback or
+// IPv6 link-local). Which of these a side may aim at is admission's call.
+func (f Family) UsableTarget(a netip.AddrPort) bool {
+	return f.Matches(a.Addr()) && netaddr.UsableTarget(a)
 }
 
 // FamilyOf is the family of a, or "" for an invalid or IPv4-mapped address.

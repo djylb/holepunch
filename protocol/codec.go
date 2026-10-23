@@ -369,17 +369,17 @@ func listLimit(t MessageType, path []byte) int {
 		case "families":
 			return maxReportFamilies
 		case "families.sockets":
-			return maxReportSockets
+			return MaxReportSockets
 		case "families.sockets.rows":
-			return maxReportRows
+			return MaxReportRows
 		case "families.filters":
-			return maxReportFilters
+			return MaxReportFilters
 		case "families.stun":
-			return maxReportSTUNRows
+			return MaxReportSTUNRows
 		case "families.local_addrs":
-			return maxLocalAddrs
+			return MaxLocalAddrs
 		case "families.overlay":
-			return maxOverlayAddrs
+			return MaxOverlayAddrs
 		}
 	case MsgPunchReady:
 		if string(path) == "families" {
@@ -390,7 +390,7 @@ func listLimit(t MessageType, path []byte) int {
 		case "families":
 			return maxOutcomes
 		case "families.seen_from":
-			return maxSeenFrom
+			return MaxSeenFrom
 		}
 	case MsgPunchResult:
 		switch string(path) {
@@ -399,7 +399,7 @@ func listLimit(t MessageType, path []byte) int {
 		case "traits":
 			return maxTraitsUpdates
 		case "warn":
-			return maxWarn
+			return MaxWarn
 		}
 	}
 	return 0

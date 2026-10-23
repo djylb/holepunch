@@ -3,6 +3,7 @@ package plan
 import (
 	"slices"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -72,11 +73,11 @@ func asRandom(t protocol.Traits) protocol.Traits {
 // side planned as endpoint dependent (familyPlan.EDM) or random
 // (familyPlan.OneWay), so that every stage the round builds reads the
 // traits it was classified with. It reports, by family index, the families
-// whose ladder a switch replaced; in.Class and in.Views are copied before
+// whose ladder a switch replaced; in.fams and in.Views are copied before
 // they change, never written through.
-func escalate(in *RoundInput) []bool {
-	out := make([]bool, len(in.Class.fams))
-	fams := in.Class.fams
+func escalate(in *input) []bool {
+	out := make([]bool, len(in.fams))
+	fams := in.fams
 	cloned := false
 	replace := func(i int, next familyPlan, from int) {
 		next.From = from
@@ -92,7 +93,7 @@ func escalate(in *RoundInput) []bool {
 		}
 		if seer, from, ok := oneWaySeer(in.Prev, fp.Family); ok {
 			if fp.PairClass != PairPDFRnd || roleIndex(fp.SideA) == seer {
-				replace(i, oneWayPlan(fp, seer, in.Views, in.Policy, in.Class.background), from)
+				replace(i, oneWayPlan(fp, seer, in.Views, in.Policy, in.Mode == protocol.ModeBackground), from)
 			}
 			continue // the one-way evidence decides; no silent-round escalation besides
 		}
@@ -109,13 +110,13 @@ func escalate(in *RoundInput) []bool {
 		next := planFamily(fp.Family, tr, more, protocol.PairFacts{
 			LikelySameLAN: map[protocol.Family]bool{fp.Family: fp.SameLAN},
 			SharedOverlay: map[protocol.Family]bool{fp.Family: fp.SharedOverlay},
-		}, in.Policy, in.Class.background, false)
+		}, in.Policy, in.Mode == protocol.ModeBackground, false)
 		if next.PairClass == fp.PairClass {
 			continue
 		}
 		replace(i, next, from)
 	}
-	in.Class.fams = fams
+	in.fams = fams
 	for _, fp := range fams {
 		for r := range in.Views {
 			switch {
@@ -138,7 +139,7 @@ const oneWayRounds = 2
 // after the round that made the count; false when no side did. The rounds
 // need not be adjacent: a rescue round in between that found nothing — its
 // silent side sends at low TTL — leaves the evidence as it was.
-func oneWaySeer(prev []RoundOutcome, fam protocol.Family) (seer, from int, ok bool) {
+func oneWaySeer(prev []api.RoundOutcome, fam protocol.Family) (seer, from int, ok bool) {
 	var n [2]int
 	var heard [2]bool
 	at := [2]int{-1, -1}
@@ -189,9 +190,9 @@ func oneWayPlan(fp familyPlan, seer int, views [2]protocol.PeerView, pol protoco
 	if !background && (next.TierCap == "" || next.TierCap.Rank() > protocol.BirthdayConservative.Rank()) {
 		next.TierCap = protocol.BirthdayConservative
 	}
-	next.Ladder = []VariantID{vPDFRnd2, vPDFRnd3}
+	next.Ladder = []api.VariantID{vPDFRnd2, vPDFRnd3}
 	if background && slowViable(next, pol) {
-		next.Ladder = []VariantID{vPDFRndSlow}
+		next.Ladder = []api.VariantID{vPDFRndSlow}
 	}
 	return next
 }
@@ -240,7 +241,7 @@ func escalatedSides(tr [2]protocol.Traits, edm [2]bool) [2]bool {
 // first such streak; false when no streak happened. A round the family did
 // not run, or ran with contact, ends a streak; a rescue round never starts
 // one, since one-way contact preceded it.
-func escalationPoint(prev []RoundOutcome, fam protocol.Family) (int, bool) {
+func escalationPoint(prev []api.RoundOutcome, fam protocol.Family) (int, bool) {
 	streak := 0
 	for k, o := range prev {
 		fr, ok := familyRound(o, fam)
@@ -256,17 +257,17 @@ func escalationPoint(prev []RoundOutcome, fam protocol.Family) (int, bool) {
 }
 
 // familyRound returns family fam's record in outcome o.
-func familyRound(o RoundOutcome, fam protocol.Family) (FamilyRound, bool) {
+func familyRound(o api.RoundOutcome, fam protocol.Family) (api.FamilyRound, bool) {
 	for _, f := range o.Families {
 		if f.Family == fam {
 			return f, true
 		}
 	}
-	return FamilyRound{}, false
+	return api.FamilyRound{}, false
 }
 
 // ranSince reports whether family fam ran a non-rescue round in prev.
-func ranSince(prev []RoundOutcome, fam protocol.Family) bool {
+func ranSince(prev []api.RoundOutcome, fam protocol.Family) bool {
 	for _, o := range prev {
 		if _, ok := familyRound(o, fam); ok && !o.Rescue {
 			return true

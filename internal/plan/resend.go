@@ -3,6 +3,7 @@ package plan
 import (
 	"net/netip"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -30,7 +31,7 @@ import (
 // stage, nothing already sent is taken off it. It is nil when there is
 // nothing to resend, the side does not spray this round or the path is
 // blocked.
-func resendStage(in RoundInput, fp familyPlan, tmpl sideTmpl, role int, ip netip.Addr, ttlOK, blocked bool) *protocol.Stage {
+func resendStage(in input, fp familyPlan, tmpl sideTmpl, role int, ip netip.Addr, ttlOK, blocked bool) *protocol.Stage {
 	spray, ok := tmpl.firstSpray()
 	if fp.PairClass != PairPDFSeq || blocked || !ip.IsValid() || !ok {
 		return nil
@@ -40,7 +41,7 @@ func resendStage(in RoundInput, fp familyPlan, tmpl sideTmpl, role int, ip netip
 		return nil
 	}
 	var center uint16
-	var prev VariantID
+	var prev api.VariantID
 	for _, f := range last.Families {
 		if f.Family == fp.Family {
 			center, prev = f.Center[role], f.Variant

@@ -15,9 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone/broker"
+	"github.com/djylb/holepunch/standalone/internal/life"
 	"github.com/djylb/holepunch/standalone/proto"
 )
 
@@ -253,7 +253,7 @@ func (s *Server) Close() error {
 			s.closeConn(st.raw)
 		}
 		s.closeErr = s.group.Close(closeJoin)
-		if s.group.Stats().Leaked > 0 {
+		if s.group.Leaked() > 0 {
 			s.closeErr = ErrCloseTimeout
 		}
 	})

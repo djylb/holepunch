@@ -110,7 +110,7 @@ func (h *Host) Crash() {
 // the same methods as the socket. The lookup is by address, so the mark
 // works even when the library handed the socket out wrapped in its own
 // conn.
-func (h *Host) MarkHandover(local netip.AddrPort) (net.PacketConn, error) {
+func (h *Host) MarkHandover(local netip.AddrPort) (Conn, error) {
 	fail := func(err error) error {
 		return &net.OpError{Op: "handover", Net: "udp", Addr: net.UDPAddrFromAddrPort(local), Err: err}
 	}

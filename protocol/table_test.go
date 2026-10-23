@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // jsonFields lists the JSON names of t's fields; a name ending in "?" is
@@ -130,7 +131,7 @@ func TestProtocolTable(t *testing.T) {
 		if r.typ.String() != r.name || r.typ.MaxPayload() != r.cap {
 			t.Errorf("type %d: name %q cap %d; want %q %d", b, r.typ, r.typ.MaxPayload(), r.name, r.cap)
 		}
-		ct := controlwire.Type(r.typ)
+		ct := wiretype.Type(r.typ)
 		clientSends, serverSends := controlwire.SideClient.Sends(ct), controlwire.SideServer.Sends(ct)
 		wantClient, wantServer := r.from == "client" || r.from == "both", r.from == "server" || r.from == "both"
 		if clientSends != wantClient || serverSends != wantServer {
@@ -151,10 +152,10 @@ func TestProtocolTable(t *testing.T) {
 	}
 	for b := int(MsgPunchResult) + 1; b <= math.MaxUint8; b++ {
 		typ := MessageType(b)
-		if typ.Known() || typ.MaxPayload() != controlwire.DiscardCap || typ.String() != fmt.Sprintf("type(%d)", b) {
+		if typ.Known() || typ.MaxPayload() != wiretype.DiscardCap || typ.String() != fmt.Sprintf("type(%d)", b) {
 			t.Errorf("type %d: known %v, cap %d, name %q; want a reserved type", b, typ.Known(), typ.MaxPayload(), typ)
 		}
-		if _, err := decodeFrame(controlwire.Frame{Type: controlwire.Type(b), Payload: []byte("{}")}); !errors.Is(err, ErrUnexpectedMessage) {
+		if _, err := decodeFrame(controlwire.Frame{Type: wiretype.Type(b), Payload: []byte("{}")}); !errors.Is(err, ErrUnexpectedMessage) {
 			t.Errorf("Decode of reserved type %d = %v", b, err)
 		}
 	}

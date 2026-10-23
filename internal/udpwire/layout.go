@@ -63,6 +63,24 @@ const (
 // traffic and hairpin).
 const NoCand = 0xFFFF
 
+// Candidate id limits: Header.Cand is stage<<12 | index, the stage in the
+// top four bits; stage 15 with index maxCandIndex is NoCand.
+const (
+	maxCandStage = 14
+	maxCandIndex = 0x0FFF
+)
+
+// CandID is the candidate id of the index-th target of stage stage. An
+// index beyond maxCandIndex or a stage beyond maxCandStage has no id of its
+// own — it would collide with another target's, or with NoCand — so ok is
+// false and the target is not sent.
+func CandID(stage, index int) (id uint16, ok bool) {
+	if stage < 0 || stage > maxCandStage || index < 0 || index > maxCandIndex {
+		return NoCand, false
+	}
+	return uint16(stage<<12 | index), true
+}
+
 // DefaultResidualWindow is the DropResidual window used when the caller passes
 // a non-positive one. It comfortably exceeds the handover timeout (2 s) plus
 // reordering, the only period in which handshake retransmissions can arrive.

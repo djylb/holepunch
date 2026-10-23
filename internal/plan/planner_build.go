@@ -1,10 +1,12 @@
 package plan
 
 import (
+	"cmp"
 	"net/netip"
 	"slices"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -27,15 +29,8 @@ import (
 
 // Target limits.
 const (
-	maxDirectTargets     = 8  // Direct targets of a side and round
-	maxUnverifiedTargets = 4  // an unverified family's targets per side and round
-	maxRelayOnlyTargets  = 16 // the same with every family unverified (NoObserver mode)
-	maxUnverifiedRepeats = 8  // packets per unverified target and round
-	maxLANTargets        = 4  // LAN targets of a side and round
-	maxOverlayTargets    = 2  // overlay targets of a side and round
-	lanRepeats           = 2  // packets per LAN or overlay target and round
-	guessRepeats         = 2  // packets per local-port guess and socket (D(2))
-	lanAddrs             = 4  // distinct LAN or reported IPs a client keeps of its peer
+	maxDirectTargets = 8 // Direct targets of a side and round
+	guessRepeats     = 2 // packets per local-port guess and socket (D(2))
 )
 
 // ---- view helpers ----
@@ -112,18 +107,18 @@ func peerAddrsOf(fp familyPlan, fv protocol.FamilyView) peerAddrs {
 		ip := e.Addr.Addr().Unmap().WithZone("")
 		switch {
 		case e.Source == protocol.EndpointOverlay:
-			if fp.SharedOverlay && usableTarget(e.Addr) && len(pa.overlay) < maxOverlayTargets && !slices.Contains(pa.overlay, e.Addr) {
+			if fp.SharedOverlay && netaddr.UsableTarget(e.Addr) && len(pa.overlay) < protocol.MaxOverlayTargets && !slices.Contains(pa.overlay, e.Addr) {
 				pa.overlay = append(pa.overlay, e.Addr)
 			}
 		case e.Verified:
 			if !slices.Contains(verified, ip) {
 				verified = append(verified, ip)
 			}
-		case fp.SameLAN && e.Source == protocol.EndpointLAN && privateAddr(ip) && len(pa.lanIPs) < lanAddrs:
+		case fp.SameLAN && e.Source == protocol.EndpointLAN && netaddr.Private(ip) && len(pa.lanIPs) < protocol.MaxLANTargets:
 			if !slices.Contains(pa.lanIPs, ip) {
 				pa.lanIPs = append(pa.lanIPs, ip)
 			}
-		case fp.Unverified && reportedGlobal(ip) && len(reported) < lanAddrs:
+		case fp.Unverified && netaddr.Public(ip) && len(reported) < protocol.MaxReportedIPs:
 			if !slices.Contains(reported, ip) {
 				reported = append(reported, ip)
 			}
@@ -162,7 +157,7 @@ func directTargets(fv protocol.FamilyView) []netip.AddrPort {
 	var primary netip.Addr
 	var server, second bool
 	for _, e := range fv.Endpoints {
-		if !e.Verified || !usableTarget(e.Addr) || len(out) == maxDirectTargets {
+		if !e.Verified || !netaddr.UsableTarget(e.Addr) || len(out) == maxDirectTargets {
 			continue
 		}
 		if fv.Traits.MultiExit {
@@ -188,7 +183,7 @@ func directTargets(fv protocol.FamilyView) []netip.AddrPort {
 		return out
 	}
 	for _, e := range fv.Endpoints {
-		if e.Source == protocol.EndpointSTUN && e.Addr.Addr() == primary && usableTarget(e.Addr) &&
+		if e.Source == protocol.EndpointSTUN && e.Addr.Addr() == primary && netaddr.UsableTarget(e.Addr) &&
 			len(out) < maxDirectTargets && !slices.Contains(out, e.Addr) {
 			out = append(out, e.Addr)
 		}
@@ -206,7 +201,7 @@ func guessTargets(fv protocol.FamilyView, direct []netip.AddrPort) []netip.AddrP
 		return nil
 	}
 	for _, e := range fv.Endpoints {
-		if e.Source == protocol.EndpointLocalPort && e.Addr.Addr() == direct[0].Addr() && usableTarget(e.Addr) && !slices.Contains(direct, e.Addr) {
+		if e.Source == protocol.EndpointLocalPort && e.Addr.Addr() == direct[0].Addr() && netaddr.UsableTarget(e.Addr) && !slices.Contains(direct, e.Addr) {
 			return []netip.AddrPort{e.Addr}
 		}
 	}
@@ -218,12 +213,12 @@ func guessTargets(fv protocol.FamilyView, direct []netip.AddrPort) []netip.AddrP
 // peer's real mappings toward this side. Once there are any, every later round
 // aims at them instead of what natprobe and STUN observed. At most
 // fp.MaxTargets.
-func seenTargets(in RoundInput, fp familyPlan, role int, pa peerAddrs) []netip.AddrPort {
+func seenTargets(in input, fp familyPlan, role int, pa peerAddrs) []netip.AddrPort {
 	var out []netip.AddrPort
 	for _, a := range in.Evidence.SeenFrom[role] {
 		ip := a.Addr().Unmap()
-		if len(out) < fp.MaxTargets && protocol.FamilyOf(ip) == fp.Family && usableTarget(a) && slices.Contains(pa.public, ip) &&
-			!privateAddr(ip) && !slices.Contains(out, a) {
+		if len(out) < fp.MaxTargets && protocol.FamilyOf(ip) == fp.Family && netaddr.UsableTarget(a) && slices.Contains(pa.public, ip) &&
+			!netaddr.Private(ip) && !slices.Contains(out, a) {
 			out = append(out, a)
 		}
 	}
@@ -240,7 +235,7 @@ func reportedTargets(fv protocol.FamilyView, ips []netip.Addr, limit int) []neti
 		if len(out) == limit {
 			break
 		}
-		if e.Source != protocol.EndpointOverlay && usableTarget(e.Addr) && slices.Contains(ips, e.Addr.Addr().Unmap()) && !slices.Contains(out, e.Addr) {
+		if e.Source != protocol.EndpointOverlay && netaddr.UsableTarget(e.Addr) && slices.Contains(ips, e.Addr.Addr().Unmap()) && !slices.Contains(out, e.Addr) {
 			out = append(out, e.Addr)
 		}
 	}
@@ -248,17 +243,17 @@ func reportedTargets(fv protocol.FamilyView, ips []netip.Addr, limit int) []neti
 }
 
 // lanTargets returns the peer's LAN endpoints on the admitted LAN IPs, at
-// most maxLANTargets. An IP that is also verified is left
+// most protocol.MaxLANTargets. An IP that is also verified is left
 // out: the client treats it as a verified address, which the public Direct
 // stage already covers.
 func lanTargets(fv protocol.FamilyView, lanIPs, verified []netip.Addr) []netip.AddrPort {
 	var out []netip.AddrPort
 	for _, e := range fv.Endpoints {
-		if len(out) == maxLANTargets {
+		if len(out) == protocol.MaxLANTargets {
 			break
 		}
 		ip := e.Addr.Addr().Unmap()
-		if e.Source == protocol.EndpointLAN && !e.Verified && usableTarget(e.Addr) && slices.Contains(lanIPs, ip) &&
+		if e.Source == protocol.EndpointLAN && !e.Verified && netaddr.UsableTarget(e.Addr) && slices.Contains(lanIPs, ip) &&
 			!slices.Contains(verified, ip) && !slices.Contains(out, e.Addr) {
 			out = append(out, e.Addr)
 		}
@@ -271,44 +266,18 @@ func lanTargets(fv protocol.FamilyView, lanIPs, verified []netip.Addr) []netip.A
 // never sprays a private IP, verified or not.
 func sprayIP(targets []netip.AddrPort, fv protocol.FamilyView) netip.Addr {
 	for _, t := range targets {
-		if ip := t.Addr().Unmap(); !privateAddr(ip) {
+		if ip := t.Addr().Unmap(); !netaddr.Private(ip) {
 			return ip
 		}
 	}
 	obs := fv.Traits.Observed.Addr().Unmap()
 	for _, e := range fv.Endpoints {
-		if e.Verified && e.Addr.Addr().Unmap() == obs && usableIP(obs) && !privateAddr(obs) {
+		if e.Verified && e.Addr.Addr().Unmap() == obs && netaddr.Public(obs) {
 			return obs
 		}
 	}
 	return netip.Addr{}
 }
-
-// usableTarget reports whether a can be the destination of a punch at all:
-// a usable IP with a port.
-func usableTarget(a netip.AddrPort) bool { return a.IsValid() && a.Port() != 0 && usableIP(a.Addr()) }
-
-// usableIP reports whether the client sends to ip at all: not
-// unspecified, multicast, the IPv4 broadcast or loopback, and not an IPv6
-// link-local address, which it cannot use without the zone it drops.
-func usableIP(ip netip.Addr) bool {
-	ip = ip.Unmap()
-	return ip.IsValid() && !ip.IsUnspecified() && !ip.IsLoopback() && !ip.IsMulticast() &&
-		ip != netip.AddrFrom4([4]byte{255, 255, 255, 255}) && !(ip.Is6() && ip.IsLinkLocalUnicast())
-}
-
-// privateAddr reports whether ip has LAN scope: RFC 1918 and ULA, link-local,
-// or the RFC 6598 shared space carrier-grade NATs use inside.
-func privateAddr(ip netip.Addr) bool {
-	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || sharedSpace.Contains(ip)
-}
-
-// reportedGlobal reports whether a self-reported address is one an
-// unverified family may aim at: global unicast and not private.
-func reportedGlobal(ip netip.Addr) bool { return ip.IsGlobalUnicast() && !privateAddr(ip) }
-
-// sharedSpace is RFC 6598's 100.64.0.0/10; a constant, never written.
-var sharedSpace = netip.PrefixFrom(netip.AddrFrom4([4]byte{100, 64, 0, 0}), 10)
 
 func containsIP(s []netip.AddrPort, ip netip.Addr) bool {
 	for _, a := range s {
@@ -368,7 +337,7 @@ type sideBuild struct {
 // of the session, or of the ladder an escalation switched to — carries the
 // plain-punching baseline (withBaseline), whatever rung it runs.
 // With a shared LAN the side also gets the LAN stage.
-func buildSideTemplate(in RoundInput, fp familyPlan, tmpl sideTmpl, vr variant, isSprayer bool, roleIdx int, blocked, single bool) sideBuild {
+func buildSideTemplate(in input, fp familyPlan, tmpl sideTmpl, vr variant, isSprayer bool, roleIdx int, blocked, single bool) sideBuild {
 	peerFV, _ := findFamily(in.Views[1-roleIdx], fp.Family)
 	peerTr := peerFV.Traits
 	pa := peerAddrsOf(fp, peerFV)
@@ -476,11 +445,11 @@ func stageTTL(st stageTmpl, ttlOK bool) uint8 {
 // no NAT lies between the two. It never shares a stage, and so its repeats,
 // with public targets. nil without a target.
 func lanStage(lan, overlay []netip.AddrPort) *protocol.Stage {
-	targets := append(slices.Clone(lan[:min(len(lan), maxLANTargets)]), overlay[:min(len(overlay), maxOverlayTargets)]...)
+	targets := append(slices.Clone(lan[:min(len(lan), protocol.MaxLANTargets)]), overlay[:min(len(overlay), protocol.MaxOverlayTargets)]...)
 	if len(targets) == 0 {
 		return nil
 	}
-	return &protocol.Stage{Kind: protocol.StageDirect, Targets: targets, Repeats: lanRepeats}
+	return &protocol.Stage{Kind: protocol.StageDirect, Targets: targets, Repeats: protocol.LANRepeats}
 }
 
 // lanPackets is what the LAN stage sends: each target its repeats, from the
@@ -519,7 +488,7 @@ const (
 // family's side is bounded by its own class; per role, the families share
 // the round class's sockets and packets (and the remaining session budget)
 // and the new-target bucket of the window.
-func buildSides(in RoundInput, picks []familyPick, roundClass protocol.BudgetClass) ([2][]protocol.FamilySide, time.Duration) {
+func buildSides(in input, picks []familyPick, roundClass protocol.BudgetClass) ([2][]protocol.FamilySide, time.Duration) {
 	roundLim, _ := roundClass.Limits()
 	sessB := protocol.TightenBudget(in.Policy.Budget)
 	nps := effNPS(in)
@@ -533,7 +502,7 @@ func buildSides(in RoundInput, picks []familyPick, roundClass protocol.BudgetCla
 		if !p.running() {
 			continue
 		}
-		fp := in.Class.fams[fi]
+		fp := in.fams[fi]
 		reqWinMs = max(reqWinMs, int(p.vr.windowMs))
 		sprayerRole := sprayerRoleIndex(p.vr, fp.SideA)
 		for role := range 2 {
@@ -552,7 +521,7 @@ func buildSides(in RoundInput, picks []familyPick, roundClass protocol.BudgetCla
 
 	var sides [2][]protocol.FamilySide
 	for role := range 2 {
-		sockCap := int(minU16(roundLim.MaxSockets, nonZeroU16(sessB.MaxSockets, roundLim.MaxSockets)))
+		sockCap := int(protocol.MinSet(roundLim.MaxSockets, cmp.Or(sessB.MaxSockets, roundLim.MaxSockets)))
 		pktCap := int(roundLim.MaxPackets)
 		if in.BudgetLeft[role] >= 0 {
 			pktCap = min(pktCap, in.BudgetLeft[role])
@@ -591,7 +560,7 @@ func buildSides(in RoundInput, picks []familyPick, roundClass protocol.BudgetCla
 		pktGrant := allocate(pktReq, pktCap)
 
 		for fi, p := range picks {
-			fam := in.Class.fams[fi].Family
+			fam := in.fams[fi].Family
 			if !p.running() {
 				sides[role] = append(sides[role], replyOnlySide(fam))
 				continue
@@ -669,8 +638,8 @@ func emitFamilySide(sb sideBuild, fam protocol.Family, lim protocol.ClassLimits,
 		SendDelayMs:      sb.sendDelayMs,
 		Sockets:          uint16(sockets),
 		MaxPackets:       uint32(packets),
-		MaxPPS:           minU16(sb.maxPPS, minU16(lim.MaxPPS, nonZeroU16(sessB.MaxPPS, lim.MaxPPS))),
-		MaxNewPerSec:     minU16(sb.newPerSec, uint16(effNPS0(sessB))),
+		MaxPPS:           protocol.MinSet(sb.maxPPS, protocol.MinSet(lim.MaxPPS, cmp.Or(sessB.MaxPPS, lim.MaxPPS))),
+		MaxNewPerSec:     protocol.MinSet(sb.newPerSec, uint16(effNPS0(sessB))),
 		MaxDistinctPorts: uint16(min(distinct, int(lim.MaxDistinctPorts))),
 		OpenPerSec:       sb.openPerSec,
 		Stages:           stages,
@@ -884,7 +853,7 @@ func roleNPS(nps int, picks []familyPick, builds [][2]sideBuild, role int) int {
 
 // effNPS is the new-targets-per-second rate: the ladder value capped by the
 // session budget.
-func effNPS(in RoundInput) int {
+func effNPS(in input) int {
 	return effNPS0(protocol.TightenBudget(in.Policy.Budget))
 }
 
@@ -916,21 +885,4 @@ func ceilDiv(a, b int) int {
 
 func clampInt(v, lo, hi int) int {
 	return min(max(v, lo), hi)
-}
-
-func minU16(a, b uint16) uint16 {
-	switch {
-	case a == 0:
-		return b
-	case b == 0:
-		return a
-	}
-	return min(a, b)
-}
-
-func nonZeroU16(v, def uint16) uint16 {
-	if v == 0 {
-		return def
-	}
-	return v
 }

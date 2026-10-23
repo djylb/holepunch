@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // sample returns a fresh copy of the sample message of type T.
@@ -100,8 +100,8 @@ func TestValidatePunchStart(t *testing.T) {
 		{"role_server", with(func(m *PunchStart) { m.Role = RoleServer }), false, "", "role"},
 		{"token_missing", with(func(m *PunchStart) { m.Token = Token{} }), false, "", "token"},
 		{"route_missing", with(func(m *PunchStart) { m.Wire.RouteID = RouteID{} }), false, "", "wire.route_id"},
-		{"control_version_below", with(func(m *PunchStart) { m.Control.Version = controlwire.Version - 1 }), false, ReasonControlVersionMismatch, "control.version"},
-		{"control_version_above", with(func(m *PunchStart) { m.Control.Version = controlwire.Version + 1 }), false, ReasonControlVersionMismatch, "control.version"},
+		{"control_version_below", with(func(m *PunchStart) { m.Control.Version = wiretype.Version - 1 }), false, ReasonControlVersionMismatch, "control.version"},
+		{"control_version_above", with(func(m *PunchStart) { m.Control.Version = wiretype.Version + 1 }), false, ReasonControlVersionMismatch, "control.version"},
 		{"features_16", with(func(m *PunchStart) { m.Control.Features = features(16) }), true, "", ""},
 		{"features_17", with(func(m *PunchStart) { m.Control.Features = features(17) }), false, "", "control.features"},
 		{"feature_unknown_ok", with(func(m *PunchStart) { m.Control.Features = []Feature{"future_thing"} }), true, "", ""},
@@ -759,5 +759,55 @@ func TestTimeoutsAndWire(t *testing.T) {
 		if got != tc.want || changed != (tc.in != tc.want) {
 			t.Errorf("%+v.Normalize() = %+v (changed %v), want %+v", tc.in, got, changed, tc.want)
 		}
+	}
+}
+
+// TestUsableEndpoint pins the wire rule for endpoints and the target rule
+// built on it for one corpus.
+func TestUsableEndpoint(t *testing.T) {
+	for _, c := range []struct {
+		addr         string
+		fam          Family
+		wire, anyFam bool
+		target       bool
+	}{
+		{"0.0.0.0", FamilyUDP4, false, false, false},
+		{"255.255.255.255", FamilyUDP4, true, true, false},
+		{"127.0.0.1", FamilyUDP4, true, true, false},
+		{"10.1.2.3", FamilyUDP4, true, true, true},
+		{"203.0.113.5", FamilyUDP4, true, true, true},
+		{"224.0.0.1", FamilyUDP4, false, false, false},
+		{"::", FamilyUDP6, false, false, false},
+		{"::1", FamilyUDP6, true, true, false},
+		{"fe80::1%eth0", FamilyUDP6, true, true, false},
+		{"fd00::1", FamilyUDP6, true, true, true},
+		{"ff02::1", FamilyUDP6, false, false, false},
+		{"2001:db8::1", FamilyUDP6, true, true, true},
+		{"2001:db8::1", FamilyUDP4, false, true, false},
+		{"::ffff:8.8.8.8", FamilyUDP4, false, false, false}, // never mapped on the wire
+		{"::ffff:8.8.8.8", FamilyUDP6, false, false, false},
+	} {
+		a := netip.AddrPortFrom(netip.MustParseAddr(c.addr), 40000)
+		if got := UsableEndpoint(c.fam, a); got != c.wire {
+			t.Errorf("UsableEndpoint(%s, %s) = %v", c.fam, c.addr, got)
+		}
+		if got := UsableEndpoint("", a); got != c.anyFam {
+			t.Errorf("UsableEndpoint(\"\", %s) = %v", c.addr, got)
+		}
+		if got := c.fam.UsableTarget(a); got != c.target {
+			t.Errorf("%s.UsableTarget(%s) = %v", c.fam, c.addr, got)
+		}
+		if (checkEndpoint("x", a, c.fam) == nil) != c.wire {
+			t.Errorf("checkEndpoint(%s, %s) disagrees", c.fam, c.addr)
+		}
+		if p := netip.AddrPortFrom(a.Addr(), 0); UsableEndpoint(c.fam, p) || c.fam.UsableTarget(p) {
+			t.Errorf("%s without a port", c.addr)
+		}
+	}
+}
+
+func TestFamilyIndex(t *testing.T) {
+	if FamilyUDP4.Index() != 0 || FamilyUDP6.Index() != 1 || Family("").Index() != 0 {
+		t.Fatal("Family.Index")
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func pub6(t *testing.T, n *Network, port uint16) (*Host, udp) {
+func pub6(t *testing.T, n *Network, port uint16) (*Host, Conn) {
 	t.Helper()
 	h := n.PublicHost(netip.IPv6Unspecified())
 	return h, listenOn(t, h, "udp6", netip.AddrPortFrom(h.Addrs()[0], port))

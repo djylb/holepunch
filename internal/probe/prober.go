@@ -11,6 +11,7 @@ import (
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/stun"
@@ -149,7 +150,7 @@ func New(spec Spec, primary SocketHandle, siblings []SocketHandle, openSecond fu
 		socks = append(socks, m)
 	}
 	for _, s := range siblings {
-		if len(p.siblings) == int(min(spec.Probe.Siblings, maxSiblings)) {
+		if len(p.siblings) == int(min(spec.Probe.Siblings, protocol.MaxSiblings)) {
 			break
 		}
 		m, ok := socketMeta(s, spec.Family, protocol.SocketSibling)
@@ -206,7 +207,7 @@ func (p *Prober) Deliver(sock uint8, from netip.AddrPort, h *udpwire.Header, t *
 	default:
 		return false
 	}
-	in := inbound{sock: sock, from: unmap(from), h: *h, at: at}
+	in := inbound{sock: sock, from: netaddr.Unmap(from), h: *h, at: at}
 	if t != nil {
 		in.t = *t
 	}
@@ -221,7 +222,7 @@ func (p *Prober) DeliverSTUN(sock uint8, from netip.AddrPort, pkt []byte, at tim
 	if p == nil || !p.active.Load() || sock != p.primaryID {
 		return false
 	}
-	from = unmap(from)
+	from = netaddr.Unmap(from)
 	if !slices.ContainsFunc(p.stunServers, func(sv stunServer) bool { return sv.addr == from }) {
 		return false
 	}
@@ -330,8 +331,4 @@ func ctxReason(ctx context.Context) (protocol.Reason, string) {
 		return protocol.ReasonInternal, "panic:" + pe.Where()
 	}
 	return protocol.ReasonCanceled, ""
-}
-
-func unmap(a netip.AddrPort) netip.AddrPort {
-	return netip.AddrPortFrom(a.Addr().Unmap(), a.Port())
 }

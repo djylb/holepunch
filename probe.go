@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
@@ -22,9 +21,6 @@ import (
 const (
 	probeSlack        = 500 * time.Millisecond // probing ends at probe_timeout_ms + 0.5 s
 	keepaliveInterval = 10 * time.Second       // mapping refresh while waiting for summary or go
-	maxLocalAddrs     = 16
-	maxOverlayAddrs   = 2 // FamilyReport.overlay
-	maxSiblings       = 2
 	implName          = "holepunch-go/1.0.0"
 )
 
@@ -39,7 +35,7 @@ type famState struct {
 	primary   *udpSock
 	siblings  []*udpSock
 	prober    atomic.Pointer[probe.Prober] // read by the read loops
-	observers []protocol.ObserverSpec      // main-group observers of this family, by id
+	observers []nat.Observer               // the prober's observers of this family without the alt ones, by id
 	mapping   *portMapping
 	mu        sync.Mutex
 	second    *udpSock
@@ -48,6 +44,13 @@ type famState struct {
 	bindErr   error
 
 	worker *worker // set at the summary
+}
+
+// table is the family's observation table, once probing produced one.
+func (f *famState) table() *nat.ObsTable {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.result.Table
 }
 
 func (f *famState) probeSockets() []*udpSock {
@@ -89,12 +92,11 @@ func (rt *runtime) probePhase() error {
 			continue
 		}
 		fs := rt.fam(f)
-		for _, o := range rt.start.Probe.Observers {
-			if f.Matches(o.Addr.Addr().Unmap()) && !o.Alt {
-				fs.observers = append(fs.observers, o)
-			}
-		}
-		slices.SortFunc(fs.observers, func(a, b protocol.ObserverSpec) int { return int(a.ID) - int(b.ID) })
+		// The prober's list under the same filter (nat.Observers), without
+		// the alt observers and ordered by id: every observer here is one the
+		// prober uses too.
+		fs.observers = slices.DeleteFunc(obs, func(o nat.Observer) bool { return o.Alt })
+		slices.SortFunc(fs.observers, func(a, b nat.Observer) int { return int(a.ID) - int(b.ID) })
 		fams = append(fams, fs)
 	}
 	if len(fams) == 0 {
@@ -142,19 +144,7 @@ func (rt *runtime) probePhase() error {
 	// The probers return at the latest when probeEnd cancels their ctx.
 	// Meanwhile the control link is watched: a failure, an abort or a fault
 	// ends the session now rather than after probing.
-	var early error
-	select {
-	case <-done:
-	case <-rt.ctl.conn.Done():
-		early = rt.ctl.lost()
-	case ab := <-rt.ctl.abortCh:
-		early = abortFailure(ab.msg)
-	case f := <-rt.ctl.faultCh:
-		early = f
-	case <-ctx.Done():
-		early = context.Cause(ctx)
-	}
-	if early != nil {
+	if _, _, early := waitControl(rt.ctl, ctx, done, nil, nil); early != nil {
 		pcancel()
 		<-done
 		return early
@@ -198,7 +188,7 @@ func (rt *runtime) bindProbeSockets(ctx context.Context, fs *famState) bool {
 		return false
 	}
 	fs.primary = s
-	want := min(int(rt.start.Probe.Siblings), maxSiblings)
+	want := min(int(rt.start.Probe.Siblings), protocol.MaxSiblings)
 	idx := nat.IndexSibling
 	for _, h := range rt.hosts {
 		if len(fs.siblings) >= want {
@@ -331,12 +321,7 @@ func (rt *runtime) writeReport(bound, unprobed []*famState) error {
 		Transport: protocol.Transport{Mode: rt.opts.TransportMode, Data: rt.opts.TransportData},
 		Mode:      acceptedMode(rt.start.Mode, rt.opts.AcceptBackground),
 	}
-	startAt := rt.startAt
-	if err := rt.ctl.sendBuilt(controlwire.TypeProbeReport, func(now time.Time) protocol.Message {
-		r := rep
-		r.ElapsedMs = elapsedMs(startAt, now)
-		return r
-	}); err != nil {
+	if err := sendElapsed(rt.ctl, rep, rt.startAt, func(r *protocol.ProbeReport, ms uint32) { r.ElapsedMs = ms }); err != nil {
 		return rt.ctl.sendFailure("probe_report", err)
 	}
 	rt.timing.probe = rt.clk.Now().Sub(rt.startAt)
@@ -416,10 +401,26 @@ func (rt *runtime) sendKeepalive() {
 		if len(fs.observers) == 0 {
 			continue
 		}
-		obs := fs.observers[0]
 		for _, s := range fs.probeSockets() {
-			h := udpwire.Header{Type: udpwire.TProbe, Cand: udpwire.NoCand, Aux: uint16(obs.ID)}
-			_ = rt.sender.Send(ctx, s, netaddr.Canon(obs.Addr), &h, nil, sendOpt{class: classProbe, stage: txProbe})
+			rt.probeObserver(ctx, s, fs.observers[0], 0, nil)
 		}
 	}
+}
+
+// sandwichTag marks a probe with the SANDWICH TLV: the round and phase of a
+// sandwich or refresh probe.
+type sandwichTag struct{ round, phase uint8 }
+
+// probeObserver sends one probe without WANT flags from s to the natprobe
+// observer obs through the gate's probe class (natprobe counts it against
+// the session's probe budget): seq is the probe's, 0 for the next one; sw,
+// when set, marks it as a sandwich or refresh probe.
+func (rt *runtime) probeObserver(ctx context.Context, s *udpSock, obs nat.Observer, seq uint32, sw *sandwichTag) {
+	h := udpwire.Header{Type: udpwire.TProbe, Seq: seq, Cand: udpwire.NoCand, Aux: uint16(obs.ID)}
+	var t *udpwire.TLVs
+	if sw != nil {
+		t = &udpwire.TLVs{}
+		t.Sandwich.Round, t.Sandwich.Phase, t.Sandwich.Set = sw.round, sw.phase, true
+	}
+	_ = rt.sender.Send(ctx, s, netaddr.Canon(obs.Addr), &h, t, sendOpt{class: classProbe, stage: txProbe})
 }

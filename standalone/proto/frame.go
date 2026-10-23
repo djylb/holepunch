@@ -13,7 +13,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/standalone/internal/life"
 )
 
 const (
@@ -116,7 +116,8 @@ func newMessage(t Type) Message {
 	return nil
 }
 
-// Encode validates m and returns its frame.
+// Encode validates m and returns its frame: version, type, and the payload
+// as AppendJSON writes it.
 func Encode(m Message) ([]byte, error) {
 	if life.IsNil(m) {
 		return nil, fmt.Errorf("%w: nil message", ErrInvalid)
@@ -124,29 +125,17 @@ func Encode(m Message) ([]byte, error) {
 	if err := m.validate(); err != nil {
 		return nil, err
 	}
-	// The payload follows the header in the same buffer. HTML escaping is
-	// off: it would grow '<', '>' and '&' sixfold, and a message that carries
-	// a peer's metadata must fit MaxPayload whatever characters it holds.
-	var buf bytes.Buffer
-	buf.Write([]byte{Version, byte(m.Type()), 0, 0})
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(m); err != nil {
+	frame, err := AppendJSON([]byte{Version, byte(m.Type())}, m, MaxPayload)
+	if err != nil {
 		return nil, fmt.Errorf("proto: encode %v: %w", m.Type(), err)
 	}
-	frame := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
-	n := len(frame) - HeaderSize
-	if n > MaxPayload {
-		return nil, fmt.Errorf("%w: %v of %d bytes", ErrTooLarge, m.Type(), n)
-	}
-	binary.BigEndian.PutUint16(frame[2:], uint16(n))
 	return frame, nil
 }
 
 // Decode reads exactly one frame from r — never a byte more — and returns its
 // validated message.
 func Decode(r io.Reader) (Message, error) {
-	var hdr [HeaderSize]byte
+	var hdr [HeaderSize - 2]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return nil, err
 	}
@@ -158,17 +147,86 @@ func Decode(r io.Reader) (Message, error) {
 	if m == nil {
 		return nil, fmt.Errorf("%w: %d", ErrType, hdr[1])
 	}
-	payload, err := readPayload(r, int(binary.BigEndian.Uint16(hdr[2:])))
-	if err != nil {
+	if err := readJSON(r, m, MaxPayload); err != nil {
+		var je jsonError
+		if errors.As(err, &je) {
+			return nil, fmt.Errorf("%w: %v: %v", ErrInvalid, t, je.err)
+		}
 		return nil, unexpectedEOF(err)
-	}
-	if err := json.Unmarshal(payload, m); err != nil {
-		return nil, fmt.Errorf("%w: %v: %v", ErrInvalid, t, err)
 	}
 	if err := m.validate(); err != nil {
 		return nil, err
 	}
 	return m, nil
+}
+
+// AppendJSON appends v to dst as a big-endian uint16 length and v's JSON,
+// HTML escaping off: it would grow '<', '>' and '&' sixfold, and a message
+// that carries a peer's metadata must fit its bound whatever characters it
+// holds. JSON longer than limit (at most MaxPayload) is ErrTooLarge.
+func AppendJSON(dst []byte, v any, limit int) ([]byte, error) {
+	start := len(dst)
+	buf := bytes.NewBuffer(append(dst, 0, 0))
+	enc := json.NewEncoder(buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return dst, err
+	}
+	frame := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	n := len(frame) - start - 2
+	if limit = min(limit, MaxPayload); n > limit {
+		return dst, fmt.Errorf("%w: %d bytes > %d", ErrTooLarge, n, limit)
+	}
+	binary.BigEndian.PutUint16(frame[start:], uint16(n))
+	return frame, nil
+}
+
+// WriteJSON writes v as AppendJSON encodes it, in one Write.
+func WriteJSON(w io.Writer, v any, limit int) error {
+	b, err := AppendJSON(nil, v, limit)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(b)
+	return err
+}
+
+// ReadJSON reads exactly what WriteJSON writes — never a byte more — and
+// decodes the JSON into v. A length above limit is ErrTooLarge and JSON
+// that does not decode into v wraps ErrInvalid; the reader's own errors are
+// returned as they are, so a stream that ends before the length is io.EOF.
+func ReadJSON(r io.Reader, v any, limit int) error {
+	err := readJSON(r, v, limit)
+	var je jsonError
+	if errors.As(err, &je) {
+		return fmt.Errorf("%w: %w", ErrInvalid, je.err)
+	}
+	return err
+}
+
+// jsonError is a payload that did not decode.
+type jsonError struct{ err error }
+
+func (e jsonError) Error() string { return e.err.Error() }
+
+// readJSON is ReadJSON with a payload that does not decode as a jsonError.
+func readJSON(r io.Reader, v any, limit int) error {
+	var hdr [2]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return err
+	}
+	n := int(binary.BigEndian.Uint16(hdr[:]))
+	if n > limit {
+		return fmt.Errorf("%w: %d bytes > %d", ErrTooLarge, n, limit)
+	}
+	payload, err := readPayload(r, n)
+	if err != nil {
+		return unexpectedEOF(err)
+	}
+	if err := json.Unmarshal(payload, v); err != nil {
+		return jsonError{err}
+	}
+	return nil
 }
 
 // readPayload reads an n-byte payload. Its buffer grows with the bytes

@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // MessageType is the type byte of a control frame. The twelve types are
@@ -14,28 +14,28 @@ type MessageType uint8
 
 // The twelve message types.
 const (
-	MsgPunchStart   = MessageType(1)  // S→C
-	MsgProbeReport  = MessageType(2)  // C→S
-	MsgProbeSummary = MessageType(3)  // S→C
-	MsgPunchReady   = MessageType(4)  // C→S
-	MsgPunchGo      = MessageType(5)  // S→C
-	MsgProgress     = MessageType(6)  // C→S, telemetry only
-	MsgAssist       = MessageType(7)  // C→S→C and S→C
-	MsgAbort        = MessageType(8)  // S→C only
-	MsgPing         = MessageType(9)  // S→C
-	MsgPong         = MessageType(10) // C→S
-	MsgRoundResult  = MessageType(11) // C→S
-	MsgPunchResult  = MessageType(12) // C→S
+	MsgPunchStart   = MessageType(wiretype.PunchStart)   // S→C
+	MsgProbeReport  = MessageType(wiretype.ProbeReport)  // C→S
+	MsgProbeSummary = MessageType(wiretype.ProbeSummary) // S→C
+	MsgPunchReady   = MessageType(wiretype.PunchReady)   // C→S
+	MsgPunchGo      = MessageType(wiretype.PunchGo)      // S→C
+	MsgProgress     = MessageType(wiretype.Progress)     // C→S, telemetry only
+	MsgAssist       = MessageType(wiretype.Assist)       // C→S→C and S→C
+	MsgAbort        = MessageType(wiretype.Abort)        // S→C only
+	MsgPing         = MessageType(wiretype.Ping)         // S→C
+	MsgPong         = MessageType(wiretype.Pong)         // C→S
+	MsgRoundResult  = MessageType(wiretype.RoundResult)  // C→S
+	MsgPunchResult  = MessageType(wiretype.PunchResult)  // C→S
 )
 
 // String is the wire name of the type ("punch_go"), or "type(N)".
-func (t MessageType) String() string { return controlwire.Type(t).String() }
+func (t MessageType) String() string { return wiretype.Type(t).String() }
 
 // MaxPayload is the type's payload cap.
-func (t MessageType) MaxPayload() int { return controlwire.Type(t).Cap() }
+func (t MessageType) MaxPayload() int { return wiretype.Type(t).Cap() }
 
 // Known reports whether t is one of the twelve message types.
-func (t MessageType) Known() bool { return controlwire.Type(t).Known() }
+func (t MessageType) Known() bool { return wiretype.Type(t).Known() }
 
 // Message is implemented by the twelve message types (values and pointers).
 // Each type also has a Normalize method, which returns the message with the

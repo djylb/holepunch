@@ -13,9 +13,10 @@ import (
 	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/internal/plan"
+	engine "github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -288,11 +289,11 @@ func (ps *pairScript) run(ctx context.Context, ends [2]net.Conn) error {
 			return fmt.Errorf("%s failed probing: %s", roles[i], pr.Reason)
 		}
 		reports[i] = *rep
-		v, _, err := s.h.Merge(roles[i], *rep, nil, "", false)
+		res, err := s.h.Merge(roles[i], *rep, nil, "", false)
 		if err != nil {
 			return err
 		}
-		views[i] = v
+		views[i] = res.View
 	}
 	pair := pairFacts(views)
 	if ps.pair != nil {
@@ -457,11 +458,11 @@ func (ps *pairScript) roundPlan(k int, r protocol.Role, views [2]protocol.PeerVi
 // plannerPlan is the DefaultPlanner's plan of role r in round k for the two
 // merged views and the pair facts.
 func (ps *pairScript) plannerPlan(k int, r protocol.Role, views [2]protocol.PeerView, pair protocol.PairFacts) protocol.RoundPlan {
-	var pl plan.DefaultPlanner
+	var pl engine.DefaultPlanner
 	pol := protocol.Policy{Budget: protocol.DefaultBudget()}
 	cls := pl.Classify(plan.ClassifyInput{Initiator: views[0], Responder: views[1], Policy: pol, Timeouts: ps.timeouts, Pair: pair})
 	dec := pl.Round(plan.RoundInput{
-		Round: k, Class: cls, Views: views, Policy: pol, MaxRounds: int(ps.timeouts.MaxRounds),
+		Round: k, Class: cls, Views: views, Pair: pair, Policy: pol, MaxRounds: int(ps.timeouts.MaxRounds),
 		Remaining: 3 * time.Second, D: 100 * time.Millisecond, BudgetLeft: [2]int{3000, 3000},
 		HandshakeMs: ps.timeouts.HandshakeTimeoutMs,
 	})
@@ -471,9 +472,8 @@ func (ps *pairScript) plannerPlan(k int, r protocol.Role, views [2]protocol.Peer
 
 // directPlan is a plain direct round on the peer's verified endpoints.
 func directPlan(k int, r protocol.Role, views [2]protocol.PeerView) protocol.RoundPlan {
-	peer := views[1-roleIndex(r)]
 	var targets []netip.AddrPort
-	for _, f := range peer.Families {
+	for _, f := range peerOf(r, views).Families {
 		for _, e := range f.Endpoints {
 			if e.Verified && len(targets) < 8 {
 				targets = append(targets, e.Addr)

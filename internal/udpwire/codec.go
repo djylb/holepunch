@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/djylb/holepunch/internal/netaddr"
 )
 
 // Codec seals and opens one session's packets for one role. Clients create it
@@ -126,7 +128,7 @@ func (c *Codec) Now() uint32 {
 func (c *Codec) BindPeers(ps ...netip.AddrPort) {
 	set := make([]netip.AddrPort, len(ps))
 	for i, p := range ps {
-		set[i] = canonical(p)
+		set[i] = netaddr.Canon(p)
 	}
 	c.peers.Store(&set)
 }

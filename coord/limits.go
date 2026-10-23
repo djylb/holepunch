@@ -183,7 +183,7 @@ func busyError(dim string, wait time.Duration) error {
 
 // reserve admits a new session: per key the initiator concurrency and rate
 // and the responder concurrency (both keys are reserved before the
-// provider is told), then the global count, pending count and rate. It is
+// responder is told), then the global count, pending count and rate. It is
 // all or nothing — a refusal takes no rate token either; on refusal it
 // returns the refused dimension and an ErrBusy error.
 func (l *limiter) reserve(now time.Time, keys [2]string) (q quota, dim string, err error) {

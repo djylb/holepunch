@@ -30,7 +30,6 @@ const (
 	maxSandwichQueue     = 1024
 	defaultTTL           = 60 * time.Second // the library's fallback; coord passes BindTimeout+probe+ReportSlack+5 s
 	shardCount           = 64
-	maxSessionID         = 64 // protocol session ids are 1..64 bytes
 	fullSweepGap         = time.Second
 )
 
@@ -136,7 +135,7 @@ func (r *Registry) lookup(route protocol.RouteID) *entry {
 // register registers reg and returns its handle:
 //   - the same SessionID, route and token as a live entry: an idempotent
 //     renewal to max(old, now+TTL) and a new Handle on the same entry, with
-//     the observations kept, so a visitor that probes before the provider
+//     the observations kept, so an initiator that probes before the responder
 //     joins loses nothing;
 //   - the route is held by another session: ErrRouteInUse;
 //   - the same route and SessionID with another token: ErrConflict;
@@ -152,7 +151,7 @@ func (r *Registry) register(reg nat.Registration) (*handle, error) {
 		return nil, errors.New("natprobe: nil registry")
 	}
 	switch {
-	case reg.SessionID == "" || len(reg.SessionID) > maxSessionID:
+	case reg.SessionID == "" || len(reg.SessionID) > protocol.MaxSessionID:
 		return nil, fmt.Errorf("natprobe: invalid registration: session id of %d bytes", len(reg.SessionID))
 	case reg.Route.IsZero():
 		return nil, errors.New("natprobe: invalid registration: zero route")

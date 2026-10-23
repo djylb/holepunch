@@ -13,6 +13,8 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/probetest"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -55,7 +57,7 @@ func TestLoadManySessions(t *testing.T) {
 				sock := nat.SocketID(l.fam, nat.IndexPrimary)
 				// 7 probes per family: 3 observers, retransmissions and keepalives
 				for range perFamily/3 + boolInt(li < 2*(perFamily%3)) {
-					work[li] = append(work[li], job{pkt: c.probe(probeOpts{sock: sock, obs: l.id, extra: true}), src: src})
+					work[li] = append(work[li], job{pkt: c.probe(probetest.Probe{Sock: sock, Obs: l.id, Extra: true}), src: src})
 				}
 			}
 		}
@@ -114,7 +116,7 @@ func TestLoadManySessions(t *testing.T) {
 		t.Fatalf("stats %+v of %d", st, total)
 	}
 	switch limit := time.Millisecond; {
-	case raceEnabled: // the race detector slows every probe too much for a latency bound
+	case testkit.RaceEnabled: // the race detector slows every probe too much for a latency bound
 	case p99 > limit:
 		t.Fatalf("p99 %v > %v", p99, limit)
 	}
@@ -144,7 +146,7 @@ func TestRepliesHaveNoConstantByte(t *testing.T) {
 	route := rt(1)
 	var acks [][]byte
 	for range 1000 {
-		out := r.deliver(0, c.probe(probeOpts{}), srcA)
+		out := r.deliver(0, c.probe(probetest.Probe{}), srcA)
 		if len(out) != 1 {
 			t.Fatalf("%d replies", len(out))
 		}

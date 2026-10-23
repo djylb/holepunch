@@ -82,11 +82,12 @@ func (h *eventHeap) pop() event {
 	return e
 }
 
-// scheduler runs the events of one Network in time order. On a clock other
-// than *clock.Fake it is one goroutine, started with life.Group.Go, that
-// sleeps on a clock timer until the earliest event is due. On a *clock.Fake
-// it starts no goroutine: a single AfterFunc timer, re-armed for the earliest
-// event, runs the due events on the goroutine that advances the Fake.
+// scheduler runs the events of one Network in time order. On a clock that is
+// not manual (manualClock) it is one goroutine, started with life.Group.Go,
+// that sleeps on a clock timer until the earliest event is due. On a manual
+// clock it starts no goroutine: a single AfterFunc timer, re-armed for the
+// earliest event, runs the due events on the goroutine that advances the
+// clock.
 type scheduler struct {
 	timer     clock.Timer // manual only, created on first use
 	n         *Network
@@ -100,9 +101,24 @@ type scheduler struct {
 	closed    bool
 }
 
+// manualClock is a clock that moves only when a test advances it, as
+// *clock.Fake does: its timers fire on the advancing goroutine. A clock that
+// wraps a Fake is manual when it keeps the Fake's AdvanceTo; one that hides
+// it is driven like a real clock, by the scheduler goroutine.
+type manualClock interface {
+	clock.Clock
+	AdvanceTo(target time.Time) int
+}
+
+// isManual reports whether c is a manualClock.
+func isManual(c clock.Clock) bool {
+	_, ok := c.(manualClock)
+	return ok
+}
+
 func newScheduler(n *Network) *scheduler {
 	s := &scheduler{n: n}
-	if _, ok := n.clock.(*clock.Fake); ok {
+	if isManual(n.clock) {
 		s.manual = true
 		return s
 	}

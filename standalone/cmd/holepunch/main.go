@@ -41,12 +41,7 @@ func runHost(args []string) error {
 		return errors.New("-id and at least one -target are required")
 	}
 	log := cli.Logger(cf.Debug)
-	cfg, cleanup, err := cf.Config(log)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	c, err := client.New(cfg)
+	c, err := cf.NewClient(log)
 	if err != nil {
 		return err
 	}
@@ -54,7 +49,7 @@ func runHost(args []string) error {
 	ctx, stop := cli.SignalContext()
 	defer stop()
 	log.Info("serving", "id", id, "targets", targets)
-	return quicforward.Serve(ctx, c, client.Registration{HostID: id}, quicforward.HostConfig{Targets: targets, Logger: log})
+	return quicforward.Serve(ctx, c.Client, client.Registration{HostID: id}, quicforward.HostConfig{Targets: targets, Logger: log})
 }
 
 func runConnect(args []string) error {
@@ -75,12 +70,7 @@ func runConnect(args []string) error {
 		return errors.New("-id is required")
 	}
 	log := cli.Logger(cf.Debug)
-	cfg, cleanup, err := cf.Config(log)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	c, err := client.New(cfg)
+	c, err := cf.NewClient(log)
 	if err != nil {
 		return err
 	}
@@ -92,7 +82,7 @@ func runConnect(args []string) error {
 	ctx, stop := cli.SignalContext()
 	defer stop()
 	log.Info("forwarding", "listen", l.Addr(), "host", id, "target", tgt)
-	return quicforward.Connect(ctx, c, quicforward.ConnectConfig{
+	return quicforward.Connect(ctx, c.Client, quicforward.ConnectConfig{
 		Open: client.OpenRequest{HostID: id, DialerID: dialerID}, Listener: l, Target: tgt, Logger: log,
 	})
 }

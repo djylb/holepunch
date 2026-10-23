@@ -7,12 +7,6 @@ import (
 	"github.com/djylb/holepunch/protocol"
 )
 
-// Report bounds (protocol: rows per socket, STUN rows).
-const (
-	maxReportRows = 16
-	maxReportSTUN = 8
-)
-
 // Snapshot returns the family's probe_report entry as far as the table knows
 // it: the family; each socket with a concrete
 // local address and one row per probed server observer (first value, first
@@ -25,12 +19,12 @@ func (t *ObsTable) Snapshot() protocol.FamilyReport {
 	defer t.mu.Unlock()
 	fr := protocol.FamilyReport{Family: t.family, Sockets: []protocol.SocketReport{}}
 	for _, s := range t.sockets {
-		if !usableIn(t.family, s.Local) {
+		if !protocol.UsableEndpoint(t.family, s.Local) {
 			continue
 		}
 		sr := protocol.SocketReport{ID: s.ID, Kind: s.Kind, Local: s.Local, Rows: []protocol.RowReport{}}
 		for _, k := range t.pointKeysLocked(s.ID, SourceServer, SourceServerAlt) {
-			if len(sr.Rows) == maxReportRows {
+			if len(sr.Rows) == protocol.MaxReportRows {
 				break
 			}
 			sr.Rows = append(sr.Rows, t.rowReportLocked(k))
@@ -39,7 +33,7 @@ func (t *ObsTable) Snapshot() protocol.FamilyReport {
 	}
 	for _, s := range t.sockets {
 		for _, k := range t.pointKeysLocked(s.ID, SourceSTUN) {
-			if rr := t.rowReportLocked(k); rr.Observed.IsValid() && len(fr.STUN) < maxReportSTUN {
+			if rr := t.rowReportLocked(k); rr.Observed.IsValid() && len(fr.STUN) < protocol.MaxReportSTUNRows {
 				fr.STUN = append(fr.STUN, rr)
 			}
 		}

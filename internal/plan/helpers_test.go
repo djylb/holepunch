@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -112,8 +113,8 @@ func dual(tr4, tr6 protocol.Traits) protocol.PeerView {
 	return protocol.PeerView{Families: append(view(tr6).Families, view(tr4).Families...)}
 }
 
-func classifyInput(initTr, respTr protocol.Traits) ClassifyInput {
-	return ClassifyInput{
+func classifyInput(initTr, respTr protocol.Traits) api.ClassifyInput {
+	return api.ClassifyInput{
 		Initiator: view(initTr),
 		Responder: view(respTr),
 		Pair:      protocol.PairFacts{SharedFamilies: []protocol.Family{initTr.Family}},
@@ -122,8 +123,8 @@ func classifyInput(initTr, respTr protocol.Traits) ClassifyInput {
 	}
 }
 
-func roundInput(cl Classification, initTr, respTr protocol.Traits, round int, prev []RoundOutcome) RoundInput {
-	return RoundInput{
+func roundInput(cl api.Classification, initTr, respTr protocol.Traits, round int, prev []api.RoundOutcome) api.RoundInput {
+	return api.RoundInput{
 		Round:       round,
 		Class:       cl,
 		Prev:        prev,
@@ -141,9 +142,9 @@ func roundInput(cl Classification, initTr, respTr protocol.Traits, round int, pr
 // chain runs the planner for up to n rounds, feeding each decision's actual
 // granted Budget back into the next round's Prev (so the escalation guard sees
 // the real class). class is the RoundClass to report for each round.
-func chain(p DefaultPlanner, cl Classification, a, b protocol.Traits, n int, allowExtreme bool, class RoundClass, mut func(*RoundInput)) []RoundDecision {
-	var prev []RoundOutcome
-	var out []RoundDecision
+func chain(p DefaultPlanner, cl api.Classification, a, b protocol.Traits, n int, allowExtreme bool, class api.RoundClass, mut func(*api.RoundInput)) []api.RoundDecision {
+	var prev []api.RoundOutcome
+	var out []api.RoundDecision
 	for round := 1; round <= n; round++ {
 		in := roundInput(cl, a, b, round, prev)
 		in.AllowExtreme = allowExtreme
@@ -156,7 +157,7 @@ func chain(p DefaultPlanner, cl Classification, a, b protocol.Traits, n int, all
 		if dec.Stop != "" {
 			break
 		}
-		prev = append(prev, RoundOutcome{Round: round, Variant: dec.Variant, Class: class, Rescue: dec.Rescue, Budget: dec.Budget})
+		prev = append(prev, api.RoundOutcome{Round: round, Variant: dec.Variant, Class: class, Rescue: dec.Rescue, Budget: dec.Budget})
 		if dec.Final {
 			break
 		}
@@ -189,8 +190,8 @@ type mappingLedger map[protocol.Family]*[2]map[netip.AddrPort]int
 // class: the decision's families, each side's Mapped counted from its plan
 // as the coordinator counts it (SideMappings; no peer_targets, sandwich or
 // re-observation here).
-func (l mappingLedger) outcome(round int, dec RoundDecision, class RoundClass) RoundOutcome {
-	o := RoundOutcome{Round: round, Variant: dec.Variant, Class: class, Rescue: dec.Rescue, Budget: dec.Budget,
+func (l mappingLedger) outcome(round int, dec api.RoundDecision, class api.RoundClass) api.RoundOutcome {
+	o := api.RoundOutcome{Round: round, Variant: dec.Variant, Class: class, Rescue: dec.Rescue, Budget: dec.Budget,
 		Families: slices.Clone(dec.Families)}
 	for i := range o.Families {
 		f := o.Families[i].Family
@@ -220,7 +221,7 @@ func (l mappingLedger) outcome(round int, dec RoundDecision, class RoundClass) R
 
 // sandwichOf reports, by role, whether any family side of dec runs the
 // sandwich probe.
-func sandwichOf(dec RoundDecision) [2]bool {
+func sandwichOf(dec api.RoundDecision) [2]bool {
 	var out [2]bool
 	for r, sides := range dec.Sides {
 		for _, fs := range sides {
@@ -228,4 +229,17 @@ func sandwichOf(dec RoundDecision) [2]bool {
 		}
 	}
 	return out
+}
+
+// famsOf is the per-family classification Classify reports for in.
+func famsOf(in api.ClassifyInput) []familyPlan {
+	return familyPlans([2]protocol.PeerView{in.Initiator, in.Responder}, in.Measured, in.Pair, in.Policy, in.Mode)
+}
+
+// classified gives a round input the classification input's facts that
+// Round reads alongside the classification: the measured views, the pair
+// facts and the session mode.
+func classified(in api.RoundInput, cin api.ClassifyInput) api.RoundInput {
+	in.Measured, in.Pair, in.Mode = cin.Measured, cin.Pair, cin.Mode
+	return in
 }

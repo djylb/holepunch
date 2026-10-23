@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
-	"github.com/djylb/holepunch/internal/plan"
+	engine "github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -38,8 +39,8 @@ type refreshState struct {
 	want    [2][2]bool    // by side and family index
 	got     [2][2][2]refreshProbe
 	d       decision // the plan before the refresh, kept if nothing came
-	p       Planner
-	cin     ClassifyInput
+	p       plan.Planner
+	cin     plan.ClassifyInput
 	// asked are the refreshes of round k, which made two mappings each
 	// (Mapped).
 	asked [2][2]bool
@@ -67,25 +68,26 @@ const (
 	refreshProbes  = 2
 )
 
-// beginRefreshLocked starts the anchor refresh of round k when its plan d
-// wants one (plan.RefreshWanted) and the coordinator can have it: a
+// beginRefreshLocked starts the anchor refresh of round t.k when its plan d
+// wants one (engine.RefreshWanted) and the coordinator can have it: a
 // natprobe registration with two probes left for the side, a live link, the
 // handshake time for the wait and the round's window — the final round
 // included — the assist channel the request travels on (not
 // under NoAssistRelay) and the mechanism itself (not under NoRefresh).
 // It sends the requests, keeps d and its inputs for planning the
 // round again, and reports whether the round now waits.
-func (s *Session) beginRefreshLocked(k int, gen uint64, d decision, cin ClassifyInput, in RoundInput, now time.Duration) bool {
+func (s *Session) beginRefreshLocked(t planTicket, d decision, cin plan.ClassifyInput, in plan.RoundInput, now time.Duration) bool {
 	st := &s.st
 	a := align([2]*rttEstimator{&st.rtt[0], &st.rtt[1]}, s.ablate.NoRTTAlign)
 	wait := min(refreshGap+max(a.rtt[0], a.rtt[1], s.udpRTTLocked(0), s.udpRTTLocked(1))+refreshSlack, maxRefreshWait)
 	if !d.ok || d.dec.Stop != "" || s.handle == nil || s.ablate.NoAssistRelay || s.ablate.NoRefresh || s.remainingLocked(now) < wait+d.dec.Window {
 		return false
 	}
-	wanted := plan.RefreshWanted(in, d.dec, now-s.regAt)
+	wanted := engine.RefreshWanted(in, d.dec, now-s.regAt)
 	// The round is planned again by d's planner: the default one when the
 	// planner panicked deciding it.
-	rf := refreshState{k: k, gen: gen, d: d, p: d.planner, cin: cin}
+	k := t.k
+	rf := refreshState{k: k, gen: t.gen, d: d, p: d.planner, cin: cin}
 	asked := false
 	for r, fams := range wanted {
 		l := st.links[r]
@@ -97,7 +99,7 @@ func (s *Session) beginRefreshLocked(k int, gen uint64, d decision, cin Classify
 			if l.send(req) != nil {
 				continue
 			}
-			rf.want[r][famIndex(f)], asked = true, true
+			rf.want[r][f.Index()], asked = true, true
 			st.ctr.Refreshes++
 		}
 	}
@@ -122,7 +124,7 @@ func (s *Session) beginRefreshLocked(k int, gen uint64, d decision, cin Classify
 func (s *Session) refreshEventLocked(ev nat.SandwichEvent, now time.Duration) {
 	rf := &s.st.refresh
 	r, ok := roleIndex(ev.Role)
-	fi := famIndex(protocol.FamilyOf(ev.Observed.Addr()))
+	fi := protocol.FamilyOf(ev.Observed.Addr()).Index()
 	if !ok || !rf.pending || int(ev.Round) != rf.k || !rf.want[r][fi] {
 		return
 	}
@@ -163,7 +165,7 @@ func (s *Session) refreshWaitLocked(now time.Duration) {
 // (PairFacts.ProbeRTTMs, the fastest probe of its report), or its control
 // link's when the report had none.
 func (s *Session) udpRTTLocked(r int) time.Duration {
-	if ms := s.st.pair.ProbeRTTMs[roleOf(r)]; ms > 0 {
+	if ms := s.st.adm.pair.ProbeRTTMs[roleOf(r)]; ms > 0 {
 		return time.Duration(ms) * time.Millisecond
 	}
 	a := align([2]*rttEstimator{&s.st.rtt[0], &s.st.rtt[1]}, s.ablate.NoRTTAlign)
@@ -208,49 +210,27 @@ func (s *Session) refreshInputLocked() [2][]plan.AnchorRefresh {
 // the re-aimed windows into the go its readies wait for, a later round
 // starts. The refresh stays ready until then, which holds round 1's go.
 func (s *Session) afterRefresh() {
-	var (
-		rf    refreshState
-		in    RoundInput
-		ok    bool
-		found bool
-	)
-	now := s.since(s.c.set.clock.Now())
-	func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
+	offLock(s, func(now time.Duration) (planTicket, roundJob, bool) {
 		st := &s.st
-		if !st.refresh.ready || st.refresh.gen != st.gen {
-			return
+		rf := &st.refresh
+		if !rf.ready || rf.gen != st.plan.gen {
+			return planTicket{}, roundJob{}, false
 		}
 		// The round's input as of now: it fires later than first planned.
-		rf, in, ok = st.refresh, s.roundInputLocked(st.refresh.k, now), true
-		in.Refresh = s.refreshInputLocked()
-		found = len(in.Refresh[0])+len(in.Refresh[1]) > 0
-	}()
-	if !ok {
-		return
-	}
-	d := rf.d
-	if found {
-		d = s.decide(rf.p, rf.cin, in)
-	}
-	nowT := s.c.set.clock.Now()
-	var fx effects
-	func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		st := &s.st
-		if !st.refresh.ready || st.refresh.gen != rf.gen || st.refresh.k != rf.k {
-			return
+		j := roundJob{p: rf.p, cin: rf.cin, in: s.roundInputLocked(rf.k, now)}
+		j.in.Refresh = s.refreshInputLocked()
+		if len(j.in.Refresh[0])+len(j.in.Refresh[1]) == 0 {
+			keep := rf.d
+			j.keep = &keep
 		}
-		st.refresh.ready = false
-		if rf.k == 1 {
-			fx = s.reanchorRound1Locked(rf.gen, d, found, nowT)
-			return
+		return s.ticketLocked(rf.k, true), j, true
+	}, s.decideJob, func(t planTicket, j roundJob, d decision, now time.Time) effects {
+		s.st.refresh.ready = false
+		if t.k == 1 {
+			return s.reanchorRound1Locked(d, j.keep == nil, now)
 		}
-		fx = s.applyRoundLocked(rf.gen, rf.k, d, nowT)
-	}()
-	s.apply(fx)
+		return s.applyRoundLocked(t.k, d, now)
+	})
 }
 
 // reanchorRound1Locked re-aims round 1 with the plan d made from its
@@ -259,20 +239,17 @@ func (s *Session) afterRefresh() {
 // having bound their sockets for the summaries' plans; then, when both
 // readies are in, the go leaves. A failed or stopping plan leaves the
 // summaries' plans as they are: the round was granted with them.
-func (s *Session) reanchorRound1Locked(gen uint64, d decision, found bool, nowT time.Time) effects {
+func (s *Session) reanchorRound1Locked(d decision, found bool, nowT time.Time) effects {
 	st := &s.st
 	var fx effects
-	if st.gen != gen || st.state != StateSummarized {
-		return fx
-	}
 	now := s.since(nowT)
 	// A planner that panicked planning the round again is replaced like
 	// in every other round.
 	s.takeDecisionLocked(d)
 	if found && d.ok && d.dec.Stop == "" {
-		for r := range st.cur.plans {
-			if pl, ok := reanchored(st.cur.plans[r], d.dec.Sides[r]); ok {
-				st.cur.plans[r], st.cur.reanchored[r] = pl, true
+		for r := range st.rounds.cur.plans {
+			if pl, ok := reanchored(st.rounds.cur.plans[r], d.dec.Sides[r]); ok {
+				st.rounds.cur.plans[r], st.rounds.cur.reanchored[r] = pl, true
 			}
 		}
 	}
@@ -284,13 +261,13 @@ func (s *Session) reanchorRound1Locked(gen uint64, d decision, found bool, nowT 
 	return fx
 }
 
-// reanchored is plan with each predict stage aimed where the planner's
+// reanchored is rp with each predict stage aimed where the planner's
 // family sides of the same role now aim the stage at the same position —
 // a new anchor, the span cut to the shorter one, never grown — and whether
 // anything changed (protocol.RoundPlan.Reanchor).
-func reanchored(plan protocol.RoundPlan, sides []protocol.FamilySide) (protocol.RoundPlan, bool) {
+func reanchored(rp protocol.RoundPlan, sides []protocol.FamilySide) (protocol.RoundPlan, bool) {
 	changed := false
-	for fi, fs := range plan.Sides {
+	for fi, fs := range rp.Sides {
 		i := slices.IndexFunc(sides, func(x protocol.FamilySide) bool { return x.Family == fs.Family })
 		if i < 0 || len(sides[i].Stages) != len(fs.Stages) {
 			continue
@@ -301,8 +278,8 @@ func reanchored(plan protocol.RoundPlan, sides []protocol.FamilySide) (protocol.
 			if st.Kind != protocol.StagePredict || ns.Kind != protocol.StagePredict || span == 0 || ns.Anchor == st.Anchor && span == st.Span {
 				continue
 			}
-			plan, changed = plan.Reanchor(fi, si, ns.Anchor, span), true
+			rp, changed = rp.Reanchor(fi, si, ns.Anchor, span), true
 		}
 	}
-	return plan, changed
+	return rp, changed
 }

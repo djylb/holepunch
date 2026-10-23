@@ -5,6 +5,9 @@ import (
 	"slices"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
+	"github.com/djylb/holepunch/internal/trunc"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -38,7 +41,7 @@ func (s *Session) onReportLocked(r int, m *protocol.ProbeReport, now time.Durati
 		st.rtt[r].add(now - sent - ms(m.ElapsedMs))
 	}
 	st.reports[r] = m
-	st.echoed[r] = s.starts[r].Control.Has(protocol.FeatureSandwich) && m.Control.Has(protocol.FeatureSandwich)
+	st.sand.echoed[r] = s.starts[r].Control.Has(protocol.FeatureSandwich) && m.Control.Has(protocol.FeatureSandwich)
 	s.c.emit(Event{Kind: EvReported, At: s.at(now), SessionID: s.id, Role: roleOf(r), Labels: s.labels})
 	if st.reports[1-r] == nil {
 		l.ping.schedule(waitReport, now)
@@ -47,8 +50,7 @@ func (s *Session) onReportLocked(r int, m *protocol.ProbeReport, now time.Durati
 	}
 	s.cancelPingsLocked(waitReport)
 	if st.state == StateProbing {
-		st.planning = true
-		st.work.plan = true
+		st.plan.begin(&st.work.plan)
 	}
 	s.rearmLocked(now)
 	return fx
@@ -109,9 +111,9 @@ func (s *Session) onReadyLocked(r int, m *protocol.PunchReady, now time.Duration
 func (s *Session) latePortMapLocked(r int, fam protocol.Family, pm protocol.PortMapReport, now time.Duration) {
 	st := &s.st
 	ext := pm.External
-	if isLAN(ext.Addr()) {
-		if st.pair.SamePublicIP[fam] && usableAddr(ext, fam) {
-			st.addUpstream(r, fam, ext)
+	if netaddr.Private(ext.Addr()) {
+		if st.adm.pair.SamePublicIP[fam] && fam.UsableTarget(ext) {
+			st.adm.addUpstream(r, fam, ext)
 		}
 		if s.admitTargetLocked(r, fam, ext, now) {
 			s.addPlannerEndpointLocked(r, fam, protocol.Endpoint{Addr: ext, Source: protocol.EndpointPortmap})
@@ -119,11 +121,11 @@ func (s *Session) latePortMapLocked(r int, fam protocol.Family, pm protocol.Port
 		return
 	}
 	p := 1 - r
-	if len(st.portmap[p]) >= maxQueuedAssists || slices.ContainsFunc(st.portmap[p], func(a protocol.Assist) bool { return a.Family == fam }) ||
+	if len(st.rounds.portmap[p]) >= maxQueuedAssists || slices.ContainsFunc(st.rounds.portmap[p], func(a protocol.Assist) bool { return a.Family == fam }) ||
 		!s.admitTargetLocked(r, fam, ext, now) {
 		return
 	}
-	st.portmap[p] = append(st.portmap[p], protocol.Assist{Family: fam, Targets: []netip.AddrPort{ext}, Source: protocol.TargetsPortmap})
+	st.rounds.portmap[p] = append(st.rounds.portmap[p], protocol.Assist{Family: fam, Targets: []netip.AddrPort{ext}, Source: protocol.TargetsPortmap})
 	s.addPlannerEndpointLocked(r, fam, protocol.Endpoint{Addr: ext, Source: protocol.EndpointPortmap, Verified: true})
 }
 
@@ -179,7 +181,7 @@ func (s *Session) onProgressLocked(r int, m *protocol.Progress, now time.Duratio
 func (s *Session) onPunchResultLocked(r int, m *protocol.PunchResult, now time.Duration) effects {
 	st := &s.st
 	var fx effects
-	st.finals[r] = &ClientFinal{
+	st.confirm.finals[r] = &ClientFinal{
 		OK: m.OK, Reason: m.Reason, Phase: m.Phase, Detail: m.Detail, Path: clonePath(m.Path), ExtraPaths: slices.Clone(m.ExtraPaths), Stats: m.Stats,
 		Timing: m.Timing, Traits: slices.Clone(m.Traits), Warn: slices.Clone(m.Warn),
 	}
@@ -188,19 +190,19 @@ func (s *Session) onPunchResultLocked(r int, m *protocol.PunchResult, now time.D
 			fx.end(violation(r, detailUnexpected))
 			return fx
 		}
-		st.okResult[r] = true
-		if !st.confirmed[r] {
+		st.confirm.okResult[r] = true
+		if !st.confirm.confirmed[r] {
 			fx.merge(s.confirmLocked(r, m.Path, now))
 		}
-		if st.confirmed[0] && st.confirmed[1] && st.okResult[0] && st.okResult[1] {
+		if st.confirm.confirmed[0] && st.confirm.confirmed[1] && st.confirm.okResult[0] && st.confirm.okResult[1] {
 			fx.end(&terminal{})
 		}
 		return fx
 	}
-	if st.state == StateConfirming && !st.confirmed[r] && st.confirmed[1-r] {
+	if st.state == StateConfirming && !st.confirm.confirmed[r] && st.confirm.confirmed[1-r] {
 		return fx
 	}
-	t := &terminal{code: m.Reason, detail: truncate(m.Detail, maxDetail), failed: roleOf(r)}
+	t := &terminal{code: m.Reason, detail: trunc.String(m.Detail, protocol.MaxDetail), failed: roleOf(r)}
 	if s.ablate.NoEarlyAbort {
 		// Ablation: the peer is not told; the session runs to its stage
 		// deadline and ends with this code there.
@@ -220,31 +222,31 @@ func (s *Session) onPunchResultLocked(r int, m *protocol.PunchResult, now time.D
 func (s *Session) confirmLocked(r int, path *protocol.PathInfo, now time.Duration) effects {
 	st := &s.st
 	var fx effects
-	if st.confirmed[r] {
+	if st.confirm.confirmed[r] {
 		return fx
 	}
-	st.confirmed[r] = true
-	st.confirmAt[r] = now
+	st.confirm.confirmed[r] = true
+	st.confirm.confirmAt[r] = now
 	if path != nil {
-		st.paths[r] = clonePath(path)
+		st.confirm.paths[r] = clonePath(path)
 	}
-	ev := Event{Kind: EvConfirmed, At: s.at(now), SessionID: s.id, Role: roleOf(r), Round: st.round, Labels: s.labels}
+	ev := Event{Kind: EvConfirmed, At: s.at(now), SessionID: s.id, Role: roleOf(r), Round: st.rounds.round, Labels: s.labels}
 	if path != nil {
 		ev.Data = *path
 	}
 	s.c.emit(ev)
-	if !st.confirmed[1-r] {
+	if !st.confirm.confirmed[1-r] {
 		st.state = StateConfirming
-		st.gen++ // a next round being planned is void
-		st.winRound, st.winVar = st.round, st.cur.variant
+		st.plan.void() // a next round being planned is void
+		st.confirm.winRound, st.confirm.winVar = st.rounds.round, st.rounds.cur.variant
 		if path != nil {
-			st.winFam = path.Family
+			st.confirm.winFam = path.Family
 		}
-		if st.round > 0 && !st.cur.evaluating {
-			st.cur.evaluating = true
-			st.records = append(st.records, s.recordLocked(RoundConfirmed, s.at(now)))
-		} else if n := len(st.records); n > 0 && st.records[n-1].Round == st.round {
-			st.records[n-1].Class = RoundConfirmed
+		if st.rounds.round > 0 && !st.rounds.cur.evaluating {
+			st.rounds.cur.evaluating = true
+			st.rounds.records = append(st.rounds.records, s.recordLocked(plan.RoundConfirmed, s.at(now)))
+		} else if n := len(st.rounds.records); n > 0 && st.rounds.records[n-1].Round == st.rounds.round {
+			st.rounds.records[n-1].Class = plan.RoundConfirmed
 		}
 		s.cancelPingsLocked(waitReady)
 		fx.closeHandle = true

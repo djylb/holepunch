@@ -2,12 +2,10 @@ package holepunch
 
 import (
 	"context"
-	"net/netip"
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
-	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -52,28 +50,24 @@ func (rt *runtime) refreshAnchor(a protocol.Assist) {
 }
 
 // refreshProbe binds a new socket on the primary's IP, sends one refresh
-// probe of phase from it through the gate's probe class (natprobe counts
-// it against the session's probe budget) and closes it.
-func (rt *runtime) refreshProbe(ctx context.Context, primary *udpSock, obs protocol.ObserverSpec, round, phase uint8) {
-	s, err := rt.socks.open(ctx, primary.fam, netip.AddrPortFrom(primary.local.Addr(), 0), PurposeProbe, nat.IndexSandwich, extraRecvBuffer)
-	if err != nil {
+// probe of phase from it and closes it.
+func (rt *runtime) refreshProbe(ctx context.Context, primary *udpSock, obs nat.Observer, round, phase uint8) {
+	s := rt.socks.sandwichHelper(ctx, primary)
+	if s == nil {
 		return
 	}
 	defer rt.socks.release(s)
-	h := udpwire.Header{Type: udpwire.TProbe, Cand: udpwire.NoCand, Aux: uint16(obs.ID)}
-	t := udpwire.TLVs{}
-	t.Sandwich.Round, t.Sandwich.Phase, t.Sandwich.Set = round, phase, true
-	_ = rt.sender.Send(ctx, s, netaddr.Canon(obs.Addr), &h, &t, sendOpt{class: classProbe, stage: txProbe})
+	rt.probeObserver(ctx, s, obs, 0, &sandwichTag{round: round, phase: phase})
 }
 
 // globalObserver is the first main-group observer on a global address, the
 // one a re-observation and a refresh probe go to: natprobe takes what an
 // observer on a private address sees as LAN evidence only.
-func globalObserver(observers []protocol.ObserverSpec) (protocol.ObserverSpec, bool) {
+func globalObserver(observers []nat.Observer) (nat.Observer, bool) {
 	for _, o := range observers {
-		if nat.ScopeOf(o.Addr.Addr()) == nat.ScopeGlobal {
+		if o.Scope == netaddr.ScopeGlobal {
 			return o, true
 		}
 	}
-	return protocol.ObserverSpec{}, false
+	return nat.Observer{}, false
 }

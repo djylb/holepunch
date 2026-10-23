@@ -27,7 +27,6 @@ const (
 	maxObserverGroups   = 32      // observer id = observer group*8 + port index fits a byte
 	portsPerGroup       = 8
 	maxFamilyObservers  = 16 // a family's observer ids
-	maxSpecObservers    = 16 // ProbeSpec.observers in all (protocol)
 )
 
 // ObserverGroup is one set of observer sockets of one address family, bound
@@ -173,7 +172,7 @@ func normalizeGroups(in []ObserverGroup, portCount int) ([]ObserverGroup, error)
 		if g.Slots == 0 {
 			g.Slots = max(len(g.Advertise), 1)
 		}
-		f := famIndex(fam)
+		f := fam.Index()
 		switch {
 		case g.Slots < len(g.Advertise) || g.Slots < 1:
 			return nil, fmt.Errorf("natprobe: config: group %d: %d Slots for %d addresses", i, g.Slots, len(g.Advertise))
@@ -199,12 +198,4 @@ func normalizeGroups(in []ObserverGroup, portCount int) ([]ObserverGroup, error)
 		return nil, errors.New("natprobe: config: no non-alt group")
 	}
 	return groups, nil
-}
-
-// famIndex is the array index of a family: 0 for udp4, 1 for udp6.
-func famIndex(f protocol.Family) int {
-	if f == protocol.FamilyUDP6 {
-		return 1
-	}
-	return 0
 }

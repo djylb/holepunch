@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/coord/internal/faultconn"
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/faultconn"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -34,7 +35,7 @@ func (r *rig) attachFault(s *Session, role protocol.Role) (*simclient.Client, *f
 // punch_start has been read: a Release in the middle of that frame fails.
 func releaseIdle(t *testing.T, c *simclient.Client) (net.Conn, error) {
 	t.Helper()
-	eventually(t, "ping #1 read", func() bool { return c.Pings() >= 1 })
+	testkit.WaitFor(t, "ping #1 read", func() bool { return c.Pings() >= 1 })
 	return c.Release()
 }
 
@@ -157,7 +158,7 @@ func TestServerFaultMatrix(t *testing.T) {
 				p, fc := r.matrixPair(st)
 				f.apply(r, p, fc)
 				if st == StatePunching && want.code == protocol.ReasonControlInterrupted {
-					eventually(t, "gone", func() bool {
+					testkit.WaitFor(t, "gone", func() bool {
 						p.s.mu.Lock()
 						defer p.s.mu.Unlock()
 						return p.s.st.gone[0]
@@ -182,7 +183,7 @@ func TestServerFaultMatrix(t *testing.T) {
 				}
 				select {
 				case <-r.results:
-				case <-time.After(waitLimit):
+				case <-time.After(testkit.WaitBound(t)):
 					t.Fatal("no OnResult")
 				}
 				select {
@@ -266,7 +267,7 @@ func TestStalledRearmsFromNow(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	p.punching()
 	p.s.mu.Lock()
-	left := p.s.st.cur.deadline - p.s.since(r.clk.Now())
+	left := p.s.st.rounds.cur.deadline - p.s.since(r.clk.Now())
 	p.s.mu.Unlock()
 	// Time passes without an update, as when a round's deadline ended it and
 	// the next round's go stalls.
@@ -320,7 +321,7 @@ func TestCallbackPanics(t *testing.T) {
 	if res.Reason != protocol.ReasonCanceled {
 		t.Fatalf("result %+v", res)
 	}
-	eventually(t, "panics counted", func() bool { return r.c.Stats().Panics >= 2 })
+	testkit.WaitFor(t, "panics counted", func() bool { return r.c.Stats().Panics >= 2 })
 }
 
 // TestObserverReentrant: an Observer may call back into the coordinator.
@@ -407,5 +408,5 @@ func TestHousekeeping(t *testing.T) {
 		}
 		r.clk.Advance(housekeepEvery)
 	}
-	eventually(t, "key entry swept", func() bool { return r.c.Stats().KeyEntries == 0 })
+	testkit.WaitFor(t, "key entry swept", func() bool { return r.c.Stats().KeyEntries == 0 })
 }

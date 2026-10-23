@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/internal/testkit"
 )
 
 // level is the depth of a run: the pr level runs the must cells,
@@ -141,7 +143,7 @@ func (c suiteConfig) selected(name string) bool {
 
 // scaled multiplies a time bound for the race detector.
 func scaled(d time.Duration) time.Duration {
-	if raceEnabled {
+	if testkit.RaceEnabled {
 		return d * raceFactor
 	}
 	return d

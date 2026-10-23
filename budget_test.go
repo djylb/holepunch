@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/internal/udpwire"
+	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -18,6 +20,7 @@ import (
 // test sets g.m.ceil.packets.
 type gateRig struct {
 	t    *testing.T
+	net  *nattest.Network // the simulated network of rt's host
 	rt   *runtime
 	sock *udpSock
 	m    *roundMeter
@@ -31,17 +34,14 @@ type gateRig struct {
 func newGateRig(t *testing.T, b protocol.Budget, side protocol.FamilySide, classPorts int) *gateRig {
 	t.Helper()
 	fc := fakeClock(t)
-	_, h := simHost(t)
+	n, h := simHost(t)
 	rt := newTestRuntime(t, fc, h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openPrimary(t, rt)
 	rt.sender.setBudget(b)
 	side.Family = protocol.FamilyUDP4
 	m := newRoundMeter(protocol.FamilyUDP4, 1, side, &roundCeiling{ports: classPorts})
 	rt.sender.startRound(fc.Now(), classPorts)
-	return &gateRig{t: t, rt: rt, sock: s, m: m, clk: fc}
+	return &gateRig{t: t, net: n, rt: rt, sock: s, m: m, clk: fc}
 }
 
 func (g *gateRig) punch(to string) error { return g.send(to, quotaPlan) }
@@ -419,7 +419,7 @@ func TestGateWriteReport(t *testing.T) {
 	host := g.rt.netw.(interface {
 		FailWrites(string, int, error)
 	})
-	g.rt.punch.active.Store(true)
+	g.rt.punch.activate()
 	g.rt.punch.newRound(1, []protocol.Family{protocol.FamilyUDP4})
 	host.FailWrites("", -1, syscall.ECONNRESET)
 	if err := g.punch("198.51.100.1:5000"); err == nil || errors.Is(err, errUnreachable) {
@@ -435,8 +435,8 @@ func TestGateWriteReport(t *testing.T) {
 	if got := g.rt.fam(protocol.FamilyUDP4).cnt.drops[dropSendErr].Load(); got != 2 {
 		t.Fatalf("send_err %d", got)
 	}
-	if g.rt.punch.icmpMax != 2 {
-		t.Fatalf("icmp %d", g.rt.punch.icmpMax)
+	if got := g.rt.punch.evidence().icmpMax; got != 2 {
+		t.Fatalf("icmp %d", got)
 	}
 }
 
@@ -478,19 +478,11 @@ func TestGateCanceledWriteNotCounted(t *testing.T) {
 		done <- g.rt.sender.Send(ctx, g.sock, netip.MustParseAddrPort("198.51.100.1:5000"), &h, nil,
 			sendOpt{class: classInitiate, stage: txDirect, round: g.m, quota: quotaPlan})
 	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	testkit.WaitFor(t, "the send to pass the gate", func() bool {
 		g.rt.sender.mu.Lock()
-		gated := g.m.sent == 1
-		g.rt.sender.mu.Unlock()
-		if gated {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the send never passed the gate")
-		}
-		time.Sleep(time.Millisecond)
-	}
+		defer g.rt.sender.mu.Unlock()
+		return g.m.sent == 1
+	})
 	cause := errors.New("session over")
 	cancel(cause)
 	if err := <-done; !errors.Is(err, cause) {

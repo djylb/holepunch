@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/djylb/holepunch/internal/life"
 )
 
 // Network is the method set of holepunch.Network.
@@ -69,6 +70,9 @@ type TrackingNetwork struct {
 	open   map[*trackedConn]OpenConn
 }
 
+// trackedConn is the record of one tracked conn: its identity in open.
+type trackedConn struct{ purpose string }
+
 var _ Network = (*TrackingNetwork)(nil)
 
 // NewTrackingNetwork returns a TrackingNetwork that delegates to inner.
@@ -89,17 +93,17 @@ func (t *TrackingNetwork) ListenPacket(ctx context.Context, network string, ladd
 		return nil, errNoInner
 	}
 	pc, err := t.inner.ListenPacket(ctx, network, laddr, purpose)
-	if err != nil || isNil(pc) {
+	if err != nil || life.IsNil(pc) {
 		t.failed(purpose)
 		return pc, err
 	}
 	local := "?"
-	if a := pc.LocalAddr(); !isNil(a) {
+	if a := pc.LocalAddr(); !life.IsNil(a) {
 		local = a.String()
 	}
-	tc := &trackedConn{PacketConn: pc, owner: t, purpose: purpose}
+	tc := &trackedConn{purpose: purpose}
 	t.opened(tc, network, local)
-	return withCapabilities(tc, capabilitiesOf(pc)), nil
+	return Wrap(pc, Hooks{Close: func() { t.closed(tc) }}), nil
 }
 
 // InterfaceAddrs delegates to the inner Network.
@@ -210,18 +214,4 @@ func (t *TrackingNetwork) count(purpose string) *Count {
 		t.counts[purpose] = c
 	}
 	return c
-}
-
-// isNil reports whether v is nil or holds a nil pointer-like value.
-func isNil(v any) bool {
-	if v == nil {
-		return true
-	}
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.UnsafePointer:
-		return rv.IsNil()
-	default:
-		return false
-	}
 }

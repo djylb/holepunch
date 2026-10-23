@@ -21,8 +21,8 @@ var (
 	_                 = natprobe.ServerConfig{Listen: (*Host)(nil).Listen}
 	_ leak.HopLimiter = (*conn)(nil)
 	_ leak.HopLimiter = callerConn{}
-	_ udp             = (*conn)(nil)
-	_ udp             = callerConn{}
+	_ Conn            = (*conn)(nil)
+	_ Conn            = callerConn{}
 	_ net.Conn        = (*PipeConn)(nil)
 )
 
@@ -73,7 +73,7 @@ func TestHostNetworkMethods(t *testing.T) {
 		t.Fatalf("OutboundAddr udp6 %v %v", a6, err)
 	}
 	if a, _ := nw.OutboundAddr(ctx, "udp"); a != a4 {
-		t.Fatalf("OutboundAddr udp %v", a)
+		t.Fatalf("OutboundAddr Conn %v", a)
 	}
 	got, err := nw.LookupNetIP(ctx, "ip4", "STUN.example")
 	if err != nil || len(got) != 1 || got[0] != srv.Addrs()[0] {
@@ -121,7 +121,7 @@ func TestListenSemantics(t *testing.T) {
 	h := n.PublicHost()
 	v4, v6 := h.Addrs()[0], h.Addrs()[1]
 	ctx := context.Background()
-	c, err := h.ListenPacket(ctx, "udp", netip.AddrPort{}, "probe")
+	c, err := h.ListenUDP(ctx, "udp", netip.AddrPort{}, "probe")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestListenSemantics(t *testing.T) {
 	o6 := listenOn(t, other, "udp6", netip.AddrPortFrom(other.Addrs()[1], 1))
 	send(t, o4, netip.AddrPortFrom(v4, port), "four")
 	send(t, o6, netip.AddrPortFrom(v6, port), "six")
-	uc := c.(udp)
+	uc := c
 	if s, src := recvNow(t, uc); s != "four" || !src.Addr().Is4() {
 		t.Fatalf("%q %v", s, src)
 	}

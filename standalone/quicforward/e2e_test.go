@@ -12,6 +12,7 @@ import (
 
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/standalone/client"
+	"github.com/djylb/holepunch/standalone/internal/testkit"
 	"github.com/djylb/holepunch/standalone/internal/testworld"
 	"github.com/djylb/holepunch/standalone/quicforward"
 	"github.com/djylb/holepunch/standalone/server"
@@ -137,7 +138,7 @@ func startForward(t *testing.T, w *testworld.World, hostH, dialH *nattest.Host, 
 	}
 	r.hostC = w.Client(hostH, nil)
 	go func() { r.hostDone <- quicforward.Serve(ctx, r.hostC, client.Registration{HostID: "office"}, hcfg) }()
-	waitFor(t, 5*time.Second, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 	dialC := w.Client(dialH, nil)
 	go func() {
 		r.dialDone <- quicforward.Connect(ctx, dialC, quicforward.ConnectConfig{
@@ -185,17 +186,6 @@ func roundTrip(t *testing.T, c net.Conn, payload []byte) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Fatal("echo differs from the payload")
-	}
-}
-
-func waitFor(t *testing.T, d time.Duration, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(d)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not met in time")
-		}
-		time.Sleep(5 * time.Millisecond)
 	}
 }
 

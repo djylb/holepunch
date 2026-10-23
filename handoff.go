@@ -9,11 +9,11 @@ import (
 
 // handoff is what finish hands to the Session: the sockets of the confirmed
 // paths, each once — the primary path's first — with their port mappings,
-// and the extra paths on them. Only finish uses
-// it, on the caller's goroutine.
+// and the paths on them. Only finish uses it, on the caller's goroutine.
 type handoff struct {
-	socks []*handSock
-	extra []handPath
+	socks   []*handSock
+	primary handPath   // on socks[0]
+	extra   []handPath // the extra paths
 }
 
 // handSock is one socket to hand over.
@@ -25,7 +25,8 @@ type handSock struct {
 	lost    bool // an extra path's socket that failed a cleanup step: closed, its paths dropped
 }
 
-// handPath is an extra path and its socket.
+// handPath is a confirmed path — its pair as the handover decision left
+// it — and its socket.
 type handPath struct {
 	c candidate.Candidate
 	s *handSock
@@ -39,8 +40,10 @@ func (rt *runtime) handoffOf(win *candidate.Action) *handoff {
 	if primary == nil {
 		return nil
 	}
-	ho := &handoff{socks: []*handSock{{sock: primary}}}
-	for _, c := range rt.punch.committedExtras() {
+	winner, extras := rt.punch.handedPaths()
+	hs := &handSock{sock: primary}
+	ho := &handoff{socks: []*handSock{hs}, primary: handPath{c: winner, s: hs}}
+	for _, c := range extras {
 		s := rt.socks.byAddr(c.Local)
 		if s == nil {
 			continue

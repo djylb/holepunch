@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -437,7 +438,7 @@ func TestPrivateObserversIgnored(t *testing.T) {
 	// only alt or scope-less observers: global scope, nothing to classify
 	tb = NewTable(protocol.FamilyUDP4, []SocketMeta{{ID: v4P, Kind: protocol.SocketPrimary, Local: ap("10.0.0.2:1")}},
 		[]Observer{{ID: 8, Addr: ap("198.51.100.2:3478"), Alt: true}})
-	if tb.classScopeLocked() != ScopeGlobal || tb.Classify().Samples != 0 {
+	if tb.classScopeLocked() != netaddr.ScopeGlobal || tb.Classify().Samples != 0 {
 		t.Fatal("alt-only table")
 	}
 }

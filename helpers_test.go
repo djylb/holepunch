@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/clock"
-	"github.com/djylb/holepunch/internal/udpwire"
+	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -20,20 +20,44 @@ func errClosedForTest() error { return net.ErrClosed }
 func newTestRuntime(t testing.TB, clk clock.Clock, netw Network) *runtime {
 	t.Helper()
 	rt := newRuntime(context.Background(), Options{Clock: clk, Network: netw, ControlSecurity: protocol.ControlSecurityDeclared})
-	token, route := protocol.NewToken(), protocol.NewRouteID()
-	codec, err := udpwire.NewCodec(token, route, udpwire.RoleInitiator, udpwire.PadPolicy{Min: 60, Max: 160}, rt.clk.Now)
+	st := protocol.PunchStart{
+		SessionID: "unit", Role: protocol.RoleInitiator, Token: protocol.NewToken(),
+		Wire:     protocol.WireSpec{RouteID: protocol.NewRouteID(), PayloadMin: 60, PayloadMax: 160},
+		Timeouts: testTimeouts(),
+	}
+	if err := rt.setupSession(st, rt.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.g.Close(time.Second) })
+	return rt
+}
+
+// openPrimary opens a socket of rt on any IPv4 address, with the primary
+// socket's index and receive buffer.
+func openPrimary(t testing.TB, rt *runtime) *udpSock {
+	t.Helper()
+	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, nat.IndexPrimary, primaryRecvBuffer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt.start = protocol.PunchStart{SessionID: "unit", Role: protocol.RoleInitiator, Token: token, Wire: protocol.WireSpec{RouteID: route}}
-	rt.role, rt.codec, rt.started = protocol.RoleInitiator, codec, true
-	rt.opener = newOpener(codec)
-	rt.startAt = rt.clk.Now()
-	rt.pace = newPacer(token, route, udpwire.RoleInitiator)
-	rt.initCounters()
-	rt.timeouts = testTimeouts().Normalize()
-	t.Cleanup(func() { _ = rt.g.Close(time.Second) })
-	return rt
+	return s
+}
+
+// peerOf is the view of role r's peer among the server's views of both
+// roles.
+func peerOf(r protocol.Role, views [2]protocol.PeerView) protocol.PeerView {
+	return views[1-roleIndex(r)]
+}
+
+// peerAddr is the first verified endpoint of the first family of role r's
+// peer.
+func peerAddr(r protocol.Role, views [2]protocol.PeerView) netip.AddrPort {
+	for _, e := range peerOf(r, views).Families[0].Endpoints {
+		if e.Verified {
+			return e.Addr
+		}
+	}
+	return netip.AddrPort{}
 }
 
 // simHost is a public host of a fresh simulated network.

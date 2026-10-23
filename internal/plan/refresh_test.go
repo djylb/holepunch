@@ -6,37 +6,38 @@ import (
 	"testing"
 	"time"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
 // The anchor refresh before a round.
 
-func refreshOf(fam protocol.Family, ip netip.Addr, first, second uint16, at, gap time.Duration) AnchorRefresh {
-	return AnchorRefresh{Family: fam, First: netip.AddrPortFrom(ip, first), Second: netip.AddrPortFrom(ip, second), FirstAt: at, SecondAt: at + gap}
+func refreshOf(fam protocol.Family, ip netip.Addr, first, second uint16, at, gap time.Duration) api.AnchorRefresh {
+	return api.AnchorRefresh{Family: fam, First: netip.AddrPortFrom(ip, first), Second: netip.AddrPortFrom(ip, second), FirstAt: at, SecondAt: at + gap}
 }
 
 func TestRefreshRate(t *testing.T) {
 	ip := netip.MustParseAddr("203.0.113.3")
 	r := refreshOf(protocol.FamilyUDP4, ip, 40000, 40003, time.Second, 100*time.Millisecond)
-	if l, ok := r.rate(1); !ok || l < 19.9 || l > 20.1 {
+	if l, ok := anchorRate(r, 1); !ok || l < 19.9 || l > 20.1 {
 		t.Fatalf("rate %v %v, want 20/s", l, ok)
 	}
 	if d := refreshDrift(20, r, r.SecondAt+400*time.Millisecond); d != 8-driftMargin {
 		t.Fatalf("drift %d, want %d", d, 8-driftMargin)
 	}
 	quiet := refreshOf(protocol.FamilyUDP4, ip, 40000, 40001, time.Second, 100*time.Millisecond)
-	if l, ok := quiet.rate(1); !ok || l != 0 || refreshDrift(l, quiet, 5*time.Second) != 0 {
+	if l, ok := anchorRate(quiet, 1); !ok || l != 0 || refreshDrift(l, quiet, 5*time.Second) != 0 {
 		t.Fatalf("quiet NAT: rate %v", l)
 	}
 	down := refreshOf(protocol.FamilyUDP4, ip, 1025, 65534, time.Second, 100*time.Millisecond)
-	if l, ok := down.rate(-1); !ok || l < 19.9 || l > 20.1 {
+	if l, ok := anchorRate(down, -1); !ok || l < 19.9 || l > 20.1 {
 		t.Fatalf("downward across the wrap: rate %v %v", l, ok)
 	}
-	for _, bad := range []AnchorRefresh{
+	for _, bad := range []api.AnchorRefresh{
 		refreshOf(protocol.FamilyUDP4, ip, 40003, 40000, time.Second, 100*time.Millisecond), // backwards
 		refreshOf(protocol.FamilyUDP4, ip, 40000, 40003, time.Second, time.Millisecond),     // too close to tell
 	} {
-		if _, ok := bad.rate(1); ok {
+		if _, ok := anchorRate(bad, 1); ok {
 			t.Errorf("refresh %+v measured a rate", bad)
 		}
 	}
@@ -53,8 +54,8 @@ func TestRefreshRateBaseline(t *testing.T) {
 	tr := protocol.Traits{Family: f, Observed: netip.AddrPortFrom(ip, 39990), PortAnchor: 39990, PortAnchorMs: 500}
 	// 39990 at 0.5 s, 40000 at 0.9 s, 40003 at 1.0 s: 13 steps in 0.5 s.
 	r := refreshOf(f, ip, 40000, 40003, 900*time.Millisecond, 100*time.Millisecond)
-	mapped := func(n int) []RoundOutcome {
-		return []RoundOutcome{{Round: 1, Families: []FamilyRound{{Family: f, Mapped: [2]int{n, 0}}}}}
+	mapped := func(n int) []api.RoundOutcome {
+		return []api.RoundOutcome{{Round: 1, Families: []api.FamilyRound{{Family: f, Mapped: [2]int{n, 0}}}}}
 	}
 	onlyFirst, onlySecond := r, r
 	onlyFirst.Second, onlySecond.First = netip.AddrPort{}, netip.AddrPort{}
@@ -62,20 +63,20 @@ func TestRefreshRateBaseline(t *testing.T) {
 	other.Observed = netip.AddrPortFrom(netip.MustParseAddr("203.0.113.4"), 39990)
 	for _, c := range []struct {
 		name string
-		in   RoundInput
-		r    AnchorRefresh
+		in   api.RoundInput
+		r    api.AnchorRefresh
 		tr   protocol.Traits
 		want float64 // 0: measures nothing
 	}{
-		{"round 1: the first probe is the only own mapping", RoundInput{}, r, tr, 22},
-		{"after a round of 5 mappings", RoundInput{Prev: mapped(5)}, r, tr, 12},
-		{"counts the NAT did not see: the two probes", RoundInput{Prev: mapped(20)}, r, tr, 20},
-		{"anchor on another IP: the two probes", RoundInput{}, r, other, 20},
-		{"only the first probe: 10 steps in 0.4 s", RoundInput{}, onlyFirst, tr, 22.5},
-		{"only the second probe", RoundInput{}, onlySecond, tr, 22},
-		{"only one probe, no anchor to measure from", RoundInput{}, onlySecond, other, 0},
+		{"round 1: the first probe is the only own mapping", api.RoundInput{}, r, tr, 22},
+		{"after a round of 5 mappings", api.RoundInput{Prev: mapped(5)}, r, tr, 12},
+		{"counts the NAT did not see: the two probes", api.RoundInput{Prev: mapped(20)}, r, tr, 20},
+		{"anchor on another IP: the two probes", api.RoundInput{}, r, other, 20},
+		{"only the first probe: 10 steps in 0.4 s", api.RoundInput{}, onlyFirst, tr, 22.5},
+		{"only the second probe", api.RoundInput{}, onlySecond, tr, 22},
+		{"only one probe, no anchor to measure from", api.RoundInput{}, onlySecond, other, 0},
 	} {
-		l, ok := refreshRate(c.in, 0, c.r, c.tr, 1)
+		l, ok := refreshRate(input{RoundInput: c.in}, 0, c.r, c.tr, 1)
 		if ok != (c.want != 0) || l < c.want-0.1 || l > c.want+0.1 {
 			t.Errorf("%s: rate %v %v, want %v", c.name, l, ok, c.want)
 		}
@@ -110,18 +111,18 @@ func TestRefreshOneProbe(t *testing.T) {
 		if !c.second {
 			x.Second = netip.AddrPort{}
 		}
-		port, at, before, after := x.newest()
+		port, at, before, after := anchorNewest(x)
 		if port != c.port || at != c.at || before != c.before || after != c.after {
 			t.Errorf("%s: newest %d at %v (%d before, %d after)", c.name, port, at, before, after)
 		}
-		if _, ok := x.rate(1); ok != c.hasRate {
+		if _, ok := anchorRate(x, 1); ok != c.hasRate {
 			t.Errorf("%s: pair rate %v", c.name, ok)
 		}
-		if !x.on(ip) || x.on(netip.MustParseAddr("203.0.113.4")) {
+		if !anchorOn(x, ip) || anchorOn(x, netip.MustParseAddr("203.0.113.4")) {
 			t.Errorf("%s: on the wrong IP", c.name)
 		}
 	}
-	if (AnchorRefresh{Family: protocol.FamilyUDP4}).on(ip) {
+	if anchorOn(api.AnchorRefresh{Family: protocol.FamilyUDP4}, ip) {
 		t.Error("a refresh without a probe anchors")
 	}
 }
@@ -140,7 +141,7 @@ func TestRefreshPairedAnchor(t *testing.T) {
 	in.FireAt = 2 * time.Second
 	plain := p.Round(in)
 	at := in.FireAt - 500*time.Millisecond
-	in.Refresh = [2][]AnchorRefresh{
+	in.Refresh = [2][]api.AnchorRefresh{
 		{refreshOf(f, a.Observed.Addr(), a.PortAnchor+40, a.PortAnchor+43, at, 100*time.Millisecond)},
 		{refreshOf(f, b.Observed.Addr(), b.PortAnchor+60, b.PortAnchor+63, at, 100*time.Millisecond)},
 	}
@@ -149,7 +150,7 @@ func TestRefreshPairedAnchor(t *testing.T) {
 		before, after := mustStageOf(t, plain.Sides[role][0], protocol.StagePredict), mustStageOf(t, dec.Sides[role][0], protocol.StagePredict)
 		r := in.Refresh[1-role][0]
 		pre := int(before.Anchor) - int(peer.PortAnchor) // the peer's Direct mappings of the round
-		lambda, _ := refreshRate(in, 1-role, r, peer, 1)
+		lambda, _ := refreshRate(input{RoundInput: in}, 1-role, r, peer, 1)
 		want := int(r.Second.Port()) + pre + refreshDrift(lambda, r, in.FireAt+predictAt(dec.Sides[1-role][0]))
 		if !after.Pair || int(after.Anchor) != want || after.Span != before.Span {
 			t.Fatalf("role %d: anchor %d (span %d), want %d (span %d)", role, after.Anchor, after.Span, want, before.Span)
@@ -169,7 +170,7 @@ func TestRefreshSupersedesCounts(t *testing.T) {
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
 	r1 := p.Round(roundInput(cl, a, b, 1, nil))
-	prev := []RoundOutcome{{Round: 1, Variant: r1.Variant, Class: RCNoContact, Budget: r1.Budget, Families: slices.Clone(r1.Families)}}
+	prev := []api.RoundOutcome{{Round: 1, Variant: r1.Variant, Class: api.RoundNoContact, Budget: r1.Budget, Families: slices.Clone(r1.Families)}}
 	prev[0].Families[0].Mapped = [2]int{22, 22} // the round's packets, as the coordinator counts them
 	in := roundInput(cl, a, b, 2, prev)
 	in.FireAt = 2 * time.Second
@@ -181,7 +182,7 @@ func TestRefreshSupersedesCounts(t *testing.T) {
 	}
 	// The NAT saw none of round 1: the refresh probes took the next ports.
 	at := in.FireAt - 150*time.Millisecond
-	in.Refresh = [2][]AnchorRefresh{
+	in.Refresh = [2][]api.AnchorRefresh{
 		{refreshOf(f, a.Observed.Addr(), a.PortAnchor+1, a.PortAnchor+2, at, 60*time.Millisecond)},
 		{refreshOf(f, b.Observed.Addr(), b.PortAnchor+1, 0, at, 60*time.Millisecond)},
 	}
@@ -204,7 +205,7 @@ func TestRefreshPrediction(t *testing.T) {
 	cl := p.Classify(classifyInput(a, b))
 	in := roundInput(cl, a, b, 1, nil)
 	in.FireAt = 3 * time.Second
-	in.Refresh[1] = []AnchorRefresh{refreshOf(f, b.Observed.Addr(), b.PortAnchor+100, b.PortAnchor+105, in.FireAt-600*time.Millisecond, 100*time.Millisecond)}
+	in.Refresh[1] = []api.AnchorRefresh{refreshOf(f, b.Observed.Addr(), b.PortAnchor+100, b.PortAnchor+105, in.FireAt-600*time.Millisecond, 100*time.Millisecond)}
 	dec := p.Round(in)
 	pred := stageOf(dec.Sides[0][0], protocol.StagePredict)
 	// 4 foreign steps in 100 ms: 40/s, 0.5 s to the fire time.
@@ -253,7 +254,7 @@ func TestRefreshWanted(t *testing.T) {
 			cin.Measured = [2]protocol.PeerView{view(c.a), view(c.b)}
 		}
 		cl := p.Classify(cin)
-		in := roundInput(cl, c.a, c.b, 1, nil)
+		in := classified(roundInput(cl, c.a, c.b, 1, nil), cin)
 		got := RefreshWanted(in, p.Round(in), now)
 		for role := range 2 {
 			if has := slices.Contains(got[role], f); has != c.want[role] {

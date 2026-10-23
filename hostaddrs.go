@@ -79,10 +79,10 @@ func (h hostAddr) lanAddr() bool { return h.live && !h.overlay }
 func localAddrs(f protocol.Family, hosts []hostAddr) []netip.Addr {
 	var out []netip.Addr
 	for _, h := range hosts {
-		if len(out) == maxLocalAddrs {
+		if len(out) == protocol.MaxLocalAddrs {
 			break
 		}
-		if a := h.addr; h.lanAddr() && f.Matches(a) && !netaddr.Unusable(a) && !(a.Is6() && a.IsLinkLocalUnicast()) {
+		if a := h.addr; h.lanAddr() && f.Matches(a) && !netaddr.Unusable(a) {
 			out = append(out, a)
 		}
 	}
@@ -99,8 +99,7 @@ func (rt *runtime) overlayAddrs(fs *famState) []netip.Addr {
 	}
 	var out []netip.Addr
 	for _, h := range rt.hosts {
-		if a := h.addr; len(out) < maxOverlayAddrs && h.live && h.overlay && fs.fam.Matches(a) && !netaddr.Unusable(a) &&
-			!(a.Is6() && a.IsLinkLocalUnicast()) {
+		if a := h.addr; len(out) < protocol.MaxOverlayAddrs && h.live && h.overlay && fs.fam.Matches(a) && !netaddr.Unusable(a) {
 			out = append(out, a)
 		}
 	}
@@ -111,7 +110,7 @@ func (rt *runtime) overlayAddrs(fs *famState) []netip.Addr {
 // the one an unobserved family binds to (bindUnobserved).
 func globalAddr(f protocol.Family, hosts []hostAddr) netip.Addr {
 	for _, h := range hosts {
-		if a := h.addr; h.lanAddr() && f.Matches(a) && a.IsGlobalUnicast() && !netaddr.Private(a) {
+		if a := h.addr; h.lanAddr() && f.Matches(a) && netaddr.Public(a) {
 			return a
 		}
 	}

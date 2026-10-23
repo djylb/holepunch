@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // answerPings is a client's controlwire.ConnOptions.Intercept: ping is
@@ -21,7 +22,7 @@ func answerPings(c *controlwire.Conn, f controlwire.Frame) bool {
 	if err != nil {
 		return false // delivered; the dispatcher fails the session with protocol_violation
 	}
-	_ = c.SendFunc(controlwire.TypePong, func(now time.Time) ([]byte, error) {
+	_ = c.SendFunc(wiretype.Pong, func(now time.Time) ([]byte, error) {
 		fr, err := marshalFrame(PongFor(ping, f.At, now))
 		return fr.Payload, err
 	})

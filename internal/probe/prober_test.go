@@ -554,12 +554,12 @@ func TestSTUNSubProbe(t *testing.T) {
 	o.stun = false
 	s = newSim(t, o)
 	s.spec.Probe.STUN = []netip.AddrPort{netip.MustParseAddrPort("[2001:db8::1]:3478"), netip.MustParseAddrPort("192.0.2.9:0"), stunAddr}
-	for i := range maxSTUNServers {
+	for i := range protocol.MaxReportSTUNRows {
 		s.spec.Probe.STUN = append(s.spec.Probe.STUN, netip.AddrPortFrom(netip.AddrFrom4([4]byte{192, 0, 2, byte(51 + i)}), 3478))
 	}
 	s.p = New(s.spec, s.socks[0], nil, nil)
 	rs := newRunState(s.p)
-	if len(rs.stun) != maxSTUNServers || rs.stun[0].addr != stunAddr || rs.stun[0].idx != 2 || rs.stun[maxSTUNServers-1].idx != maxSTUNServers+1 {
+	if len(rs.stun) != protocol.MaxReportSTUNRows || rs.stun[0].addr != stunAddr || rs.stun[0].idx != 2 || rs.stun[protocol.MaxReportSTUNRows-1].idx != protocol.MaxReportSTUNRows+1 {
 		t.Fatalf("stun targets %+v", rs.stun)
 	}
 }
@@ -573,7 +573,7 @@ func TestSTUNWaits(t *testing.T) {
 		return netip.AddrPortFrom(netip.AddrFrom4([4]byte{192, 0, 2, byte(60 + i)}), 3478)
 	}
 	many := []netip.AddrPort{stunAddr}
-	for i := range maxSTUNServers - 1 {
+	for i := range protocol.MaxReportSTUNRows - 1 {
 		many = append(many, silent(i))
 	}
 	lan := defaultOpts()

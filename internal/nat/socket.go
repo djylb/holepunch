@@ -8,12 +8,15 @@ import (
 
 // Socket indexes, the low seven bits of the header sock value
 // sock = family<<7 | index.
-// Indexes 5–125 are assigned to round and birthday sockets in creation order.
+// Indexes IndexFirstExtra–IndexLastExtra are assigned to round and birthday
+// sockets in creation order.
 const (
-	IndexPrimary  uint8 = 0 // one per family; decides the family's traits
-	IndexSecond   uint8 = 1 // opened when the primary looks APDM
-	IndexSibling  uint8 = 2 // siblings use 2 and 3
-	IndexSandwich uint8 = 4 // the sandwich helper socket of a punching round
+	IndexPrimary    uint8 = 0   // one per family; decides the family's traits
+	IndexSecond     uint8 = 1   // opened when the primary looks APDM
+	IndexSibling    uint8 = 2   // siblings use 2 and 3
+	IndexSandwich   uint8 = 4   // the sandwich helper socket of a punching round
+	IndexFirstExtra uint8 = 5   // the first round or birthday socket
+	IndexLastExtra  uint8 = 125 // the last index left to round sockets
 )
 
 // SocketID returns the header sock value of socket index i of family f:

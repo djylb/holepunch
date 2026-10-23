@@ -6,11 +6,11 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
-	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/trunc"
 	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -27,10 +27,7 @@ const (
 	detailControlFlood       = "control_flood"
 	detailDuplicate          = "duplicate_message"
 	detailUnexpected         = "unexpected_message"
-	detailMergePanic         = "panic:merge"
 	detailNoAdmissible       = "no_admissible_target"
-	maxDetail                = 256
-	maxWarn                  = 8
 )
 
 // terminal is how a session ends.
@@ -64,24 +61,13 @@ func internalTerm(err error) terminal {
 	if errors.As(err, &pe) {
 		return terminal{code: protocol.ReasonInternal, detail: panicDetail(pe), panic: pe}
 	}
-	return terminal{code: protocol.ReasonInternal, detail: truncate(err.Error(), maxDetail)}
+	return terminal{code: protocol.ReasonInternal, detail: trunc.String(err.Error(), protocol.MaxDetail)}
 }
 
 // panicDetail is "panic:<where>: <value summary>", without a stack.
 func panicDetail(pe *life.PanicError) string {
 	text := strings.TrimPrefix(pe.Error(), "panic in "+pe.Where()+": ")
-	return truncate("panic:"+pe.Where()+": "+text, maxDetail)
-}
-
-// truncate cuts s to at most n bytes on a rune boundary.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
+	return trunc.String("panic:"+pe.Where()+": "+text, protocol.MaxDetail)
 }
 
 // notice is a punch_abort for one link.
@@ -126,9 +112,7 @@ type ending struct {
 func (s *Session) finish(t terminal) {
 	now := s.c.set.clock.Now()
 	var e ending
-	if err := life.Safe("coord.finish", func() { s.closeState(t, now, &e) }); err != nil {
-		s.c.noteCallbackPanic(s.id, err)
-	}
+	s.callout("coord.finish", "", func() { s.closeState(t, now, &e) })
 	if !e.closed {
 		return
 	}
@@ -180,7 +164,7 @@ func (s *Session) closeState(t terminal, now time.Time, e *ending) {
 	// From here the session is closed, so the session goroutine must be told
 	// whatever happens next.
 	defer close(s.quit)
-	st.gen++
+	st.plan.void()
 	st.updated = s.since(now)
 	*e = ending{
 		closed:     true,
@@ -207,14 +191,12 @@ func (s *Session) closeLinks(links [2]*link, ctr *Counters) {
 		if l == nil {
 			continue
 		}
-		if err := life.Safe(fiFinishConns, func() {
+		s.callout(fiFinishConns, "", func() {
 			l.close()
 			cs := l.conn.Stats()
 			ctr.FramesIn[i], ctr.FramesOut[i] = cs.FramesIn, cs.FramesOut
 			ctr.UnknownFrames += cs.Discarded
-		}); err != nil {
-			s.c.noteCallbackPanic(s.id, err)
-		}
+		})
 	}
 }
 
@@ -224,16 +206,8 @@ func (s *Session) closeLinks(links [2]*link, ctr *Counters) {
 // runs, so that no failure keeps a resource; a panic in the work is reported
 // and skips no later step.
 func (s *Session) step(point string, work func()) {
-	if err := life.Safe(point, func() {
-		if err := faultinject.Point(point); err != nil {
-			panic(err)
-		}
-	}); err != nil {
-		s.c.noteCallbackPanic(s.id, err)
-	}
-	if err := life.Safe(point, work); err != nil {
-		s.c.noteCallbackPanic(s.id, err)
-	}
+	s.callout(point, point, func() {})
+	s.callout(point, "", work)
 }
 
 // settleLocked adjusts the end to the state it meets: a server shutdown in
@@ -244,7 +218,7 @@ func (s *Session) settleLocked(t terminal, prev State) terminal {
 	if prev == StateConfirming && t.code == protocol.ReasonServerShutdown {
 		t = terminal{}
 	}
-	if t.code == "" && st.confirmed[0] != st.confirmed[1] {
+	if t.code == "" && st.confirm.confirmed[0] != st.confirm.confirmed[1] {
 		st.addWarn(protocol.WarnPeerResultMissing)
 	}
 	return t
@@ -262,7 +236,7 @@ func (s *Session) noticesLocked(t terminal, prev State) []notice {
 	var out []notice
 	for r, l := range st.links {
 		role := roleOf(r)
-		if l == nil || l.dead || st.gone[r] || st.confirmed[r] || (role == t.failed && !t.notifyFailed) {
+		if l == nil || l.dead || st.gone[r] || st.confirm.confirmed[r] || (role == t.failed && !t.notifyFailed) {
 			continue
 		}
 		m := protocol.Abort{SessionID: s.id, By: protocol.RoleServer, Reason: t.code, Detail: t.detail}
@@ -319,15 +293,15 @@ func (s *Session) bareResult(t terminal, now time.Time) Result {
 func (s *Session) resultLocked(t terminal, now time.Time) Result {
 	st := &s.st
 	res := s.bareResult(t, now)
-	res.Confirmed = st.confirmed
+	res.Confirmed = st.confirm.confirmed
 	res.Warn = slices.Clone(st.warn)
-	res.PairClass = st.cls.PairClass
-	res.MemoryHit = st.memHit
-	res.Rounds = slices.Clone(st.records)
+	res.PairClass = st.plan.cls.PairClass
+	res.MemoryHit = st.plan.memHit
+	res.Rounds = slices.Clone(st.rounds.records)
 	res.Counters = st.ctr
-	res.Clients = st.finals
-	if st.hasKey {
-		res.StrategyKey = st.memKey.String()
+	res.Clients = st.confirm.finals
+	if st.plan.hasKey {
+		res.StrategyKey = st.plan.memKey.String()
 	}
 	for r := range 2 {
 		res.Attached[r] = st.links[r] != nil
@@ -340,22 +314,22 @@ func (s *Session) resultLocked(t terminal, now time.Time) Result {
 	if st.summarized {
 		res.Timing.Summary = s.at(st.summaryAt)
 	}
-	if st.round > 0 {
-		res.Timing.FirstGo = s.at(st.firstGoAt)
+	if st.rounds.round > 0 {
+		res.Timing.FirstGo = s.at(st.rounds.firstGoAt)
 	}
-	if first, ok := st.firstConfirm(); ok {
+	if first, ok := st.confirm.firstConfirm(); ok {
 		res.Timing.FirstConfirm = s.at(first)
 	}
-	if st.round > 0 && !st.cur.evaluating {
+	if st.rounds.round > 0 && !st.rounds.cur.evaluating {
 		// The round under way ends with the session.
-		res.Rounds = append(res.Rounds, s.recordLocked(st.cur.classNow(), now))
+		res.Rounds = append(res.Rounds, s.recordLocked(st.rounds.cur.classNow(), now))
 	}
 	for i := range min(st.tlN, timelineCap) {
 		res.Timeline = append(res.Timeline, st.timeline[(st.tlN-min(st.tlN, timelineCap)+i)%timelineCap])
 	}
-	if res.Reason == "" && st.winRound > 0 {
-		res.Winner = &WinnerInfo{Round: st.winRound, Variant: st.winVar, Family: st.winFam, Path: st.paths}
-		for r, f := range st.finals {
+	if res.Reason == "" && st.confirm.winRound > 0 {
+		res.Winner = &WinnerInfo{Round: st.confirm.winRound, Variant: st.confirm.winVar, Family: st.confirm.winFam, Path: st.confirm.paths}
+		for r, f := range st.confirm.finals {
 			if f != nil && f.OK {
 				res.Winner.ExtraPaths[r] = slices.Clone(f.ExtraPaths)
 			}
@@ -364,30 +338,30 @@ func (s *Session) resultLocked(t terminal, now time.Time) Result {
 	streak := s.c.limiter.noteOutcome(s.keys[0], t.code == protocol.ReasonCandidateTimeout)
 	res.Retry = retryFor(t.code, t.detail, streak)
 	if t.code != "" {
-		res.Retry.Advice = st.cls.Advice
+		res.Retry.Advice = st.plan.cls.Advice
 	}
-	res.Retry.BackgroundOnly = st.bgOnly
-	if len(res.Warn) > maxWarn {
-		res.Warn = res.Warn[:maxWarn]
+	res.Retry.BackgroundOnly = st.plan.bgOnly
+	if len(res.Warn) > protocol.MaxWarn {
+		res.Warn = res.Warn[:protocol.MaxWarn]
 	}
 	return res
 }
 
 // firstConfirm is the session time of the first confirmation.
-func (st *sessionState) firstConfirm() (time.Duration, bool) {
+func (c *confirmState) firstConfirm() (time.Duration, bool) {
 	switch {
-	case st.confirmed[0] && st.confirmed[1]:
-		return min(st.confirmAt[0], st.confirmAt[1]), true
-	case st.confirmed[0]:
-		return st.confirmAt[0], true
-	case st.confirmed[1]:
-		return st.confirmAt[1], true
+	case c.confirmed[0] && c.confirmed[1]:
+		return min(c.confirmAt[0], c.confirmAt[1]), true
+	case c.confirmed[0]:
+		return c.confirmAt[0], true
+	case c.confirmed[1]:
+		return c.confirmAt[1], true
 	}
 	return 0, false
 }
 
 func (st *sessionState) addWarn(w protocol.Warning) {
-	if !slices.Contains(st.warn, w) && len(st.warn) < maxWarn {
+	if !slices.Contains(st.warn, w) && len(st.warn) < protocol.MaxWarn {
 		st.warn = append(st.warn, w)
 	}
 }
@@ -397,20 +371,20 @@ func (st *sessionState) addWarn(w protocol.Warning) {
 // merged views corrected by punch_result.traits.
 func (s *Session) feedbackLocked(res *Result) feedback {
 	st := &s.st
-	fb := feedback{memory: st.memory, key: st.memKey, rounds: res.Rounds}
+	fb := feedback{memory: st.plan.memory, key: st.plan.memKey, rounds: res.Rounds}
 	if res.Winner != nil {
 		fb.winRound = res.Winner.Round
 	}
-	if !st.hasKey {
+	if !st.plan.hasKey {
 		fb.memory = nil
 	}
-	if s.c.set.traits == nil || s.c.set.unverified || s.ablate.NoMemory || !st.planned {
+	if s.c.set.traits == nil || s.c.set.unverified || s.ablate.NoMemory || !st.plan.planned {
 		return fb
 	}
-	for r, v := range st.rawViews {
+	for r, v := range st.plan.rawViews {
 		for _, fv := range v.Families {
 			final := fv.Traits
-			if f := st.finals[r]; f != nil {
+			if f := st.confirm.finals[r]; f != nil {
 				for _, u := range f.Traits {
 					if u.Family == fv.Family {
 						final = applyTraitsUpdate(final, u)
@@ -474,18 +448,12 @@ func (s *Session) reportMemory(fb feedback) {
 		switch {
 		case rr.Round == fb.winRound:
 			mr = MemSuccess
-		case rr.Class == RoundNoContact || rr.Class == RoundOneWay || rr.Class == RoundBlocked:
+		case rr.Class == plan.RoundNoContact || rr.Class == plan.RoundOneWay || rr.Class == plan.RoundBlocked:
 			mr = MemFailure
 		default:
 			continue
 		}
-		if err := life.Safe("coord.memory", func() {
-			if faultinject.Point(fiMemory) != nil {
-				return
-			}
-			fb.memory.Report(fb.key, rr.Variant, mr)
-		}); err != nil {
-			s.c.noteCallbackPanic(s.id, err)
+		if !s.callout("coord.memory", fiMemory, func() { fb.memory.Report(fb.key, rr.Variant, mr) }) {
 			return
 		}
 	}
@@ -495,8 +463,7 @@ func (s *Session) reportMemory(fb feedback) {
 func (s *Session) observeTraits(fb feedback, succeeded bool) {
 	mem := s.c.set.traits
 	for _, n := range fb.traits {
-		if err := life.Safe("coord.traits", func() { mem.Observe(n.key, n.final, succeeded) }); err != nil {
-			s.c.noteCallbackPanic(s.id, err)
+		if !s.callout("coord.traits", "", func() { mem.Observe(n.key, n.final, succeeded) }) {
 			return
 		}
 	}

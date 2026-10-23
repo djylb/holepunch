@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -20,10 +21,10 @@ func mediumEIM(n int) protocol.Traits {
 // runRounds plans n rounds, each ended with the given per-family contact:
 // class NoContact rounds carry FamilyRound.NoContact, the way the
 // coordinator fills the outcome.
-func runRounds(t *testing.T, cl Classification, a, b protocol.Traits, n int, class RoundClass) []RoundDecision {
+func runRounds(t *testing.T, cl api.Classification, a, b protocol.Traits, n int, class api.RoundClass) []api.RoundDecision {
 	t.Helper()
-	var prev []RoundOutcome
-	var out []RoundDecision
+	var prev []api.RoundOutcome
+	var out []api.RoundDecision
 	for round := 1; round <= n; round++ {
 		in := roundInput(cl, a, b, round, prev)
 		in.MaxRounds = 6
@@ -32,16 +33,16 @@ func runRounds(t *testing.T, cl Classification, a, b protocol.Traits, n int, cla
 		if dec.Stop != "" {
 			break
 		}
-		o := RoundOutcome{Round: round, Variant: dec.Variant, Class: class, Budget: dec.Budget, Families: slices.Clone(dec.Families)}
+		o := api.RoundOutcome{Round: round, Variant: dec.Variant, Class: class, Budget: dec.Budget, Families: slices.Clone(dec.Families)}
 		for i := range o.Families {
-			o.Families[i].NoContact = class == RCNoContact
+			o.Families[i].NoContact = class == api.RoundNoContact
 		}
 		prev = append(prev, o)
 	}
 	return out
 }
 
-func variantNames(decs []RoundDecision) []string {
+func variantNames(decs []api.RoundDecision) []string {
 	var out []string
 	for _, d := range decs {
 		out = append(out, d.VariantName)
@@ -61,7 +62,7 @@ func TestNoContactEscalation(t *testing.T) {
 	if cl.PairClass != PairEasy {
 		t.Fatalf("class %s", cl.PairClass)
 	}
-	decs := runRounds(t, cl, a, b, 4, RCNoContact)
+	decs := runRounds(t, cl, a, b, 4, api.RoundNoContact)
 	got := variantNames(decs)
 	if want := []string{"easy_r1_direct", "easy_r2_ttl", "pres_r1", "pres_r2"}; !slices.Equal(got, want) {
 		t.Fatalf("rounds %v, want %v", got, want)
@@ -77,13 +78,13 @@ func TestNoContactEscalation(t *testing.T) {
 	}
 
 	// Rounds with contact, or a High conclusion, change nothing.
-	if got := variantNames(runRounds(t, cl, a, b, 3, RCOneWay)); slices.Contains(got, "pres_r1") {
+	if got := variantNames(runRounds(t, cl, a, b, 3, api.RoundOneWay)); slices.Contains(got, "pres_r1") {
 		t.Errorf("escalated after contact: %v", got)
 	}
 	hi, hj := pdfTraits(protocol.FamilyUDP4), mediumEIM(2)
 	hj.MappingConf = protocol.ConfHigh
 	clHigh := DefaultPlanner{}.Classify(classifyInput(hi, hj))
-	if got := variantNames(runRounds(t, clHigh, hi, hj, 3, RCNoContact)); got[2] != "easy_r3_ttl" {
+	if got := variantNames(runRounds(t, clHigh, hi, hj, 3, api.RoundNoContact)); got[2] != "easy_r3_ttl" {
 		t.Errorf("High sides escalated: %v", got)
 	}
 }
@@ -132,7 +133,7 @@ func TestEscalatedSides(t *testing.T) {
 func TestEscalationOnlyEasy(t *testing.T) {
 	a, b := mediumEIM(1), seqTraits(protocol.FamilyUDP4)
 	cl := DefaultPlanner{}.Classify(classifyInput(a, b))
-	got := variantNames(runRounds(t, cl, a, b, 3, RCNoContact))
+	got := variantNames(runRounds(t, cl, a, b, 3, api.RoundNoContact))
 	if !slices.Equal(got, []string{"pdf_x_seq_r1", "pdf_x_seq_r2", "pdf_x_seq_r3"}) {
 		t.Fatalf("rounds %v", got)
 	}

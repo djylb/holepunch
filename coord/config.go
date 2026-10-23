@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/clock"
-	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -86,8 +86,15 @@ type Config struct {
 	Limits Limits
 	// Budget holds the extreme switch.
 	Budget BudgetConfig
-	// Planner plans the rounds; nil uses the built-in planner.
-	Planner Planner
+	// Planner plans the rounds; nil uses DefaultPlanner(). The coordinator
+	// does not trust it: it calls it outside every lock and inside a
+	// recover boundary, clamps every decision to the budget classes, the
+	// session and per-key budgets and the protocol limits, admits only
+	// targets the clients admit, guards the escalation (one class a round,
+	// the first round's cap) and ends a session whose planner names an
+	// unknown reason with internal. A Planner that panics is replaced by
+	// the built-in one for the rest of the session.
+	Planner plan.Planner
 	// Memory is the cross-session strategy memory; nil uses
 	// NewStrategyMemory(StrategyMemoryConfig{}) and NoMemory{} turns it off.
 	Memory StrategyMemory
@@ -335,7 +342,7 @@ type settings struct {
 	limits     Limits
 	clock      clock.Clock
 	rand       io.Reader
-	planner    Planner
+	planner    plan.Planner
 	memory     StrategyMemory
 	traits     natprobe.TraitsMemory
 	timeouts   protocol.Timeouts
@@ -379,7 +386,7 @@ func newSettings(cfg Config) (settings, error) {
 		s.rand = rand.Reader
 	}
 	if s.planner == nil {
-		s.planner = plan.DefaultPlanner{}
+		s.planner = DefaultPlanner()
 	}
 	if s.memory == nil {
 		s.memory = NewStrategyMemory(StrategyMemoryConfig{Clock: s.clock})

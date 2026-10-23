@@ -11,6 +11,7 @@ import (
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/trunc"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -42,7 +43,6 @@ const (
 	progressDrainLimit = 100 * time.Millisecond
 	wireProgressRate   = 10 // frames per second
 	wireProgressBurst  = 30
-	maxProgressDetail  = 128
 )
 
 // Fault-injection point of local progress delivery.
@@ -83,7 +83,7 @@ func (rt *runtime) progress(ev progressEvent) {
 	sid, accepted := rt.ctl.session()
 	p := protocol.Progress{
 		SessionID: sid, Role: rt.role, Seq: seq, Stage: ev.stage, Status: ev.status, Round: ev.round,
-		Detail: truncProgressDetail(ev.detail), Counters: ev.counters,
+		Detail: trunc.String(ev.detail, protocol.MaxProgressDetail), Counters: ev.counters,
 	}
 	if !rt.startAt.IsZero() {
 		p.AtMs = uint32(max(now.Sub(rt.startAt), 0) / time.Millisecond)
@@ -116,13 +116,6 @@ func (rt *runtime) progress(ev progressEvent) {
 		local.Meta["candidate_remote"] = ev.remote.String()
 	}
 	rt.sink.push(local)
-}
-
-func truncProgressDetail(s string) string {
-	if len(s) <= maxProgressDetail {
-		return s
-	}
-	return truncDetail(s[:maxProgressDetail])
 }
 
 // progressSink delivers local progress copies to Options.OnProgress on one
@@ -225,14 +218,4 @@ func (s *progressSink) deliver(p protocol.Progress) {
 	}); pe != nil {
 		s.rt.cnt.callbackPanics.Add(1)
 	}
-}
-
-// sendAssist queues a punch_assist (P2; when the queue is full the newest
-// is dropped, which controlwire reports as ErrQueueFull).
-func (rt *runtime) sendAssist(a protocol.Assist) {
-	fr, err := msgframe.Encode(a)
-	if err != nil {
-		return
-	}
-	_ = rt.ctl.conn.Send(fr) // a full P2 queue drops the newest
 }

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -34,7 +36,7 @@ const minVelocityBase = 100 * time.Millisecond
 // then extrapolated to FireAt: anchor + velocity·(FireAt − anchor time); the
 // stage expansion adds the step. σ_t, the timing error of that guess, is the
 // coordinator's alignment margin D.
-func predictPeer(in RoundInput, role int, tr protocol.Traits, ip netip.Addr) prediction {
+func predictPeer(in input, role int, tr protocol.Traits, ip netip.Addr) prediction {
 	step := int(tr.PortStep)
 	p := prediction{steps: []int16{tr.PortStep}}
 	if step == 0 {
@@ -50,14 +52,14 @@ func predictPeer(in RoundInput, role int, tr protocol.Traits, ip netip.Addr) pre
 	at := time.Duration(tr.PortAnchorMs) * time.Millisecond
 	v := float64(tr.PortVelocity)
 
-	var samples []MappingSample
+	var samples []api.MappingSample
 	for _, s := range in.Mappings[role] {
 		if s.Addr.Addr().Unmap() == ip.Unmap() && s.Addr.Port() != 0 && (at <= 0 || s.At > at) {
 			samples = append(samples, s)
 		}
 	}
 	if len(samples) > 0 {
-		slices.SortStableFunc(samples, func(a, b MappingSample) int { return cmp.Compare(a.At, b.At) })
+		slices.SortStableFunc(samples, func(a, b api.MappingSample) int { return cmp.Compare(a.At, b.At) })
 		baseAt, basePort, own := at, anchor, 0
 		if at <= 0 || anchor == 0 {
 			baseAt, basePort, samples = samples[0].At, int(samples[0].Addr.Port()), samples[1:]
@@ -72,7 +74,7 @@ func predictPeer(in RoundInput, role int, tr protocol.Traits, ip netip.Addr) pre
 		if len(samples) > 0 {
 			last := samples[len(samples)-1]
 			if dt := last.At - baseAt; dt >= minVelocityBase {
-				others := float64(portDelta(basePort, int(last.Addr.Port()))-step*own) / dt.Seconds()
+				others := float64(netaddr.PortDelta(uint16(basePort), last.Addr.Port())-step*own) / dt.Seconds()
 				if (others > 0) != (step > 0) {
 					others = 0 // nobody else allocated in between, or noise against the step
 				}
@@ -110,9 +112,9 @@ func windowSpan(w float64) int {
 // when only the first probe came — extrapolated by the others' rate to
 // the fire time, and the window spreads over the timing error and the
 // rate's Poisson spread over that time.
-func refreshedPrediction(in RoundInput, role int, r AnchorRefresh, tr protocol.Traits, step int, p prediction) prediction {
+func refreshedPrediction(in input, role int, r api.AnchorRefresh, tr protocol.Traits, step int, p prediction) prediction {
 	lambda, _ := refreshRate(in, role, r, tr, step)
-	port, at, _, after := r.newest()
+	port, at, _, after := anchorNewest(r)
 	ahead := 0.0
 	if in.FireAt > at {
 		ahead = lambda * (in.FireAt - at).Seconds()
@@ -124,56 +126,56 @@ func refreshedPrediction(in RoundInput, role int, r AnchorRefresh, tr protocol.T
 }
 
 // refreshFor is role's anchor refresh of family fam on ip, if any.
-func refreshFor(in RoundInput, role int, fam protocol.Family, ip netip.Addr) (AnchorRefresh, bool) {
+func refreshFor(in input, role int, fam protocol.Family, ip netip.Addr) (api.AnchorRefresh, bool) {
 	for _, r := range in.Refresh[role] {
-		if r.Family == fam && r.on(ip) {
+		if r.Family == fam && anchorOn(r, ip) {
 			return r, true
 		}
 	}
-	return AnchorRefresh{}, false
+	return api.AnchorRefresh{}, false
 }
 
-// on reports whether the refresh has a probe and every probe it has is
+// anchorOn reports whether the refresh has a probe and every probe it has is
 // on ip.
-func (r AnchorRefresh) on(ip netip.Addr) bool {
+func anchorOn(r api.AnchorRefresh, ip netip.Addr) bool {
 	at := func(a netip.AddrPort) bool { return !a.IsValid() || a.Addr().Unmap() == ip.Unmap() }
 	return (r.First.IsValid() || r.Second.IsValid()) && at(r.First) && at(r.Second)
 }
 
-// newest is the newest point of the allocator a refresh saw: its second
+// anchorNewest is the newest point of the allocator a refresh saw: its second
 // mapping, or its first when the second did not come. before and
 // after count the side's own refresh mappings on either side of that
 // point: a probe that did not come was lost on the way after its NAT had
 // mapped it, so it still moved the allocator.
-func (r AnchorRefresh) newest() (port uint16, at time.Duration, before, after int) {
+func anchorNewest(r api.AnchorRefresh) (port uint16, at time.Duration, before, after int) {
 	if r.Second.IsValid() {
 		return r.Second.Port(), r.SecondAt, 1, 0
 	}
 	return r.First.Port(), r.FirstAt, 0, 1
 }
 
-// rate is the allocation rate of other hosts between a refresh's two
+// anchorRate is the allocation rate of other hosts between a refresh's two
 // mappings, in steps a second: the steps between them less the
 // second one, over the time between them. A refresh missing a probe
 // measures nothing.
-func (r AnchorRefresh) rate(step int) (float64, bool) {
+func anchorRate(r api.AnchorRefresh, step int) (float64, bool) {
 	if !r.First.IsValid() || !r.Second.IsValid() {
 		return 0, false
 	}
-	return r.rateFrom(r.First.Port(), r.FirstAt, step, 0)
+	return anchorRateFrom(r, r.First.Port(), r.FirstAt, step, 0)
 }
 
-// rateFrom is the others' rate between an earlier point of the allocator —
+// anchorRateFrom is the others' rate between an earlier point of the allocator —
 // port from, allocated at fromAt — and the refresh's newest mapping, of
 // which own were the side's own mappings in between: the steps between the
 // two less own and the newest mapping itself, over the time between them.
 // A newest mapping that is not ahead of the point by own steps at least
 // along step — the counted mappings do not match the NAT — or a time too
 // short to tell measures nothing.
-func (r AnchorRefresh) rateFrom(from uint16, fromAt time.Duration, step, own int) (float64, bool) {
-	port, at, _, _ := r.newest()
+func anchorRateFrom(r api.AnchorRefresh, from uint16, fromAt time.Duration, step, own int) (float64, bool) {
+	port, at, _, _ := anchorNewest(r)
 	dt := at - fromAt
-	d := portDelta(int(from), int(port))
+	d := netaddr.PortDelta(from, port)
 	if step == 0 || dt < minRefreshGap || d%step != 0 || d/step < own+1 {
 		return 0, false
 	}
@@ -189,16 +191,16 @@ func (r AnchorRefresh) rateFrom(from uint16, fromAt time.Duration, step, own int
 // refresh's own before its newest point. The two probes' own rate is left
 // for when the anchor cannot serve: on another IP, or behind the newest
 // point by fewer steps than the counted mappings.
-func refreshRate(in RoundInput, role int, r AnchorRefresh, tr protocol.Traits, step int) (float64, bool) {
+func refreshRate(in input, role int, r api.AnchorRefresh, tr protocol.Traits, step int) (float64, bool) {
 	at := time.Duration(tr.PortAnchorMs) * time.Millisecond
-	_, newestAt, before, _ := r.newest()
-	if tr.PortAnchor != 0 && at > 0 && at < newestAt && r.on(tr.Observed.Addr()) {
+	_, newestAt, before, _ := anchorNewest(r)
+	if tr.PortAnchor != 0 && at > 0 && at < newestAt && anchorOn(r, tr.Observed.Addr()) {
 		own := mappedSince(in, r.Family, role, 0) + before
-		if lambda, ok := r.rateFrom(tr.PortAnchor, at, step, own); ok {
+		if lambda, ok := anchorRateFrom(r, tr.PortAnchor, at, step, own); ok {
 			return lambda, true
 		}
 	}
-	return r.rate(step)
+	return anchorRate(r, step)
 }
 
 // refreshDrift is how many steps the allocator is expected to move at
@@ -209,8 +211,8 @@ func refreshRate(in RoundInput, role int, r AnchorRefresh, tr protocol.Traits, s
 // are a Poisson count, two to four over the 80–150 ms from a refresh to
 // the fire at 20 a second, so the margin keeps most of the spread on the
 // side the offset pairs cover.
-func refreshDrift(lambda float64, r AnchorRefresh, at time.Duration) int {
-	_, newestAt, _, _ := r.newest()
+func refreshDrift(lambda float64, r api.AnchorRefresh, at time.Duration) int {
+	_, newestAt, _, _ := anchorNewest(r)
 	if at <= newestAt {
 		return 0
 	}
@@ -244,19 +246,23 @@ const refreshAfter = 500 * time.Millisecond
 // qualify: a fresh anchor does not help predict them. Nor does a family
 // natprobe measured as one only the cheap rounds can open (SeqRndVerdict): a
 // refresh does not change that verdict.
-func RefreshWanted(in RoundInput, dec RoundDecision, now time.Duration) [2][]protocol.Family {
+func RefreshWanted(r api.RoundInput, dec api.RoundDecision, now time.Duration) [2][]protocol.Family {
+	in := newInput(r)
 	var out [2][]protocol.Family
-	for fi, fp := range in.Class.fams {
+	for _, fp := range in.fams {
 		if fp.Unverified || fp.CheapOnly {
 			continue
 		}
 		var anchored, due [2]bool
 		for role := range 2 {
 			tr := familyTraits(in.Views[role], fp.Family)
-			if CategoryOf(tr) != CatSEQ || tr.PortAlloc != protocol.AllocSequential || fi >= len(dec.Sides[1-role]) {
+			if CategoryOf(tr) != CatSEQ || tr.PortAlloc != protocol.AllocSequential {
 				continue
 			}
-			if !slices.ContainsFunc(dec.Sides[1-role][fi].Stages, func(st protocol.Stage) bool { return st.Kind == protocol.StagePredict }) {
+			// A custom classification may order or drop families: match
+			// the decision's sides by family, not by index.
+			si := slices.IndexFunc(dec.Sides[1-role], func(s protocol.FamilySide) bool { return s.Family == fp.Family })
+			if si < 0 || !slices.ContainsFunc(dec.Sides[1-role][si].Stages, func(st protocol.Stage) bool { return st.Kind == protocol.StagePredict }) {
 				continue
 			}
 			anchored[role] = true
@@ -276,7 +282,7 @@ func RefreshWanted(in RoundInput, dec RoundDecision, now time.Duration) [2][]pro
 // lastObservation is the newest observation of role's allocator in the
 // family of tr, on the FireAt axis: the probe's anchor or a later mapping
 // seen while punching.
-func lastObservation(in RoundInput, role int, tr protocol.Traits) time.Duration {
+func lastObservation(in input, role int, tr protocol.Traits) time.Duration {
 	last := time.Duration(tr.PortAnchorMs) * time.Millisecond
 	for _, s := range in.Mappings[role] {
 		if s.Addr.Addr().Is4() == (tr.Family == protocol.FamilyUDP4) {

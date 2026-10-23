@@ -145,10 +145,8 @@ func TestRunGuardKnownPorts(t *testing.T) {
 	g.want("9099 towards the Direct target", g.punch(g.to(9099)), false)
 	g.want("9100", g.punch(g.to(9100)), true)
 	g.want("9101", g.punch(g.to(9101)), true) // its own continuation 9102 is unknown
-	g.rt.punch.mu.Lock()
-	g.rt.punch.hit[netipAP("198.51.100.1", 9200)] = true
-	g.rt.punch.hit[netipAP("198.51.100.1", 9301)] = true
-	g.rt.punch.mu.Unlock()
+	g.rt.punch.notePeer(protocol.FamilyUDP4, g.sock.local, netipAP("198.51.100.1", 9200), false)
+	g.rt.punch.notePeer(protocol.FamilyUDP4, g.sock.local, netipAP("198.51.100.1", 9301), false)
 	g.want("9202", g.punch(g.to(9202)), true)
 	g.want("9201 towards an answered address", g.punch(g.to(9201)), false)
 	g.want("9300", g.punch(g.to(9300)), true)
@@ -283,13 +281,7 @@ func TestSendSequenceKeepsRunLimit(t *testing.T) {
 // endpoint P, with Direct targets P and some of P±1, P±2, a predict stage
 // anchored at P, now and then a random stage over P±24, and 1–3 sockets.
 func crowdedPlan(rng *rand.Rand, k int, r protocol.Role, views [2]protocol.PeerView) protocol.RoundPlan {
-	var peer netip.AddrPort
-	for _, e := range views[1-roleIndex(r)].Families[0].Endpoints {
-		if e.Verified {
-			peer = e.Addr
-			break
-		}
-	}
+	peer := peerAddr(r, views)
 	ip, p := peer.Addr(), int(peer.Port())
 	near := func(d int) netip.AddrPort { return netip.AddrPortFrom(ip, uint16(min(max(p+d, 1024), 65535))) }
 	targets := []netip.AddrPort{peer}

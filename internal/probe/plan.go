@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/udpwire"
+	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/stun"
 )
 
@@ -84,12 +86,12 @@ type stunTarget struct {
 }
 
 // stunServers returns the STUN servers of spec that the family uses: at
-// most maxSTUNServers usable addresses of the family, in spec order.
+// most protocol.MaxReportSTUNRows usable addresses of the family, in spec order.
 func stunServers(spec Spec) []stunServer {
 	var out []stunServer
 	for i, a := range spec.Probe.STUN {
-		a = unmap(a)
-		if len(out) == maxSTUNServers || a.Port() == 0 || !spec.Family.Matches(a.Addr()) || nat.ScopeOf(a.Addr()) == nat.ScopeNone {
+		a = netaddr.Unmap(a)
+		if len(out) == protocol.MaxReportSTUNRows || a.Port() == 0 || !spec.Family.Matches(a.Addr()) || netaddr.ScopeOf(a.Addr()) == netaddr.ScopeNone {
 			continue
 		}
 		out = append(out, stunServer{idx: uint8(i), addr: a})
@@ -113,10 +115,10 @@ func newRunState(p *Prober) *runState {
 	if p.setupErr != "" {
 		return s
 	}
-	scope := nat.ScopePrivate
+	scope := netaddr.ScopePrivate
 	for _, o := range p.observers {
-		if !o.Alt && o.Scope == nat.ScopeGlobal {
-			scope = nat.ScopeGlobal
+		if !o.Alt && o.Scope == netaddr.ScopeGlobal {
+			scope = netaddr.ScopeGlobal
 		}
 	}
 	for _, o := range p.observers {

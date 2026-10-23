@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -28,20 +27,6 @@ func TestErrorFormatAndAs(t *testing.T) {
 	}
 	if got := (&Error{Reason: protocol.ReasonCanceled, Phase: protocol.PhaseCreated}).Error(); got != "holepunch: canceled in created" {
 		t.Fatalf("no detail: %q", got)
-	}
-}
-
-func TestTruncDetail(t *testing.T) {
-	s := strings.Repeat("é", 200) // 400 bytes
-	got := truncDetail(s)
-	if len(got) > maxDetail || !strings.HasPrefix(s, got) || len(got) < maxDetail-1 {
-		t.Fatalf("len %d", len(got))
-	}
-	if truncDetail("short") != "short" {
-		t.Fatal("short detail changed")
-	}
-	if got := truncProgressDetail(strings.Repeat("x", 300)); len(got) != maxProgressDetail {
-		t.Fatalf("progress detail %d", len(got))
 	}
 }
 

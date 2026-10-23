@@ -7,8 +7,8 @@ import (
 	"net"
 
 	"github.com/djylb/holepunch/coord"
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/holepunch/standalone/internal/life"
 	"github.com/djylb/holepunch/standalone/proto"
 )
 
@@ -171,16 +171,7 @@ func (s *Session) ID() string { return s.info.SessionID }
 
 // Info returns the session's description, the SessionInfo both sides
 // receive.
-func (s *Session) Info() proto.SessionInfo {
-	info := s.info
-	info.HostMetadata = maps.Clone(info.HostMetadata)
-	info.DialerMetadata = maps.Clone(info.DialerMetadata)
-	info.Policy.Targets = append([]string(nil), info.Policy.Targets...)
-	if len(info.Policy.Targets) == 0 {
-		info.Policy.Targets = nil
-	}
-	return info
-}
+func (s *Session) Info() proto.SessionInfo { return s.info.Clone() }
 
 // Coord returns the coord session, for Inject, Snapshot, Done and Result.
 func (s *Session) Coord() *coord.Session { return s.cs }
@@ -210,8 +201,7 @@ func (s *Session) Attach(role protocol.Role, conn net.Conn, opts coord.AttachOpt
 // invalid_argument refusal. A recovered panic is tested first, since its
 // panic value may wrap any error.
 func invalidArgument(err error) bool {
-	var pe *life.PanicError
-	if errors.As(err, &pe) {
+	if life.IsPanic(err) {
 		return false
 	}
 	var ve *protocol.ValidationError

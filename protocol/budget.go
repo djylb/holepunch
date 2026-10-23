@@ -1,6 +1,9 @@
 package protocol
 
-import "time"
+import (
+	"cmp"
+	"time"
+)
 
 // Policy is a side's session policy: punch_start.policy from the server and
 // holepunch.Options.Policy locally. Policies only ever tighten:
@@ -102,22 +105,22 @@ func TightenBudget(levels ...Budget) Budget {
 	if len(levels) > 0 {
 		top := levels[0]
 		out = Budget{
-			MaxPackets:         orDefault(top.MaxPackets, def.MaxPackets),
-			MaxPPS:             orDefault(top.MaxPPS, def.MaxPPS),
-			MaxDistinctTargets: orDefault(top.MaxDistinctTargets, def.MaxDistinctTargets),
-			MaxSockets:         orDefault(top.MaxSockets, def.MaxSockets),
-			MaxNewPerSec:       orDefault(top.MaxNewPerSec, def.MaxNewPerSec),
+			MaxPackets:         cmp.Or(top.MaxPackets, def.MaxPackets),
+			MaxPPS:             cmp.Or(top.MaxPPS, def.MaxPPS),
+			MaxDistinctTargets: cmp.Or(top.MaxDistinctTargets, def.MaxDistinctTargets),
+			MaxSockets:         cmp.Or(top.MaxSockets, def.MaxSockets),
+			MaxNewPerSec:       cmp.Or(top.MaxNewPerSec, def.MaxNewPerSec),
 			Birthday:           top.Birthday,
 		}
 		if out.Birthday == "" {
 			out.Birthday = def.Birthday
 		}
 		for _, l := range levels[1:] {
-			out.MaxPackets = minSet(out.MaxPackets, l.MaxPackets)
-			out.MaxPPS = minSet(out.MaxPPS, l.MaxPPS)
-			out.MaxDistinctTargets = minSet(out.MaxDistinctTargets, l.MaxDistinctTargets)
-			out.MaxSockets = minSet(out.MaxSockets, l.MaxSockets)
-			out.MaxNewPerSec = minSet(out.MaxNewPerSec, l.MaxNewPerSec)
+			out.MaxPackets = MinSet(out.MaxPackets, l.MaxPackets)
+			out.MaxPPS = MinSet(out.MaxPPS, l.MaxPPS)
+			out.MaxDistinctTargets = MinSet(out.MaxDistinctTargets, l.MaxDistinctTargets)
+			out.MaxSockets = MinSet(out.MaxSockets, l.MaxSockets)
+			out.MaxNewPerSec = MinSet(out.MaxNewPerSec, l.MaxNewPerSec)
 			if l.Birthday != "" && l.Birthday.Rank() < out.Birthday.Rank() {
 				out.Birthday = l.Birthday
 			}
@@ -134,18 +137,16 @@ func TightenBudget(levels ...Budget) Budget {
 	return out
 }
 
-func orDefault[T uint16 | uint32](v, def T) T {
-	if v == 0 {
-		return def
+// MinSet is the tighter of two limits of which 0 means unset: the smaller
+// of a and b, or the one that is set, or 0 when neither is.
+func MinSet[T ~uint8 | ~uint16 | ~uint32](a, b T) T {
+	switch {
+	case a == 0:
+		return b
+	case b == 0:
+		return a
 	}
-	return v
-}
-
-func minSet[T uint16 | uint32](cur, v T) T {
-	if v != 0 && v < cur {
-		return v
-	}
-	return cur
+	return min(a, b)
 }
 
 // Tighten merges the server's policy (punch_start.policy) with the local one
@@ -172,7 +173,7 @@ func Tighten(server, local *Policy) Policy {
 			EnableUPnP:   andBool(s.PortMapping.EnableUPnP, l.PortMapping.EnableUPnP),
 			EnablePCP:    andBool(s.PortMapping.EnablePCP, l.PortMapping.EnablePCP),
 			EnableNATPMP: andBool(s.PortMapping.EnableNATPMP, l.PortMapping.EnableNATPMP),
-			LeaseSeconds: minNonZero(s.PortMapping.LeaseSeconds, l.PortMapping.LeaseSeconds),
+			LeaseSeconds: MinSet(s.PortMapping.LeaseSeconds, l.PortMapping.LeaseSeconds),
 		},
 		LowTTL: andBool(s.LowTTL, l.LowTTL),
 	}
@@ -216,16 +217,6 @@ func andBool(a, b *bool) *bool {
 	return &v
 }
 
-func minNonZero(a, b uint32) uint32 {
-	switch {
-	case a == 0:
-		return b
-	case b == 0:
-		return a
-	}
-	return min(a, b)
-}
-
 // normalizeHops clamps hops to [2,32], drops duplicates and keeps at most 8,
 // preserving order.
 func normalizeHops(in []int) []int {
@@ -236,7 +227,7 @@ func normalizeHops(in []int) []int {
 		for _, o := range out {
 			dup = dup || o == h
 		}
-		if !dup && len(out) < maxLowTTLHops {
+		if !dup && len(out) < MaxLowTTLHops {
 			out = append(out, h)
 		}
 	}
@@ -273,6 +264,29 @@ func (c BudgetClass) Rank() int {
 		return 3
 	}
 	return 0
+}
+
+// ClassOfRank is the class of rank r on the escalation ladder: light at or
+// below 1, balanced 2, heavy 3, extreme at or above 4. Background, which
+// shares heavy's rank, is off the ladder and never returned.
+func ClassOfRank(r int) BudgetClass {
+	switch {
+	case r <= 1:
+		return BudgetLight
+	case r == 2:
+		return BudgetBalanced
+	case r == 3:
+		return BudgetHeavy
+	}
+	return BudgetExtreme
+}
+
+// Min is the lower-ranked of c and d; c on a tie.
+func (c BudgetClass) Min(d BudgetClass) BudgetClass {
+	if c.Rank() <= d.Rank() {
+		return c
+	}
+	return d
 }
 
 // Limits is the class ceiling: light 150/80/16/2, balanced 800/200/64/8,

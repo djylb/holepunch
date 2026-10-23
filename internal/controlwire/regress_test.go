@@ -15,7 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/faultconn"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/testkit"
+	"github.com/djylb/holepunch/internal/wiretype"
 )
 
 // A panic in the caller's Write or SetWriteDeadline must settle the frame
@@ -27,32 +30,34 @@ func TestWritePanicWakesWaiters(t *testing.T) {
 			a, b := net.Pipe()
 			defer func() { _ = b.Close() }()
 			gate := make(chan struct{})
-			rc := &recConn{Conn: a}
+			rc := faultconn.Wrap(a)
 			var probes int
 			switch where {
 			case "Write":
-				rc.onWrite = func([]byte) { <-gate; panic("user conn Write bug") }
+				rc.OnWrite(func([]byte) { <-gate; panic("user conn Write bug") })
 			case "SetWriteDeadline":
-				rc.onSetWrite = func(time.Time) {
+				rc.OnSetWriteDeadline(func(time.Time) {
 					if probes++; probes > 1 { // the first call is NewConn's probe
 						<-gate
 						panic("user conn SetWriteDeadline bug")
 					}
-				}
+				})
 			}
 			c := mustConn(t, rc, ConnOptions{})
 			wf := make(chan error, 1)
-			go func() { wf <- c.WriteFrame(context.Background(), Frame{Type: TypePunchReady, Payload: []byte("{}")}) }()
-			eventually(t, "the frame to be picked", func() bool {
+			go func() {
+				wf <- c.WriteFrame(context.Background(), Frame{Type: wiretype.PunchReady, Payload: []byte("{}")})
+			}()
+			testkit.WaitFor(t, "the frame to be picked", func() bool {
 				c.qmu.Lock()
 				defer c.qmu.Unlock()
 				return c.flight != nil
 			})
 			waiting := make(chan error, 1)
 			go func() {
-				waiting <- c.WriteFrame(context.Background(), Frame{Type: TypeRoundResult, Payload: []byte("{}")})
+				waiting <- c.WriteFrame(context.Background(), Frame{Type: wiretype.RoundResult, Payload: []byte("{}")})
 			}()
-			eventually(t, "the second frame to queue", func() bool { return queued(c, prioP1) == 1 })
+			testkit.WaitFor(t, "the second frame to queue", func() bool { return queued(c, wiretype.P1) == 1 })
 			fl := make(chan error, 1)
 			flCtx := newDoneSignal(context.Background())
 			go func() { fl <- c.Flush(flCtx) }()
@@ -82,7 +87,7 @@ func TestWritePanicWakesWaiters(t *testing.T) {
 			if !errors.As(c.Err(), &perr) {
 				t.Fatalf("Err = %v", c.Err())
 			}
-			if err := c.Send(Frame{Type: TypePong}); !errors.As(err, &perr) {
+			if err := c.Send(Frame{Type: wiretype.Pong}); !errors.As(err, &perr) {
 				t.Fatalf("Send after the panic = %v", err)
 			}
 			err := within(t, "Release", time.Second, c.Release)
@@ -101,7 +106,7 @@ func TestSlowBuilderCannotDefeatRelease(t *testing.T) {
 	defer func() { _ = b.Close() }()
 	c := mustConn(t, a, ConnOptions{})
 	inBuild := make(chan struct{})
-	must(t, c.SendFunc(TypePong, func(time.Time) ([]byte, error) {
+	must(t, c.SendFunc(wiretype.Pong, func(time.Time) ([]byte, error) {
 		close(inBuild)
 		time.Sleep(3 * releaseGrace)
 		return []byte(`{"seq":1}`), nil
@@ -127,21 +132,22 @@ func TestWriterDeadlineCannotOverrideInterrupt(t *testing.T) {
 	entered := make(chan struct{})
 	resume := make(chan struct{})
 	var once sync.Once
-	rc := &recConn{Conn: a}
-	rc.onSetWrite = func(dl time.Time) {
+	rc := faultconn.Wrap(a)
+	rc.Record()
+	rc.OnSetWriteDeadline(func(dl time.Time) {
 		if dl.After(time.Now()) {
 			once.Do(func() { close(entered); <-resume })
 		}
-	}
+	})
 	c := mustConn(t, rc, ConnOptions{})
-	must(t, c.Send(Frame{Type: TypePong, Payload: []byte("{}")}))
+	must(t, c.Send(Frame{Type: wiretype.Pong, Payload: []byte("{}")}))
 	<-entered
 	relDone := make(chan error, 1)
 	start := time.Now()
 	go func() { relDone <- c.Release() }()
 	// Let Release run its grace and interrupt while the writer is stuck in
 	// SetWriteDeadline; then let the writer continue.
-	eventually(t, "Release to interrupt the write side", c.writeStopped)
+	testkit.WaitFor(t, "Release to interrupt the write side", c.writeStopped)
 	close(resume)
 	var err error
 	select {
@@ -153,22 +159,22 @@ func TestWriterDeadlineCannotOverrideInterrupt(t *testing.T) {
 		t.Fatalf("Release = %v (no byte was written, the stream is clean)", err)
 	}
 	returned := time.Now()
-	if rc.writes.Load() != 0 {
+	if rc.Writes() != 0 {
 		t.Fatal("a Write started after Release interrupted the write side")
 	}
 	// The last deadline Release leaves is zero, set after the writer's own.
-	evs := rc.eventsAfter(start)
-	var lastWDL *event
+	evs := rc.EventsAfter(start)
+	var lastWDL *faultconn.Event
 	for i := range evs {
-		if evs[i].op == "wdl" {
+		if evs[i].Op == faultconn.OpSetWriteDeadline {
 			lastWDL = &evs[i]
 		}
 	}
-	if lastWDL == nil || !lastWDL.t.IsZero() {
+	if lastWDL == nil || !lastWDL.Deadline.IsZero() {
 		t.Fatalf("final write deadline = %+v, want cleared", lastWDL)
 	}
 	time.Sleep(50 * time.Millisecond)
-	if late := rc.eventsAfter(returned); len(late) != 0 {
+	if late := rc.EventsAfter(returned); len(late) != 0 {
 		t.Fatalf("calls on the connection after Release returned: %+v", late)
 	}
 }
@@ -181,11 +187,12 @@ func TestReleaseJoinTimeoutLeavesDeadlinesAndConnAlone(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = b.Close() }()
 	gate := make(chan struct{})
-	rc := &recConn{Conn: deadlineIgnoring{a, gate}}
+	rc := deadlineIgnoring(a, gate)
+	rc.Record()
 	c, err := NewConn(rc, ConnOptions{})
 	must(t, err)
-	must(t, c.Send(Frame{Type: TypePong, Payload: []byte("{}")}))
-	eventually(t, "the stuck write", func() bool { return rc.writes.Load() == 1 })
+	must(t, c.Send(Frame{Type: wiretype.Pong, Payload: []byte("{}")}))
+	testkit.WaitFor(t, "the stuck write", func() bool { return rc.Writes() == 1 })
 	start := time.Now()
 	err = within(t, "Release", 3*time.Second, c.Release)
 	if !errors.Is(err, ErrUnreturnable) {
@@ -195,14 +202,14 @@ func TestReleaseJoinTimeoutLeavesDeadlinesAndConnAlone(t *testing.T) {
 	if d := returned.Sub(start); d < releaseJoin || d > releaseJoin+time.Second {
 		t.Fatalf("Release took %v", d)
 	}
-	for _, e := range rc.eventsAfter(start) {
-		if (e.op == "wdl" || e.op == "rdl") && e.t.IsZero() {
+	for _, e := range rc.EventsAfter(start) {
+		if (e.Op == faultconn.OpSetWriteDeadline || e.Op == faultconn.OpSetReadDeadline) && e.Deadline.IsZero() {
 			t.Fatalf("a deadline was cleared although a goroutine is still running: %+v", e)
 		}
 	}
 	close(gate)
-	eventually(t, "the stuck goroutine to exit", func() bool { return c.g.Stats().Running == 0 })
-	if late := rc.eventsAfter(returned); len(late) != 0 {
+	testkit.WaitFor(t, "the stuck goroutine to exit", func() bool { return c.g.Stats().Running == 0 })
+	if late := rc.EventsAfter(returned); len(late) != 0 {
 		t.Fatalf("calls on the connection after Release returned: %+v", late)
 	}
 	_ = a.Close()
@@ -217,9 +224,10 @@ func TestBlockedInterceptDoesNotReadAfterRelease(t *testing.T) {
 	defer func() { _ = b.Close() }()
 	unblock := make(chan struct{})
 	entered := make(chan struct{}, 1)
-	rc := &recConn{Conn: a}
+	rc := faultconn.Wrap(a)
+	rc.Record()
 	c, err := NewConn(rc, ConnOptions{Side: SideClient, Intercept: func(_ *Conn, f Frame) bool {
-		if f.Type == TypePing {
+		if f.Type == wiretype.Ping {
 			entered <- struct{}{}
 			<-unblock
 			return true
@@ -227,7 +235,7 @@ func TestBlockedInterceptDoesNotReadAfterRelease(t *testing.T) {
 		return false
 	}})
 	must(t, err)
-	if _, err := b.Write(frameBytes(TypePing, `{"seq":1}`)); err != nil {
+	if _, err := b.Write(frameBytes(wiretype.Ping, `{"seq":1}`)); err != nil {
 		t.Fatal(err)
 	}
 	<-entered
@@ -237,14 +245,14 @@ func TestBlockedInterceptDoesNotReadAfterRelease(t *testing.T) {
 		t.Fatalf("Release = %v", err)
 	}
 	returned := time.Now()
-	for _, e := range rc.eventsAfter(start) {
-		if e.op == "rdl" && e.t.IsZero() {
+	for _, e := range rc.EventsAfter(start) {
+		if e.Op == faultconn.OpSetReadDeadline && e.Deadline.IsZero() {
 			t.Fatal("the read deadline was cleared while the reader was alive")
 		}
 	}
 	close(unblock)
-	eventually(t, "the reader to exit", func() bool { return c.g.Stats().Running == 0 })
-	if late := rc.eventsAfter(returned); len(late) != 0 {
+	testkit.WaitFor(t, "the reader to exit", func() bool { return c.g.Stats().Running == 0 })
+	if late := rc.EventsAfter(returned); len(late) != 0 {
 		t.Fatalf("calls on the connection after Release returned: %+v", late)
 	}
 	// The caller owns the connection again and reads its own protocol.
@@ -261,7 +269,7 @@ func TestBlockedInterceptDoesNotReadAfterRelease(t *testing.T) {
 // frame within the grace and the stream is handed back at the boundary; if
 // the rest does not arrive in time, Release says the stream is unreturnable.
 func TestReleaseWaitsForFrameBoundary(t *testing.T) {
-	frame := frameBytes(TypePunchGo, `{"round":1,"padding":"xxxxxxxx"}`)
+	frame := frameBytes(wiretype.PunchGo, `{"round":1,"padding":"xxxxxxxx"}`)
 	t.Run("rest arrives within the grace", func(t *testing.T) {
 		a, b := net.Pipe()
 		defer func() { _ = b.Close() }()
@@ -269,14 +277,14 @@ func TestReleaseWaitsForFrameBoundary(t *testing.T) {
 		if _, err := b.Write(frame[:HeaderSize+4]); err != nil {
 			t.Fatal(err)
 		}
-		eventually(t, "the reader to be inside the frame", func() bool {
+		testkit.WaitFor(t, "the reader to be inside the frame", func() bool {
 			c.rmu.Lock()
 			defer c.rmu.Unlock()
 			return c.rmid
 		})
 		rel := make(chan error, 1)
 		go func() { rel <- c.Release() }()
-		eventually(t, "Release to wait for the frame boundary", func() bool {
+		testkit.WaitFor(t, "Release to wait for the frame boundary", func() bool {
 			c.rmu.Lock()
 			defer c.rmu.Unlock()
 			return c.rbound != nil
@@ -285,7 +293,7 @@ func TestReleaseWaitsForFrameBoundary(t *testing.T) {
 		// mid-frame, nobody reads it and the deferred b.Close unblocks it.
 		go func() { _, _ = b.Write(frame[HeaderSize+4:]) }()
 		must(t, <-rel)
-		if f, err := c.ReadFrame(context.Background()); err != nil || f.Type != TypePunchGo {
+		if f, err := c.ReadFrame(context.Background()); err != nil || f.Type != wiretype.PunchGo {
 			t.Fatalf("the completed frame: %v, %v", f.Type, err)
 		}
 		go func() { _, _ = b.Write([]byte("hp-next")) }()
@@ -301,7 +309,7 @@ func TestReleaseWaitsForFrameBoundary(t *testing.T) {
 		if _, err := b.Write(frame[:HeaderSize+4]); err != nil {
 			t.Fatal(err)
 		}
-		eventually(t, "the reader to be inside the frame", func() bool {
+		testkit.WaitFor(t, "the reader to be inside the frame", func() bool {
 			c.rmu.Lock()
 			defer c.rmu.Unlock()
 			return c.rmid
@@ -335,18 +343,7 @@ func (d *doneSignal) Done() <-chan struct{} {
 	return d.Context.Done()
 }
 
-// gatedFailConn fails every Write once gate is closed.
-type gatedFailConn struct {
-	net.Conn
-	gate chan struct{}
-}
-
 var errWriteBroken = errors.New("write broken")
-
-func (g gatedFailConn) Write([]byte) (int, error) {
-	<-g.gate
-	return 0, errWriteBroken
-}
 
 // A frame lost to a failing write is reported by the Flush waiting for it:
 // the frame leaves the flight only after the write side has stopped, so
@@ -355,9 +352,13 @@ func TestFlushReportsFrameLostToWriteFailure(t *testing.T) {
 	for i := range 300 {
 		a, b := net.Pipe()
 		gate := make(chan struct{})
-		c, err := NewConn(gatedFailConn{a, gate}, ConnOptions{})
+		// Every Write fails once gate is closed.
+		fc := faultconn.Wrap(a)
+		fc.OnWrite(func([]byte) { <-gate })
+		fc.FailWrites(errWriteBroken)
+		c, err := NewConn(fc, ConnOptions{})
 		must(t, err)
-		must(t, c.Send(Frame{Type: TypePong, Payload: []byte("{}")}))
+		must(t, c.Send(Frame{Type: wiretype.Pong, Payload: []byte("{}")}))
 		ctx := newDoneSignal(context.Background())
 		flushed := make(chan error, 1)
 		go func() { flushed <- c.Flush(ctx) }()
@@ -399,7 +400,7 @@ func TestWriteFrameEndedContextLeavesLinkUsable(t *testing.T) {
 	defer func() { _ = b.Close() }()
 	idle := mustConn(t, a, ConnOptions{})
 	for i := range 32 {
-		if err := idle.WriteFrame(expired, Frame{Type: TypeRoundResult, Payload: []byte("late")}); !errors.Is(err, context.DeadlineExceeded) {
+		if err := idle.WriteFrame(expired, Frame{Type: wiretype.RoundResult, Payload: []byte("late")}); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("idle writer, attempt %d: WriteFrame(ended ctx) = %v", i, err)
 		}
 	}
@@ -410,7 +411,7 @@ func TestWriteFrameEndedContextLeavesLinkUsable(t *testing.T) {
 	c, peer, release := stalledConn(t, SideClient)
 	for i := range 32 {
 		ctx := &lateCtx{Context: expired}
-		if err := c.WriteFrame(ctx, Frame{Type: TypeRoundResult, Payload: []byte("late")}); !errors.Is(err, context.DeadlineExceeded) {
+		if err := c.WriteFrame(ctx, Frame{Type: wiretype.RoundResult, Payload: []byte("late")}); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("busy writer, attempt %d: WriteFrame(ended ctx) = %v", i, err)
 		}
 	}
@@ -418,7 +419,7 @@ func TestWriteFrameEndedContextLeavesLinkUsable(t *testing.T) {
 		t.Fatalf("busy writer: Err = %v after WriteFrame calls with an ended ctx", err)
 	}
 	close(release)
-	must(t, c.Send(Frame{Type: TypePong, Payload: []byte("next")}))
+	must(t, c.Send(Frame{Type: wiretype.Pong, Payload: []byte("next")}))
 	if p := payloadsOf(readFrames(t, peer, 2)); fmt.Sprint(p) != "[first next]" {
 		t.Fatalf("frames %v", p)
 	}
@@ -444,7 +445,7 @@ func TestWriteInvalidCountMakesStreamUnreturnable(t *testing.T) {
 			a, b := net.Pipe()
 			defer func() { _ = b.Close() }()
 			c := mustConn(t, countConn{a, count}, ConnOptions{})
-			if err := c.WriteFrame(context.Background(), Frame{Type: TypePong, Payload: []byte("{}")}); err == nil {
+			if err := c.WriteFrame(context.Background(), Frame{Type: wiretype.Pong, Payload: []byte("{}")}); err == nil {
 				t.Fatal("WriteFrame succeeded with an invalid count")
 			}
 			<-c.Done()

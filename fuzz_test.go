@@ -12,6 +12,7 @@ import (
 	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/udpwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -25,17 +26,14 @@ func FuzzDispatch(f *testing.F) {
 	f.Add([]byte{0, 1, 0, 0, 0x21, 0x12, 0xA4, 0x42}, false)
 	_, h := simHost(f)
 	rt := newTestRuntime(f, fakeClock(f), h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		f.Fatal(err)
-	}
+	s := openPrimary(f, rt)
 	// An opener around a plain sealed datagram: its FINGERPRINT is valid,
 	// which the fuzzer would hardly find, so mutations reach the packet
 	// inside.
 	f.Add(rt.codec.Wrap(nil, append([]byte{0x0F}, make([]byte, 60)...)), true)
 	from := netip.MustParseAddrPort("198.51.100.7:4000")
 	f.Fuzz(func(t *testing.T, pkt []byte, punching bool) {
-		rt.punch.active.Store(punching)
+		rt.punch.setActive(punching)
 		rt.dispatch(s, append([]byte(nil), pkt...), from)
 		if got := rt.fam(protocol.FamilyUDP4).cnt.byStage[txReply].Load(); got != 0 {
 			t.Fatalf("answered a forged packet (%d replies)", got)
@@ -49,10 +47,10 @@ func FuzzIntercept(f *testing.F) {
 	ps := protocol.PunchStart{SessionID: "fuzz", Role: protocol.RoleInitiator, Token: protocol.NewToken(),
 		Wire: protocol.NewWireSpec(), Control: protocol.DefaultControlSpec(), Probe: protocol.ProbeSpec{V: protocol.ProbeSpecVersion}}
 	start, _ := msgframe.Encode(ps)
-	f.Add(uint8(controlwire.TypePunchStart), start.Payload, true)
-	f.Add(uint8(controlwire.TypePunchGo), []byte(`{"session_id":"fuzz","round":2,"window_ms":800}`), true)
-	f.Add(uint8(controlwire.TypeAssist), []byte(`{"session_id":"fuzz","kind":"peer_seen","round":1,"family":"udp4","sock":0,"cand":0,"type":6}`), true)
-	f.Add(uint8(controlwire.TypePing), []byte(`{"seq":1}`), true)
+	f.Add(uint8(wiretype.PunchStart), start.Payload, true)
+	f.Add(uint8(wiretype.PunchGo), []byte(`{"session_id":"fuzz","round":2,"window_ms":800}`), true)
+	f.Add(uint8(wiretype.Assist), []byte(`{"session_id":"fuzz","kind":"peer_seen","round":1,"family":"udp4","sock":0,"cand":0,"type":6}`), true)
+	f.Add(uint8(wiretype.Ping), []byte(`{"seq":1}`), true)
 	a, b := net.Pipe()
 	f.Cleanup(func() { _ = a.Close(); _ = b.Close() })
 	conn, err := controlwire.NewConn(a, controlwire.ConnOptions{})
@@ -66,7 +64,7 @@ func FuzzIntercept(f *testing.F) {
 		if accepted {
 			ct.sessionID, ct.accepted, ct.seenStart, ct.seenSummary = "fuzz", true, true, true
 		}
-		ct.intercept(conn, controlwire.Frame{Type: controlwire.Type(typ), Payload: payload})
+		ct.intercept(conn, controlwire.Frame{Type: wiretype.Type(typ), Payload: payload})
 	})
 }
 
@@ -92,10 +90,7 @@ func TestDependencies(t *testing.T) {
 func BenchmarkDispatchPunch(b *testing.B) {
 	_, h := simHost(b)
 	rt := newTestRuntime(b, nil, h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		b.Fatal(err)
-	}
+	s := openPrimary(b, rt)
 	peer, _ := udpwire.NewCodec(rt.start.Token, rt.start.Wire.RouteID, udpwire.RoleResponder, udpwire.PadPolicy{Min: 60, Max: 160}, nil)
 	from := netip.MustParseAddrPort("198.51.100.7:4000")
 	pkts := make([][]byte, b.N)
@@ -107,7 +102,7 @@ func BenchmarkDispatchPunch(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
-		s.rateTokens = preRateBurst // measure the pipeline, not the flood limit
+		s.rate.tokens = preRateBurst // measure the pipeline, not the flood limit
 		rt.dispatch(s, pkts[i], from)
 	}
 }
@@ -117,10 +112,7 @@ func BenchmarkDispatchPunch(b *testing.B) {
 func BenchmarkSendGate(b *testing.B) {
 	_, h := simHost(b)
 	rt := newTestRuntime(b, nil, h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		b.Fatal(err)
-	}
+	s := openPrimary(b, rt)
 	budget := protocol.CeilingBudget()
 	budget.MaxPPS = 0 // unlimited: measure the gate, not the rate
 	rt.sender.setBudget(budget)

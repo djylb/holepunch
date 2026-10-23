@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/coord"
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone"
 	"github.com/djylb/holepunch/standalone/broker"
 	"github.com/djylb/holepunch/standalone/cmd/internal/cli"
+	"github.com/djylb/holepunch/standalone/internal/life"
 	"github.com/djylb/holepunch/standalone/internal/tlsid"
 	"github.com/djylb/holepunch/standalone/server"
 	"github.com/djylb/holepunch/stun"

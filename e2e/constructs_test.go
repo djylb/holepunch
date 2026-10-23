@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"math/rand/v2"
 	"net/netip"
 	"slices"
@@ -8,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -48,12 +49,12 @@ func silenceRung(r *run, sides [2]*side, blocked func(variant string) bool) {
 				outer.DropUpstream(nil)
 			}
 		}
-		r.taps[i].subscribe(toClient, controlwire.TypeProbeSummary, func(ev frameEvent) {
+		r.taps[i].subscribe(toClient, wiretype.ProbeSummary, func(ev frameEvent) {
 			if s, ok := ev.Msg.(*protocol.ProbeSummary); ok {
 				apply(s.Plan.Round1.Variant)
 			}
 		})
-		r.taps[i].subscribe(toClient, controlwire.TypePunchGo, func(ev frameEvent) {
+		r.taps[i].subscribe(toClient, wiretype.PunchGo, func(ev frameEvent) {
 			if g, ok := ev.Msg.(*protocol.PunchGo); ok && g.Plan != nil {
 				apply(g.Plan.Variant)
 			}
@@ -92,7 +93,7 @@ const loadFirstPort = 20000
 // measured the allocator moving, and it stands still while the session punches.
 // Both are behaviour changing under load.
 func (w *world) load(r *run, nat *nattest.NAT, i, pps int, afterProbe bool) {
-	summary := r.taps[i].when(toClient, controlwire.TypeProbeSummary, nil)
+	summary := r.taps[i].when(toClient, wiretype.ProbeSummary, nil)
 	h := nat.Host()
 	var dst netip.Addr
 	for _, a := range w.server.Addrs() {
@@ -118,14 +119,11 @@ func (w *world) load(r *run, nat *nattest.NAT, i, pps int, afterProbe bool) {
 				return
 			}
 		}
-		pc, err := h.Listen("udp4", netip.AddrPort{})
+		out, err := h.ListenUDP(context.Background(), "udp4", netip.AddrPort{}, "listen")
 		if err != nil {
 			return
 		}
-		defer func() { _ = pc.Close() }()
-		out := pc.(interface {
-			WriteToUDPAddrPort([]byte, netip.AddrPort) (int, error)
-		})
+		defer func() { _ = out.Close() }()
 		tick := time.NewTicker(time.Second / time.Duration(pps))
 		defer tick.Stop()
 		for port := loadFirstPort; ; port++ {

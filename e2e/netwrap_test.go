@@ -2,16 +2,14 @@ package e2e
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net"
 	"net/netip"
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	"github.com/djylb/holepunch"
+	"github.com/djylb/holepunch/internal/leak"
 	"github.com/djylb/holepunch/nattest"
 )
 
@@ -25,10 +23,9 @@ var errInjectedRead = &net.OpError{Op: "read", Net: "udp", Err: syscall.EIO}
 // packet from it), fail reads (the udp_read_error fault), run a hook on
 // ListenPacket and SetHopLimit (user-implementation panics) and record the
 // destination ports of every sent packet (port randomness, per-target counts).
-// The wrapped conns keep every capability the library probes for — HopLimiter,
-// ReadFromUDPAddrPort, WriteToUDPAddrPort, SetReadBuffer and SetWriteBuffer —
-// so the library takes the same code paths as on a bare Host; Host.MarkHandover
-// finds the sockets by address.
+// The wrapped conns keep exactly the capabilities of the Host's sockets that
+// the library probes for (leak.Wrap), so the library takes the same code
+// paths as on a bare Host; Host.MarkHandover finds the sockets by address.
 type clientNet struct {
 	h         *nattest.Host
 	drop      atomic.Pointer[func(netip.AddrPort) bool]
@@ -80,7 +77,7 @@ func (c *clientNet) noteSent(to netip.AddrPort) {
 	c.mu.Unlock()
 }
 
-// ListenPacket opens a socket on the Host and wraps it.
+// ListenPacket opens a socket on the Host and wraps it (leak.Wrap).
 func (c *clientNet) ListenPacket(ctx context.Context, network string, laddr netip.AddrPort, purpose string) (net.PacketConn, error) {
 	if f := c.listen.Load(); f != nil {
 		(*f)(purpose)
@@ -89,12 +86,24 @@ func (c *clientNet) ListenPacket(ctx context.Context, network string, laddr neti
 	if err != nil {
 		return nil, err
 	}
-	inner, ok := pc.(innerConn)
-	if !ok {
-		_ = pc.Close()
-		return nil, fmt.Errorf("e2e: %T lacks the methods of a nattest socket", pc)
-	}
-	return &wconn{inner: inner, net: c}, nil
+	return leak.Wrap(pc, leak.Hooks{
+		ReadErr: func() error {
+			if c.failReads.Load() {
+				return errInjectedRead
+			}
+			return nil
+		},
+		Drop: func(from netip.AddrPort) bool {
+			f := c.drop.Load()
+			return f != nil && (*f)(from)
+		},
+		Sent: c.noteSent,
+		HopLimit: func(hops int) {
+			if f := c.hop.Load(); f != nil {
+				(*f)(hops)
+			}
+		},
+	}), nil
 }
 
 // InterfaceAddrs delegates to the Host.
@@ -111,73 +120,3 @@ func (c *clientNet) OutboundAddr(ctx context.Context, network string) (netip.Add
 func (c *clientNet) LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error) {
 	return c.h.LookupNetIP(ctx, network, host)
 }
-
-// innerConn is the method set of a nattest socket that the wrapper forwards.
-type innerConn interface {
-	net.PacketConn
-	SetHopLimit(hops int) error
-	ReadFromUDPAddrPort(b []byte) (int, netip.AddrPort, error)
-	WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error)
-	SetReadBuffer(bytes int) error
-	SetWriteBuffer(bytes int) error
-}
-
-// wconn is one wrapped socket.
-type wconn struct {
-	inner innerConn
-	net   *clientNet
-}
-
-func (w *wconn) ReadFromUDPAddrPort(b []byte) (int, netip.AddrPort, error) {
-	for {
-		if w.net.failReads.Load() {
-			return 0, netip.AddrPort{}, errInjectedRead
-		}
-		n, from, err := w.inner.ReadFromUDPAddrPort(b)
-		if err == nil {
-			if f := w.net.drop.Load(); f != nil && (*f)(from) {
-				continue
-			}
-		}
-		return n, from, err
-	}
-}
-
-func (w *wconn) ReadFrom(b []byte) (int, net.Addr, error) {
-	n, from, err := w.ReadFromUDPAddrPort(b)
-	if err != nil {
-		return n, nil, err
-	}
-	return n, net.UDPAddrFromAddrPort(from), nil
-}
-
-func (w *wconn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {
-	n, err := w.inner.WriteToUDPAddrPort(b, addr)
-	if err == nil {
-		w.net.noteSent(addr)
-	}
-	return n, err
-}
-
-func (w *wconn) WriteTo(b []byte, addr net.Addr) (int, error) {
-	ua, ok := addr.(*net.UDPAddr)
-	if !ok {
-		return 0, &net.OpError{Op: "write", Net: "udp", Err: errors.New("e2e: not a UDP address")}
-	}
-	return w.WriteToUDPAddrPort(b, ua.AddrPort())
-}
-
-func (w *wconn) SetHopLimit(hops int) error {
-	if f := w.net.hop.Load(); f != nil {
-		(*f)(hops)
-	}
-	return w.inner.SetHopLimit(hops)
-}
-
-func (w *wconn) Close() error                       { return w.inner.Close() }
-func (w *wconn) LocalAddr() net.Addr                { return w.inner.LocalAddr() }
-func (w *wconn) SetDeadline(t time.Time) error      { return w.inner.SetDeadline(t) }
-func (w *wconn) SetReadDeadline(t time.Time) error  { return w.inner.SetReadDeadline(t) }
-func (w *wconn) SetWriteDeadline(t time.Time) error { return w.inner.SetWriteDeadline(t) }
-func (w *wconn) SetReadBuffer(bytes int) error      { return w.inner.SetReadBuffer(bytes) }
-func (w *wconn) SetWriteBuffer(bytes int) error     { return w.inner.SetWriteBuffer(bytes) }

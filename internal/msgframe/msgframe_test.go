@@ -62,3 +62,12 @@ func TestReason(t *testing.T) {
 		}
 	}
 }
+
+func TestReasonOr(t *testing.T) {
+	if r, d := ReasonOr(controlwire.ErrBadMagic, protocol.ReasonInternal, "x"); r != protocol.ReasonProtocolViolation || d != "bad_magic" {
+		t.Fatalf("a wire error: %s %q", r, d)
+	}
+	if r, d := ReasonOr(io.EOF, protocol.ReasonInternal, "x"); r != protocol.ReasonInternal || d != "x" {
+		t.Fatalf("another error: %s %q", r, d)
+	}
+}

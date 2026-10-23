@@ -46,9 +46,10 @@ func TestOSNetwork(t *testing.T) {
 	}
 }
 
-// TestDependencies guards the module's dependency rules: the client side
-// never links the server side, proto stays on the standard library and
-// internal/life, and the broker and server never link the client runtime.
+// TestDependencies guards the module's dependency rules: the module imports
+// only public packages of the library, the client side never links the
+// server side, proto stays on the standard library and internal/life, and
+// the broker and server never link the client runtime.
 func TestDependencies(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs go list")
@@ -76,6 +77,18 @@ func TestDependencies(t *testing.T) {
 		}
 		return list
 	}
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-f", "{{.ImportPath}} {{join .Imports \" \"}} {{join .TestImports \" \"}} {{join .XTestImports \" \"}}", "./...").Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		pkg, imports, _ := strings.Cut(line, " ")
+		for _, imp := range strings.Fields(imports) {
+			if strings.HasPrefix(imp, mod+"/") && !strings.HasPrefix(imp, mod+"/standalone") && strings.Contains(imp+"/", "/internal/") {
+				t.Errorf("%s imports the library's %s", pkg, imp)
+			}
+		}
+	}
 	forbid := func(pkg string, bad ...string) {
 		t.Helper()
 		for _, d := range deps(pkg) {
@@ -93,7 +106,7 @@ func TestDependencies(t *testing.T) {
 	forbid("broker", mod+"/standalone/client", mod+"/standalone/server", "github.com/quic-go")
 	forbid("server", mod+"/standalone/client", "github.com/quic-go")
 	for _, d := range deps("proto") {
-		if d != mod+"/standalone/proto" && d != mod+"/internal/life" {
+		if d != mod+"/standalone/proto" && d != mod+"/standalone/internal/life" {
 			t.Errorf("proto links %s", d)
 		}
 	}

@@ -5,11 +5,11 @@ import (
 	"errors"
 	"net/netip"
 	"time"
-	"unicode/utf8"
 
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/msgframe"
-	"github.com/djylb/holepunch/internal/plan"
+	engine "github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -59,9 +59,6 @@ var ErrClosed = errors.New("holepunch: session closed")
 // textual forms never contain it) and Unwrap (the panic value when it was an
 // error). Match it with errors.As.
 type PanicError = life.PanicError
-
-// maxDetail bounds Error.Detail and punch_result.detail.
-const maxDetail = 256
 
 // failure is the structured cause the runtime fails its groups with; the
 // final *Error is built from it.
@@ -142,9 +139,9 @@ type punchEvidence struct {
 const tokenMismatchMin = 3
 
 // attributePunch explains a punch that ended without a confirmation. The
-// rules shared with the coordinator are plan.AttributeDetail's; the
+// rules shared with the coordinator are engine.AttributeDetail's; the
 // client-only ones (udp_blocked from local writes, the budget,
-// token_mismatch, hard_symmetric_random once birthday ran) wrap it. plan's
+// token_mismatch, hard_symmetric_random once birthday ran) wrap it. engine's
 // one-way details name the direction from the initiator's side; a client
 // reports its own: peer_hears_us or we_hear_peer.
 func attributePunch(ev punchEvidence) (protocol.Reason, string) {
@@ -173,7 +170,7 @@ func attributePunch(ev punchEvidence) (protocol.Reason, string) {
 	// so that only our own evidence can make the result not_synchronized.
 	pe.Sent[peer] = 1
 	pe.Fired[peer] = true
-	r, d := plan.AttributeDetail(pe)
+	r, d := engine.AttributeDetail(pe)
 	switch {
 	case r == protocol.ReasonOneWayUDPOnly && ev.rxVerified > 0:
 		d = "we_hear_peer"
@@ -185,14 +182,31 @@ func attributePunch(ev punchEvidence) (protocol.Reason, string) {
 	return r, d
 }
 
-// truncDetail keeps a detail within maxDetail bytes without splitting a rune.
-func truncDetail(s string) string {
-	if len(s) <= maxDetail {
-		return s
+// attribute explains an unconfirmed end of punching from this side's
+// evidence.
+func (rt *runtime) attribute() *failure {
+	_, _, pct := rt.sender.usage()
+	se := rt.punch.evidence()
+	ev := punchEvidence{
+		role: rt.role, rxVerified: int(rt.punch.received()), sent: rt.sentTotal(), fired: rt.fired,
+		budgetUsedPct: pct, udpBlocked: rt.udpBlocked.Load(), birthdayRan: rt.birthdayRan,
+		hit: se.hit, seenFrom: se.seenFrom, peerSeenUs: se.peerSeen, icmpUnreach: se.icmpMax,
 	}
-	cut := maxDetail
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
+	for _, w := range rt.workers {
+		ev.tokenMismatch += int(w.fs.cnt.tokenMismatch.Load())
+		if engine.CategoryOf(w.selfTraits) == engine.CatRND && engine.CategoryOf(w.peerTraits) == engine.CatRND {
+			ev.bothRND = true
+		}
 	}
-	return s[:cut]
+	r, d := attributePunch(ev)
+	return fail(r, d, nil)
+}
+
+// sentTotal is the number of initiated packets of the session.
+func (rt *runtime) sentTotal() int {
+	n := 0
+	for _, fs := range rt.fams {
+		n += int(fs.cnt.tx.Load())
+	}
+	return n
 }

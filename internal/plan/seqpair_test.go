@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -38,7 +39,7 @@ func TestSideMappings(t *testing.T) {
 // seqSeqInput is a seq_x_seq round input between two APDM peers as natprobe
 // reports them (apdmView): the initiator's anchor at 40003, the
 // responder's at 50012.
-func seqSeqInput(t *testing.T, round int, prev []RoundOutcome) (RoundInput, [2]uint16) {
+func seqSeqInput(t *testing.T, round int, prev []api.RoundOutcome) (api.RoundInput, [2]uint16) {
 	t.Helper()
 	f := protocol.FamilyUDP4
 	a, b := seqTraits(f), seqTraits(f)
@@ -105,7 +106,7 @@ func TestSeqPairWindows(t *testing.T) {
 	// Round 2: the responder made 18 mappings in round 1, the initiator 20.
 	fr := dec.Families
 	fr[0].Mapped = [2]int{20, 18}
-	in2, _ := seqSeqInput(t, 2, []RoundOutcome{{Round: 1, Variant: dec.Variant, Class: RCNoContact, Budget: dec.Budget, Families: fr}})
+	in2, _ := seqSeqInput(t, 2, []api.RoundOutcome{{Round: 1, Variant: dec.Variant, Class: api.RoundNoContact, Budget: dec.Budget, Families: fr}})
 	dec2 := p.Round(in2)
 	for r, moved := range [2]uint16{18, 20} {
 		st := predictStage(t, dec2.Sides[r][0])
@@ -139,41 +140,41 @@ func TestPairAnchor(t *testing.T) {
 	f := protocol.FamilyUDP4
 	tr := seqTraits(f) // anchor 40003 on 203.0.113.3
 	ip := tr.Observed.Addr()
-	prev := []RoundOutcome{
-		{Round: 1, Families: []FamilyRound{{Family: f, Mapped: [2]int{0, 17}}}},
-		{Round: 2, Families: []FamilyRound{{Family: f, Mapped: [2]int{0, 48}}}},
+	prev := []api.RoundOutcome{
+		{Round: 1, Families: []api.FamilyRound{{Family: f, Mapped: [2]int{0, 17}}}},
+		{Round: 2, Families: []api.FamilyRound{{Family: f, Mapped: [2]int{0, 48}}}},
 	}
-	sample := func(port uint16, round int) MappingSample {
-		return MappingSample{Addr: netip.AddrPortFrom(ip, port), Round: round}
+	sample := func(port uint16, round int) api.MappingSample {
+		return api.MappingSample{Addr: netip.AddrPortFrom(ip, port), Round: round}
 	}
 	cases := []struct {
 		name    string
 		tr      protocol.Traits
-		samples []MappingSample
+		samples []api.MappingSample
 		ip      netip.Addr
 		step    int
 		want    uint16
 	}{
 		{"probe anchor", tr, nil, ip, 1, 40003 + 17 + 48 + 2},
-		{"sample behind the count", tr, []MappingSample{sample(40010, 1)}, ip, 1, 40003 + 17 + 48 + 2},
-		{"sample ahead (foreign mappings)", tr, []MappingSample{sample(40050, 1)}, ip, 1, 40050 + 48 + 2},
-		{"sample of the last round", tr, []MappingSample{sample(40100, 2)}, ip, 1, 40100 + 2},
+		{"sample behind the count", tr, []api.MappingSample{sample(40010, 1)}, ip, 1, 40003 + 17 + 48 + 2},
+		{"sample ahead (foreign mappings)", tr, []api.MappingSample{sample(40050, 1)}, ip, 1, 40050 + 48 + 2},
+		{"sample of the last round", tr, []api.MappingSample{sample(40100, 2)}, ip, 1, 40100 + 2},
 		{"wrap", func() protocol.Traits { w := tr; w.PortAnchor = 65500; return w }(), nil, ip, 1, wrapPort(65500 + 67)},
 		{"sample past the wrap", func() protocol.Traits { w := tr; w.PortAnchor = 65500; return w }(),
-			[]MappingSample{sample(1100, 2)}, ip, 1, 1102},
+			[]api.MappingSample{sample(1100, 2)}, ip, 1, 1102},
 		{"negative step", func() protocol.Traits { w := tr; w.PortStep = -1; return w }(), nil, ip, -1, 40003 - 67},
-		{"rebound to another IP", tr, []MappingSample{{Addr: netip.MustParseAddrPort("198.51.100.4:7000"), Round: 2}},
+		{"rebound to another IP", tr, []api.MappingSample{{Addr: netip.MustParseAddrPort("198.51.100.4:7000"), Round: 2}},
 			netip.MustParseAddr("198.51.100.4"), 1, 7002},
 	}
 	for _, c := range cases {
-		in := RoundInput{Prev: prev}
+		in := api.RoundInput{Prev: prev}
 		in.Mappings[1] = c.samples
-		got, ok := pairAnchor(in, 1, f, c.ip, c.tr, c.step, 2, 0)
+		got, ok := pairAnchor(input{RoundInput: in}, 1, f, c.ip, c.tr, c.step, 2, 0)
 		if !ok || got != c.want {
 			t.Errorf("%s: anchor %d %v, want %d", c.name, got, ok, c.want)
 		}
 	}
-	if _, ok := pairAnchor(RoundInput{}, 1, f, netip.MustParseAddr("198.51.100.4"), tr, 1, 0, 0); ok {
+	if _, ok := pairAnchor(input{RoundInput: api.RoundInput{}}, 1, f, netip.MustParseAddr("198.51.100.4"), tr, 1, 0, 0); ok {
 		t.Error("an anchor on an IP neither the probe nor a sample saw")
 	}
 }

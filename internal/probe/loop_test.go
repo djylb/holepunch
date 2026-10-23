@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -253,18 +253,18 @@ func TestHairpinRunsOnce(t *testing.T) {
 	}
 }
 
-// panicClock is a clock whose timers panic, standing in for any panic inside
-// the probing loop.
-type panicClock struct{ clock.Clock }
-
-func (panicClock) NewTimer(time.Duration) clock.Timer { panic("timer") }
-
 // A panic inside the prober fails the family with internal, detail
 // panic:probe/<family>, and the recovered *life.PanicError comes along in
 // Result.Panic, named like the detail; nothing else carries one.
 func TestRunPanicCarried(t *testing.T) {
 	s := newSim(t, defaultOpts())
-	s.spec.Clock = panicClock{s.fake}
+	// Timers that panic stand in for any panic inside the probing loop.
+	s.spec.Clock = testkit.PanicClock{Clock: s.fake, Panic: func(method string) any {
+		if method == "NewTimer" {
+			return "timer"
+		}
+		return nil
+	}}
 	s.p = New(s.spec, s.socks[0], nil, nil)
 	r := s.p.Run(context.Background())
 	if r.Failure != protocol.ReasonInternal || r.Detail != "panic:probe/udp4" || r.Panic == nil || "panic:"+r.Panic.Where() != r.Detail {

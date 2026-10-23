@@ -10,7 +10,7 @@ import (
 
 // threeObservers returns o1 and o2 on one IP (different ports) and o3 on
 // another IP.
-func threeObservers(t *testing.T, n *Network) (o1, o2, o3 udp) {
+func threeObservers(t *testing.T, n *Network) (o1, o2, o3 Conn) {
 	t.Helper()
 	h1, o1 := observer(t, n, 3478)
 	o2 = listenOn(t, h1, "udp4", netip.AddrPortFrom(h1.Addrs()[0], 3479))
@@ -485,7 +485,7 @@ func TestMaxMappingsLRUEviction(t *testing.T) {
 	n := newNet(t)
 	nat := n.NAT(NATConfig{Mapping: APDM, Filtering: APDF, PortAlloc: Sequential, MaxMappings: 3})
 	c := listen(t, nat.Host(), 4000)
-	var obs []udp
+	var obs []Conn
 	var maps []netip.AddrPort
 	for i := range 3 {
 		_, o := observer(t, n, uint16(1000+i))
@@ -583,7 +583,7 @@ func TestRepliesFollowAdmittingMapping(t *testing.T) {
 			c := listen(t, nat.Host(), 4000)
 			m := srcAtAfter(t, clk, c, o1)
 			for _, o := range []struct {
-				obs  udp
+				obs  Conn
 				in   bool
 				name string
 			}{{o2, tc.fromO2, "o2"}, {o3, tc.fromO3, "o3"}} {

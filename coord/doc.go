@@ -29,16 +29,16 @@
 // A Coordinator creates sessions; a Session needs no connection to exist.
 // NewSession pre-generates both punch_start messages, registers the probe
 // route with the natprobe Registry and reserves the callers' quotas. Attach
-// hands the session one client's control stream, in either order (the visitor
-// typically probes before the provider has joined). From then on the session
+// hands the session one client's control stream, in either order (the initiator
+// typically probes before the responder has joined). From then on the session
 // drives itself through created → binding → probing → summarized →
 // punching(k) → confirming → closed, each state with its own deadline,
 // and ends exactly once in finish, the single cleanup path shared by success,
 // failure, abort, panic and shutdown. The Result is delivered to
 // Config.OnResult exactly once, after every resource of the session is gone.
 //
-// The planning decisions are made by a Planner (the built-in one unless the
-// caller supplies one); the coordinator does not
+// The planning decisions are made by a plan.Planner (DefaultPlanner unless
+// Config.Planner supplies one); the coordinator does not
 // trust it: every decision is clamped to the per-round budget classes, the
 // session and per-key budgets and the protocol limits, its targets pass
 // admission (addresses natprobe verified with a return-path cookie;
@@ -82,6 +82,31 @@
 // rate), and the strategy memory only promotes variants that succeeded
 // before; a pair it saw connect only through the slow birthday is reported
 // as background_only in the summaries and the Result.
+//
+// # Custom planners and memories
+//
+// Package plan holds the planner contract. A custom planner usually wraps
+// DefaultPlanner, whose Round derives everything it needs from its input,
+// and changes only what it means to:
+//
+//	type relayFirst struct{ plan.Planner }
+//
+//	// Classify sends the pairs classified rnd_x_rnd straight to the relay.
+//	func (p relayFirst) Classify(in plan.ClassifyInput) plan.Classification {
+//		cl := p.Planner.Classify(in)
+//		if cl.PairClass == "rnd_x_rnd" {
+//			cl.Reject = protocol.ReasonHardSymmetricRandom
+//		}
+//		return cl
+//	}
+//
+//	co, err := coord.New(coord.Config{Planner: relayFirst{coord.DefaultPlanner()}, ...})
+//
+// A StrategyMemory of the caller's own gets the built-in memory's place in
+// planning through its interface alone: Recommend orders the primary
+// ladder, and Score says which variants proved themselves for the pair —
+// which decides the memory hit, the promotion of a proven variant and
+// background_only.
 //
 // # Concurrency
 //

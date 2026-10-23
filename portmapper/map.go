@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -298,14 +299,9 @@ func localAddr(conn net.PacketConn) (netip.Addr, uint16, error) {
 	if life.IsNil(la) {
 		return netip.Addr{}, 0, errors.New("portmapper: conn has no local address")
 	}
-	var ap netip.AddrPort
-	if u, ok := la.(*net.UDPAddr); ok {
-		ap = u.AddrPort()
-	} else {
-		var err error
-		if ap, err = netip.ParseAddrPort(la.String()); err != nil {
-			return netip.Addr{}, 0, fmt.Errorf("portmapper: conn local address %q: %w", la, err)
-		}
+	ap := netaddr.AddrPortOf(la)
+	if !ap.IsValid() {
+		return netip.Addr{}, 0, fmt.Errorf("portmapper: conn local address %q is not an ip:port", la)
 	}
 	if ap.Port() == 0 {
 		return netip.Addr{}, 0, fmt.Errorf("portmapper: conn local address %s has no port", la)

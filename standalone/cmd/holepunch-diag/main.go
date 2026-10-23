@@ -13,11 +13,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone/client"
 	"github.com/djylb/holepunch/standalone/cmd/internal/cli"
 	"github.com/djylb/holepunch/standalone/cmd/internal/clientcfg"
+	"github.com/djylb/holepunch/standalone/internal/life"
 )
 
 // mode is the transport both sides offer, so that the server pairs them.
@@ -40,22 +40,13 @@ func main() {
 	})
 }
 
-// newClient parses args and returns the Client they configure. cleanup
-// releases what the configuration holds; the caller runs it after closing
-// the Client.
-func newClient(fs *flag.FlagSet, cf *clientcfg.Flags, args []string) (c *client.Client, cleanup func(), err error) {
-	if err = fs.Parse(args); err != nil {
-		return nil, nil, err
+// newClient parses args and returns the Client they configure
+// (clientcfg.Flags.NewClient) and the func that closes it.
+func newClient(fs *flag.FlagSet, cf *clientcfg.Flags, args []string) (*clientcfg.Client, error) {
+	if err := fs.Parse(args); err != nil {
+		return nil, err
 	}
-	cfg, cleanup, err := cf.Config(cli.Logger(cf.Debug))
-	if err != nil {
-		return nil, nil, err
-	}
-	if c, err = client.New(cfg); err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	return c, cleanup, nil
+	return cf.NewClient(cli.Logger(cf.Debug))
 }
 
 func runEcho(args []string) error {
@@ -66,11 +57,10 @@ func runEcho(args []string) error {
 	fs := flag.NewFlagSet("holepunch-diag echo", flag.ContinueOnError)
 	cf.Register(fs)
 	fs.StringVar(&id, "id", "", "host ID to register (required)")
-	c, cleanup, err := newClient(fs, &cf, args)
+	c, err := newClient(fs, &cf, args)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
 	defer func() { _ = c.Close() }()
 	if id == "" {
 		return errors.New("-id is required")
@@ -125,11 +115,10 @@ func runProbe(args []string) error {
 	fs.StringVar(&id, "id", "", "echo host ID to probe (required)")
 	fs.IntVar(&count, "count", 5, "datagrams to send over the punched path")
 	fs.DurationVar(&interval, "interval", 500*time.Millisecond, "time between datagrams")
-	c, cleanup, err := newClient(fs, &cf, args)
+	c, err := newClient(fs, &cf, args)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
 	defer func() { _ = c.Close() }()
 	if id == "" || count < 1 || interval <= 0 {
 		return errors.New("-id is required, -count and -interval must be positive")

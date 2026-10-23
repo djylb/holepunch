@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
+	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
@@ -25,8 +25,6 @@ var (
 	localI = netip.MustParseAddrPort("192.168.1.10:40000")
 	localR = netip.MustParseAddrPort("10.0.0.20:50000")
 )
-
-const waitLimit = 5 * time.Second
 
 var mustAP = netip.MustParseAddrPort
 
@@ -101,7 +99,7 @@ func (r *rig) attach(s *Session, role protocol.Role, o ...simclient.Options) *si
 }
 
 func ctx(t *testing.T) context.Context {
-	c, cancel := context.WithTimeout(context.Background(), waitLimit)
+	c, cancel := context.WithTimeout(context.Background(), waitLimit(t))
 	t.Cleanup(cancel)
 	return c
 }
@@ -111,7 +109,7 @@ func (r *rig) wait(s *Session) Result {
 	r.t.Helper()
 	select {
 	case <-s.Done():
-	case <-time.After(waitLimit):
+	case <-time.After(waitLimit(r.t)):
 		r.t.Fatalf("session %s not done: %+v", s.ID(), s.Snapshot())
 	}
 	res, ok := s.Result()
@@ -119,18 +117,6 @@ func (r *rig) wait(s *Session) Result {
 		r.t.Fatal("no result after Done")
 	}
 	return res
-}
-
-// eventually polls cond in real time.
-func eventually(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(waitLimit)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timeout waiting for %s", what)
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 func expect[T any](t *testing.T, c *simclient.Client) *T {
@@ -274,7 +260,7 @@ func (p *pair) windowEnd(i int, round uint8, o simclient.Outcome) {
 // state waits until the session reaches st.
 func (p *pair) state(st State) {
 	p.r.t.Helper()
-	eventually(p.r.t, string(st), func() bool { return p.s.Snapshot().State == st })
+	testkit.WaitFor(p.r.t, string(st), func() bool { return p.s.Snapshot().State == st })
 }
 
 // eventsOf returns the events of kind k delivered so far.
@@ -293,14 +279,14 @@ func (r *rig) eventsOf(k EventKind) []Event {
 // waitEvents waits until n events of kind k were delivered and returns them.
 func (r *rig) waitEvents(k EventKind, n int) []Event {
 	r.t.Helper()
-	eventually(r.t, k.String()+" events", func() bool { return len(r.eventsOf(k)) >= n })
+	testkit.WaitFor(r.t, k.String()+" events", func() bool { return len(r.eventsOf(k)) >= n })
 	return r.eventsOf(k)
 }
 
 // waitCounters waits until the session's counters satisfy cond.
 func (p *pair) waitCounters(cond func(Counters) bool) {
 	p.r.t.Helper()
-	eventually(p.r.t, "counters", func() bool {
+	testkit.WaitFor(p.r.t, "counters", func() bool {
 		p.s.mu.Lock()
 		defer p.s.mu.Unlock()
 		return cond(p.s.st.ctr)
@@ -349,7 +335,7 @@ func expectOneResult(t *testing.T, r *rig) Result {
 	var res Result
 	select {
 	case res = <-r.results:
-	case <-time.After(waitLimit):
+	case <-time.After(testkit.WaitBound(t)):
 		t.Fatal("no OnResult")
 	}
 	select {
@@ -375,3 +361,9 @@ func reasonOf(err error) protocol.Reason {
 	}
 	return ""
 }
+
+// waitLimit bounds a wait for something that happens within a session's
+// own deadlines: 30 s at most, so that a stuck case fails quickly instead
+// of using the test binary's whole deadline, and less when that deadline
+// is closer.
+func waitLimit(t testing.TB) time.Duration { return min(testkit.WaitBound(t), 30*time.Second) }

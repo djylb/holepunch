@@ -17,7 +17,7 @@ var exportedAPI = []string{
 	// types
 	"DropStats", "ExitPolicy", "Filtering", "Host", "HostStats", "IPv6Config", "IPv6Mode",
 	"LinkConfig", "Mapping", "MappingInfo", "NAT", "NATConfig", "NATStats", "NetStats",
-	"Classifier", "Network", "Option", "PipeConfig", "PipeConn", "PortAlloc", "Route", "ScanDefense", "SocketStats",
+	"Classifier", "Conn", "Network", "Option", "PipeConfig", "PipeConn", "PortAlloc", "Route", "ScanDefense", "SocketStats",
 	// constants
 	"ADF", "ADM", "APDF", "APDM", "EIF", "EIM", "Identity", "NAT66", "NPTv6", "NoNAT",
 	"NoTimeout", "Open", "PerDestIP", "PerSourcePort", "Preserve", "PreserveThenRandom", "PreserveThenSequential",
@@ -30,7 +30,7 @@ var exportedAPI = []string{
 	"DropStats.Total", "ExitPolicy.String", "Filtering.String", "IPv6Mode.String",
 	"Mapping.String", "PortAlloc.String",
 	"Host.Addrs", "Host.Crash", "Host.FailBinds", "Host.FailWrites", "Host.InterfaceAddrs",
-	"Host.Listen", "Host.ListenPacket", "Host.LookupNetIP", "Host.MarkHandover",
+	"Host.Listen", "Host.ListenPacket", "Host.ListenUDP", "Host.LookupNetIP", "Host.MarkHandover",
 	"Host.OpenSockets", "Host.OutboundAddr", "Host.Stats",
 	"NAT.Blackhole", "NAT.DropUpstream", "NAT.ExpireAll", "NAT.ExternalIPs", "NAT.Host", "NAT.Mappings", "NAT.NAT",
 	"NAT.Rebind", "NAT.SetLink", "NAT.Stats",

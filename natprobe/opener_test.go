@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -20,7 +21,7 @@ func TestOpenerProbe(t *testing.T) {
 	sock := nat.SocketID(protocol.FamilyUDP4, 0)
 	pairs := 0
 	for i := range 400 {
-		pkt := c.codec.Wrap(nil, c.probe(probeOpts{sock: sock, obs: 1, extra: true, plainLen: 96 + i%160}))
+		pkt := c.codec.Wrap(nil, c.probe(probetest.Probe{Sock: sock, Obs: 1, Extra: true, PlainLen: 96 + i%160}))
 		if i%200 == 199 {
 			r.reg.lookup(rt(1)).roles[0].extraLeft = 255
 		}
@@ -47,7 +48,7 @@ func TestOpenerProbe(t *testing.T) {
 	if pairs == 0 {
 		t.Fatal("no opener got two replies")
 	}
-	out := r.deliver(1, c.probe(probeOpts{sock: sock, obs: 1}), srcA)
+	out := r.deliver(1, c.probe(probetest.Probe{Sock: sock, Obs: 1}), srcA)
 	if len(out) != 1 || udpwire.Wrapped(out[0].b) {
 		t.Fatal("a plain probe got no plain reply")
 	}
@@ -62,7 +63,7 @@ func TestOpenerRejects(t *testing.T) {
 	r := newRig(t, rigOpts{})
 	register(t, r.reg, "s1", tok(1), rt(1))
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
-	w := c.codec.Wrap(nil, c.probe(probeOpts{obs: 0}))
+	w := c.codec.Wrap(nil, c.probe(probetest.Probe{Obs: 0}))
 	bad := append([]byte(nil), w...)
 	bad[len(bad)-1] ^= 1 // FINGERPRINT
 	if out := r.deliver(0, bad, srcA); len(out) != 0 || r.stats.foreign.Load() != 1 {

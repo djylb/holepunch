@@ -2,8 +2,6 @@ package quicforward
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +12,8 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/standalone/internal/life"
+	"github.com/djylb/holepunch/standalone/proto"
 )
 
 const (
@@ -42,36 +41,12 @@ type streamAnswer struct {
 // follows it.
 var ErrRefused = errors.New("quicforward: host refused the stream")
 
-// writeFrame writes v as a 2-byte big-endian length and its JSON.
-func writeFrame(w io.Writer, v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	if len(b) > maxStreamFrame {
-		return fmt.Errorf("quicforward: stream frame of %d bytes", len(b))
-	}
-	frame := binary.BigEndian.AppendUint16(make([]byte, 0, 2+len(b)), uint16(len(b)))
-	_, err = w.Write(append(frame, b...))
-	return err
-}
+// writeFrame writes v as a 2-byte big-endian length and its JSON
+// (proto.WriteJSON).
+func writeFrame(w io.Writer, v any) error { return proto.WriteJSON(w, v, maxStreamFrame) }
 
-// readFrame reads one frame into v.
-func readFrame(r io.Reader, v any) error {
-	var hdr [2]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return err
-	}
-	n := int(binary.BigEndian.Uint16(hdr[:]))
-	if n > maxStreamFrame {
-		return fmt.Errorf("quicforward: stream frame of %d bytes", n)
-	}
-	b := make([]byte, n)
-	if _, err := io.ReadFull(r, b); err != nil {
-		return err
-	}
-	return json.Unmarshal(b, v)
-}
+// readFrame reads one frame into v (proto.ReadJSON).
+func readFrame(r io.Reader, v any) error { return proto.ReadJSON(r, v, maxStreamFrame) }
 
 // OpenStream opens a forward stream to target ("" for the host's default
 // target) and returns it once the host has connected the target. A refusal

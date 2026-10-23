@@ -8,8 +8,10 @@ import (
 
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/ablation"
-	"github.com/djylb/holepunch/internal/plan"
+	engine "github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -67,7 +69,7 @@ func TestAblationSwitches(t *testing.T) {
 		}
 	})
 	t.Run("NoMemory", func(t *testing.T) {
-		m, _ := newMem(StrategyMemoryConfig{})
+		m, _ := newMem(t, StrategyMemoryConfig{})
 		r := newRig(t, func(c *Config) { c.Memory = m })
 		p := r.pair(ablated(ablation.Set{NoMemory: true}))
 		p.summaries()
@@ -82,7 +84,7 @@ func TestAblationSwitches(t *testing.T) {
 		p := r.pair(ablated(ablation.Set{NoEarlyAbort: true}))
 		send(t, p.cl[1], simclient.Failure(p.s.ID(), protocol.RoleResponder, protocol.ReasonProbeTimeout, protocol.PhaseProbing))
 		p.report(0)
-		eventually(t, "report", func() bool { return p.s.Snapshot().Reported[0] })
+		testkit.WaitFor(t, "report", func() bool { return p.s.Snapshot().Reported[0] })
 		if p.s.Snapshot().State == StateClosed {
 			t.Fatal("ended early")
 		}
@@ -96,7 +98,7 @@ func TestAblationSwitches(t *testing.T) {
 		p := r.pair(ablated(ablation.Set{NoEarlyAbort: true}))
 		p.report(0)
 		send(t, p.cl[1], simclient.Report(*p.starts[1], 1, "kcp", fam(1, simclient.OpenTraits)))
-		eventually(t, "planned", func() bool {
+		testkit.WaitFor(t, "planned", func() bool {
 			p.s.mu.Lock()
 			defer p.s.mu.Unlock()
 			return p.s.st.deferred != nil
@@ -112,14 +114,20 @@ func TestAblationSwitches(t *testing.T) {
 		r := newRig(t, func(c *Config) { c.Planner = stopAfterFirst{} })
 		p := r.pair(ablated(ablation.Set{NoEarlyAbort: true}))
 		p.punching()
-		if gos := p.endRound(1, [2]simclient.Outcome{fired(5), fired(5)}); gos[0] != nil || gos[1] != nil {
-			t.Fatal("a round followed the stop")
+		for i := range 2 {
+			p.windowEnd(i, 1, fired(5))
 		}
-		eventually(t, "deferred", func() bool {
+		testkit.WaitFor(t, "deferred", func() bool {
 			p.s.mu.Lock()
 			defer p.s.mu.Unlock()
 			return p.s.st.deferred != nil
 		})
+		// Had a round followed, its go would have come with round 1's end.
+		for i := range 2 {
+			if m, _, err := p.cl[i].Next(ctxShort(t)); err == nil {
+				t.Fatalf("a round followed the stop: %T", m)
+			}
+		}
 		if p.s.Snapshot().State == StateClosed {
 			t.Fatal("ended early")
 		}
@@ -227,11 +235,11 @@ func TestTTLResolve(t *testing.T) {
 }
 
 // stopAfterFirst plans like the default planner and stops after round 1.
-type stopAfterFirst struct{ plan.DefaultPlanner }
+type stopAfterFirst struct{ engine.DefaultPlanner }
 
-func (p stopAfterFirst) Round(in RoundInput) RoundDecision {
+func (p stopAfterFirst) Round(in plan.RoundInput) plan.RoundDecision {
 	if in.Round > 1 {
-		return RoundDecision{Stop: protocol.ReasonCandidateTimeout}
+		return plan.RoundDecision{Stop: protocol.ReasonCandidateTimeout}
 	}
 	return p.DefaultPlanner.Round(in)
 }

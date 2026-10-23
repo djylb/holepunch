@@ -21,21 +21,9 @@ type openerRig struct {
 
 func newOpenerRig(t *testing.T, peers int) *openerRig {
 	t.Helper()
-	fc := fakeClock(t)
-	n, h := simHost(t)
-	rt := newTestRuntime(t, fc, h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt.sender.setBudget(bigBudget())
-	side := bigSide()
-	side.Family = protocol.FamilyUDP4
-	m := newRoundMeter(protocol.FamilyUDP4, 1, side, &roundCeiling{ports: 1000})
-	rt.sender.startRound(fc.Now(), 1000)
-	r := &openerRig{gateRig: &gateRig{t: t, rt: rt, sock: s, m: m, clk: fc}}
+	r := &openerRig{gateRig: newGateRig(t, bigBudget(), bigSide(), 1000)}
 	for range peers {
-		ph := n.PublicHost(netip.IPv4Unspecified())
+		ph := r.net.PublicHost(netip.IPv4Unspecified())
 		c, err := ph.ListenPacket(context.Background(), "udp4", netip.AddrPortFrom(ph.Addrs()[0], 4000), "test")
 		if err != nil {
 			t.Fatal(err)
@@ -190,10 +178,7 @@ func TestOpenerReceived(t *testing.T) {
 	fc := fakeClock(t)
 	_, h := simHost(t)
 	rt := newTestRuntime(t, fc, h)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openPrimary(t, rt)
 	peer, err := udpwire.NewCodec(rt.start.Token, rt.start.Wire.RouteID, udpwire.RoleResponder, udpwire.PadPolicy{Min: 60, Max: 160}, nil)
 	if err != nil {
 		t.Fatal(err)

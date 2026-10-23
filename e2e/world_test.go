@@ -15,9 +15,9 @@ import (
 
 	"github.com/djylb/holepunch"
 	"github.com/djylb/holepunch/coord"
-	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -87,7 +87,7 @@ type worldConfig struct {
 	extreme  bool             // coord Budget.AllowExtreme (p2p_allow_extreme)
 	policy   *protocol.Policy // coord default policy (the birthday tier)
 	coreLink nattest.LinkConfig
-	planner  coord.Planner
+	planner  plan.Planner
 	memory   coord.StrategyMemory
 	traits   natprobe.TraitsMemory
 	limits   coord.Limits
@@ -203,7 +203,7 @@ func newWorld(t testing.TB, cfg worldConfig) *world {
 		spec.STUN = []netip.AddrPort{w.stun}
 	}
 	if cfg.measure {
-		w.measured = &measuringPlanner{}
+		w.measured = &measuringPlanner{Planner: coord.DefaultPlanner()}
 		cfg.planner = w.measured
 	}
 	ccfg := coord.Config{
@@ -316,7 +316,7 @@ func (w *world) abandon(err error) []string {
 // behaviour. A world classifies one session at a time; the record is the
 // latest one.
 type measuringPlanner struct {
-	plan.DefaultPlanner
+	plan.Planner
 
 	mu       sync.Mutex
 	measured [2]protocol.PeerView
@@ -324,11 +324,11 @@ type measuringPlanner struct {
 }
 
 // Classify records the measurement and classifies as the default planner.
-func (p *measuringPlanner) Classify(in coord.ClassifyInput) coord.Classification {
+func (p *measuringPlanner) Classify(in plan.ClassifyInput) plan.Classification {
 	p.mu.Lock()
 	p.measured, p.seen = in.Measured, true
 	p.mu.Unlock()
-	return p.DefaultPlanner.Classify(in)
+	return p.Planner.Classify(in)
 }
 
 // get returns the latest measurement by role; ok is false before the first

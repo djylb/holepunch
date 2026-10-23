@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -74,7 +75,7 @@ func TestMapHungGatewayIsBounded(t *testing.T) {
 			t.Fatalf("lookup ran %d times, want 1 (single-flight)", got)
 		}
 		close(unblock)
-		waitFor(t, "cached gateway", func() bool {
+		testkit.WaitFor(t, "cached gateway", func() bool {
 			a, err := m.lookupGateway(context.Background())
 			return err == nil && a == loopback
 		})

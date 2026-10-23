@@ -18,6 +18,14 @@ type AccessPolicy struct {
 	Targets []string `json:"targets,omitempty"`
 }
 
+// Clone returns a deep copy of p; an empty target list is nil.
+func (p AccessPolicy) Clone() AccessPolicy {
+	if len(p.Targets) == 0 {
+		return AccessPolicy{}
+	}
+	return AccessPolicy{Targets: slices.Clone(p.Targets)}
+}
+
 // Allows reports whether p admits target, compared in canonical form.
 func (p AccessPolicy) Allows(target string) bool {
 	if len(p.Targets) == 0 {

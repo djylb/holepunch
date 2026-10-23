@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
+	"github.com/djylb/holepunch/internal/testkit"
 	"go.uber.org/goleak"
 )
 
@@ -114,7 +116,7 @@ func carried(s tlvSet, t TLVs) TLVs {
 // received is what Open returns for sealed TLVs t: OBSERVED comes back
 // unmapped and without a zone.
 func received(t TLVs) TLVs {
-	t.Observed = canonical(t.Observed)
+	t.Observed = netaddr.Canon(t.Observed)
 	return t
 }
 
@@ -218,27 +220,8 @@ func (a *countingAEAD) count() int {
 	return a.opens
 }
 
-// manualClock is a settable clock for NewCodec.
-type manualClock struct {
-	mu sync.Mutex
-	t  time.Time
-}
-
-func newManualClock() *manualClock {
-	return &manualClock{t: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)}
-}
-
-func (m *manualClock) Now() time.Time {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.t
-}
-
-func (m *manualClock) Advance(d time.Duration) {
-	m.mu.Lock()
-	m.t = m.t.Add(d)
-	m.mu.Unlock()
-}
+// clockStart is the time the tests' fake clocks start at.
+var clockStart = time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 
 // datagram is one packet queued in a queueConn.
 type datagram struct {
@@ -297,7 +280,7 @@ func newRand(seed uint64) *rand.Rand { return rand.New(rand.NewPCG(seed, seed^0x
 
 // iterations scales a statistical loop down under -short and -race.
 func iterations(n int) int {
-	if testing.Short() || raceEnabled {
+	if testing.Short() || testkit.RaceEnabled {
 		return max(n/10, 1)
 	}
 	return n

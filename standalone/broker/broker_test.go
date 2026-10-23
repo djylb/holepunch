@@ -11,8 +11,8 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch/coord"
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/holepunch/standalone/internal/life"
 	"github.com/djylb/holepunch/standalone/proto"
 )
 
@@ -361,8 +361,7 @@ func TestNotifyFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err := r.b.Open(OpenRequest{HostID: "office"})
-			var pe *life.PanicError
-			if !errors.Is(err, ErrHostNotFound) || errors.As(err, &pe) != (name != "error") {
+			if !errors.Is(err, ErrHostNotFound) || life.IsPanic(err) != (name != "error") {
 				t.Fatalf("open: %v", err)
 			}
 			if res := r.result(t); res.Reason != protocol.ReasonPeerOffline || res.Detail != "host_unreachable" {

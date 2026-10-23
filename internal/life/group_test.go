@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/djylb/holepunch/internal/testkit"
 )
 
 // closer records the order of Close calls and what the group context looked
@@ -251,7 +253,7 @@ func TestCloseJoinBoundCountsLeaked(t *testing.T) {
 	}
 	close(release)
 	<-exited
-	waitFor(t, func() bool { return g.Stats().Running == 0 })
+	testkit.WaitFor(t, "the goroutines to exit", func() bool { return g.Stats().Running == 0 })
 	if s := g.Stats(); s.Leaked != 1 {
 		t.Fatalf("leaked must stay recorded, stats = %+v", s)
 	}
@@ -526,17 +528,6 @@ func TestIsNil(t *testing.T) {
 		if got := IsNil(c.v); got != c.want {
 			t.Errorf("case %d (%T): IsNil = %v", i, c.v, got)
 		}
-	}
-}
-
-func waitFor(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not reached")
-		}
-		time.Sleep(time.Millisecond)
 	}
 }
 

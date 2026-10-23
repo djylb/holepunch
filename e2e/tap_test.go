@@ -15,6 +15,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -37,7 +38,7 @@ func (d direction) String() string {
 // frameEvent is one control frame that crossed a tap.
 type frameEvent struct {
 	Dir  direction
-	Type controlwire.Type
+	Type wiretype.Type
 	At   time.Time
 	Msg  protocol.Message // decoded and validated; nil when it is not
 	Size int
@@ -90,7 +91,7 @@ func newTap(pipe *nattest.PipeConn) *tap {
 // tap.
 type hold struct {
 	dir       direction
-	typ       controlwire.Type
+	typ       wiretype.Type
 	pred      func(protocol.Message) bool
 	reached   chan struct{}
 	reachOnce sync.Once
@@ -113,7 +114,7 @@ func (h *hold) Drop() {
 
 // holdNext arms a hold on the next frame of direction d and type typ for
 // which pred (nil: any) is true.
-func (t *tap) holdNext(d direction, typ controlwire.Type, pred func(protocol.Message) bool) *hold {
+func (t *tap) holdNext(d direction, typ wiretype.Type, pred func(protocol.Message) bool) *hold {
 	h := &hold{dir: d, typ: typ, pred: pred, reached: make(chan struct{}), rel: make(chan struct{})}
 	t.mu.Lock()
 	t.holds = append(t.holds, h)
@@ -124,7 +125,7 @@ func (t *tap) holdNext(d direction, typ controlwire.Type, pred func(protocol.Mes
 // watcher is a one-shot frame trigger (ch) or a subscription (fn).
 type watcher struct {
 	dir  direction
-	typ  controlwire.Type
+	typ  wiretype.Type
 	pred func(protocol.Message) bool
 	ch   chan frameEvent
 	fn   func(frameEvent)
@@ -132,7 +133,7 @@ type watcher struct {
 
 // when returns a channel that receives the first frame of the direction and
 // type for which pred (nil: any) is true, once it crossed the tap.
-func (t *tap) when(d direction, typ controlwire.Type, pred func(protocol.Message) bool) <-chan frameEvent {
+func (t *tap) when(d direction, typ wiretype.Type, pred func(protocol.Message) bool) <-chan frameEvent {
 	w := &watcher{dir: d, typ: typ, pred: pred, ch: make(chan frameEvent, 1)}
 	t.mu.Lock()
 	t.watchers = append(t.watchers, w)
@@ -143,7 +144,7 @@ func (t *tap) when(d direction, typ controlwire.Type, pred func(protocol.Message
 // subscribe calls fn with every frame of the direction and type that
 // crosses the tap from now on, as it is forwarded. fn runs on the goroutine
 // that moves the frame and must not block or call into the tap.
-func (t *tap) subscribe(d direction, typ controlwire.Type, fn func(frameEvent)) {
+func (t *tap) subscribe(d direction, typ wiretype.Type, fn func(frameEvent)) {
 	w := &watcher{dir: d, typ: typ, fn: fn}
 	t.mu.Lock()
 	t.subs = append(t.subs, w)
@@ -200,17 +201,17 @@ func frameLen(b []byte) int {
 }
 
 // decode decodes a frame unless the tap is light.
-func (t *tap) decode(raw []byte) (controlwire.Type, protocol.Message) {
+func (t *tap) decode(raw []byte) (wiretype.Type, protocol.Message) {
 	if t.light {
-		return controlwire.Type(raw[3]), nil
+		return wiretype.Type(raw[3]), nil
 	}
 	return decodeFrame(raw)
 }
 
 // decodeFrame decodes one complete frame; a frame that does not decode
 // yields nil.
-func decodeFrame(raw []byte) (controlwire.Type, protocol.Message) {
-	typ := controlwire.Type(raw[3])
+func decodeFrame(raw []byte) (wiretype.Type, protocol.Message) {
+	typ := wiretype.Type(raw[3])
 	m, err := msgframe.Decode(controlwire.Frame{Type: typ, Payload: raw[controlwire.HeaderSize:]})
 	if err != nil {
 		return typ, nil
@@ -220,7 +221,7 @@ func decodeFrame(raw []byte) (controlwire.Type, protocol.Message) {
 
 // note records a frame that crossed the tap and fires the watchers it
 // matches.
-func (t *tap) note(d direction, typ controlwire.Type, m protocol.Message, size int) {
+func (t *tap) note(d direction, typ wiretype.Type, m protocol.Message, size int) {
 	ev := frameEvent{Dir: d, Type: typ, At: time.Now(), Msg: m, Size: size}
 	t.frames.Add(1)
 	t.mu.Lock()
@@ -254,16 +255,16 @@ func (t *tap) note(d direction, typ controlwire.Type, m protocol.Message, size i
 
 // lightKept reports whether a light tap logs a frame type: the session's
 // milestones, not pings, pongs or progress.
-func lightKept(typ controlwire.Type) bool {
+func lightKept(typ wiretype.Type) bool {
 	switch typ {
-	case controlwire.TypePing, controlwire.TypePong, controlwire.TypeProgress, controlwire.TypeAssist:
+	case wiretype.Ping, wiretype.Pong, wiretype.Progress, wiretype.Assist:
 		return false
 	}
 	return true
 }
 
 // takeHold returns the armed hold a frame matches, removing it.
-func (t *tap) takeHold(d direction, typ controlwire.Type, m protocol.Message) *hold {
+func (t *tap) takeHold(d direction, typ wiretype.Type, m protocol.Message) *hold {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i, h := range t.holds {
@@ -477,15 +478,15 @@ func TestTapRead(t *testing.T) {
 	cli, srv := n.Pipe(nattest.PipeConfig{})
 	tp := newTap(srv)
 	defer func() { _ = tp.Close() }()
-	frame := func(typ controlwire.Type, payload string) []byte {
-		b := []byte{'h', 'p', controlwire.Version, byte(typ), 0, 0, 0, 0}
+	frame := func(typ wiretype.Type, payload string) []byte {
+		b := []byte{'h', 'p', wiretype.Version, byte(typ), 0, 0, 0, 0}
 		binary.BigEndian.PutUint32(b[4:], uint32(len(payload)))
 		return append(b, payload...)
 	}
-	held := tp.holdNext(toServer, controlwire.TypeProgress, nil)
-	dropped := tp.holdNext(toServer, controlwire.TypePong, nil)
-	first, second, third := frame(controlwire.TypeProgress, "one"), frame(controlwire.TypePong, "two"), frame(controlwire.TypeRoundResult, "three")
-	tail := frame(controlwire.TypePunchResult, "cut short")[:10]
+	held := tp.holdNext(toServer, wiretype.Progress, nil)
+	dropped := tp.holdNext(toServer, wiretype.Pong, nil)
+	first, second, third := frame(wiretype.Progress, "one"), frame(wiretype.Pong, "two"), frame(wiretype.RoundResult, "three")
+	tail := frame(wiretype.PunchResult, "cut short")[:10]
 	go func() {
 		<-held.Reached()
 		held.Release()
@@ -512,7 +513,7 @@ func TestTapRead(t *testing.T) {
 	if err := tp.logComplete(); err != nil {
 		t.Fatal(err)
 	}
-	if l := tp.log(); len(l) != 2 || l[0].Type != controlwire.TypeProgress || l[1].Type != controlwire.TypeRoundResult {
+	if l := tp.log(); len(l) != 2 || l[0].Type != wiretype.Progress || l[1].Type != wiretype.RoundResult {
 		t.Fatalf("log %+v, want the delivered progress and round_result", l)
 	}
 }
@@ -522,12 +523,12 @@ func TestTapRead(t *testing.T) {
 func TestTapLogOverflow(t *testing.T) {
 	tp := &tap{closed: make(chan struct{})}
 	for range maxTapEvents {
-		tp.note(toServer, controlwire.TypeProgress, nil, controlwire.HeaderSize)
+		tp.note(toServer, wiretype.Progress, nil, controlwire.HeaderSize)
 	}
 	if err := tp.logComplete(); err != nil {
 		t.Fatalf("full log: %v", err)
 	}
-	tp.note(toServer, controlwire.TypePunchResult, nil, controlwire.HeaderSize)
+	tp.note(toServer, wiretype.PunchResult, nil, controlwire.HeaderSize)
 	if err := tp.logComplete(); err == nil {
 		t.Fatal("a frame past the log's bound went unreported")
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/standalone/client"
+	"github.com/djylb/holepunch/standalone/internal/testkit"
 	"github.com/djylb/holepunch/standalone/internal/testworld"
 )
 
@@ -34,13 +35,7 @@ func TestProbeEcho(t *testing.T) {
 		cancel()
 		<-served
 	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for len(w.Broker.Snapshot().Hosts) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("echo host not registered")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	testkit.WaitFor(t, "the echo host to register", func() bool { return len(w.Broker.Snapshot().Hosts) != 0 })
 	dialC := w.Client(w.NATHost(nattest.SymmetricSeq(1)), nil)
 	s, err := dialC.Open(context.Background(), client.OpenRequest{HostID: "echo", TransportMode: mode})
 	if err != nil {

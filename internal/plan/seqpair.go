@@ -5,6 +5,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -34,7 +35,7 @@ func SideMappings(fs protocol.FamilySide, sent func(netip.AddrPort) int) (direct
 		switch st.Kind {
 		case protocol.StageDirect:
 			for _, t := range st.Targets {
-				if privateAddr(t.Addr().Unmap()) {
+				if netaddr.Private(t.Addr()) {
 					continue
 				}
 				prev := 0
@@ -63,9 +64,9 @@ func SideMappings(fs protocol.FamilySide, sent func(netip.AddrPort) int) (direct
 // sides get the same span, so that their pair orders cover the same positions
 // (pairOrders). Cutting a span takes its packets and ports off the side's
 // grant: MaxPackets stays what the stages expand to.
-func pairSeqWindows(in RoundInput, picks []familyPick, sides *[2][]protocol.FamilySide) {
+func pairSeqWindows(in input, picks []familyPick, sides *[2][]protocol.FamilySide) {
 	for fi, p := range picks {
-		fp := in.Class.fams[fi]
+		fp := in.fams[fi]
 		if !p.running() || !pairedFamily(in, fp) {
 			continue
 		}
@@ -109,7 +110,7 @@ func pairSeqWindows(in RoundInput, picks []familyPick, sides *[2][]protocol.Fami
 // seq_x_seq family whose two sides both allocate sequentially. A pool
 // allocates at random inside its block, where neither the window nor the
 // pair order holds (as for the sandwich).
-func pairedFamily(in RoundInput, fp familyPlan) bool {
+func pairedFamily(in input, fp familyPlan) bool {
 	if fp.CatA != CatSEQ || fp.CatB != CatSEQ {
 		return false
 	}
@@ -147,11 +148,11 @@ func pairedFamily(in RoundInput, fp familyPlan) bool {
 // The window is not extrapolated by PortVelocity: natprobe measures it over
 // a single gap, where one foreign mapping reads as tens of ports a second;
 // the pair orders absorb the few foreign mappings a quiet NAT makes.
-func pairAnchor(in RoundInput, role int, fam protocol.Family, ip netip.Addr, tr protocol.Traits, step, pre int, at time.Duration) (uint16, bool) {
+func pairAnchor(in input, role int, fam protocol.Family, ip netip.Addr, tr protocol.Traits, step, pre int, at time.Duration) (uint16, bool) {
 	ip = ip.Unmap()
 	if r, ok := refreshFor(in, role, fam, ip); ok {
 		lambda, _ := refreshRate(in, role, r, tr, step)
-		port, _, _, after := r.newest()
+		port, _, _, after := anchorNewest(r)
 		return wrapPort(int(port) + step*(after+pre+refreshDrift(lambda, r, at))), true
 	}
 	var best uint16
@@ -189,7 +190,7 @@ func ahead(a, b uint16, step int) bool {
 
 // mappedSince sums what role mapped in family fam in the rounds after round
 // `after` (FamilyRound.Mapped).
-func mappedSince(in RoundInput, fam protocol.Family, role, after int) int {
+func mappedSince(in input, fam protocol.Family, role, after int) int {
 	n := 0
 	for _, o := range in.Prev {
 		if o.Round <= after {
@@ -248,8 +249,8 @@ func preMappings(fs protocol.FamilySide, prevSockets int) int {
 // earlier round of family fi, by the ladder templates and the first
 // round's baseline (takesBaseline): the Direct targets — the peer's
 // verified endpoints — are the same every round.
-func prevDirectSockets(in RoundInput, fi, role int) int {
-	fp := in.Class.fams[fi]
+func prevDirectSockets(in input, fi, role int) int {
+	fp := in.fams[fi]
 	n := 0
 	for _, o := range in.Prev {
 		v, ok := familyVariantOf(o, fi, fp.Family)

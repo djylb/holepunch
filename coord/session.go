@@ -10,9 +10,10 @@ import (
 
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/ablation"
-	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/trunc"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -141,10 +142,10 @@ type Session struct {
 	st sessionState // guarded by mu
 }
 
-// sessionState is everything the session mutex guards.
+// sessionState is everything the session mutex guards: the session's
+// lifecycle here, each concern in its own part.
 type sessionState struct {
 	state     State
-	gen       uint64 // changes invalidate planning done outside the lock
 	links     [2]*link
 	attaching [2]bool
 	loop      bool // the session goroutine was started
@@ -152,77 +153,15 @@ type sessionState struct {
 	deadline  time.Duration // the stage deadline, session time
 	expireAt  time.Duration // the defensive lifetime cap
 	deferred  *terminal     // NoEarlyAbort: an end waiting for the stage deadline
-	planning  bool          // the planner runs outside the lock
 	work      work          // requests for the session goroutine
 	rng       *rand.Rand    // round seeds and plan ids
 	quota     quota
 
-	reports [2]*protocol.ProbeReport
-	echoed  [2]bool // the side accepted the sandwich feature
-
-	planner   Planner // switches to the default planner after a panic
-	cls       Classification
-	planned   bool
-	cin       ClassifyInput        // kept for a fallback classification
-	views     [2]protocol.PeerView // merged views as sent (wire)
-	rawViews  [2]protocol.PeerView // merged without the traits memory: this session's own evidence
-	pviews    [2]protocol.PeerView // the planner's views: the wire views and the endpoints admitted since
-	verified  [2]map[protocol.Family][]netip.Addr
-	lan       [2]map[protocol.Family][]netip.Addr
-	overlay   [2]map[protocol.Family][]netip.Addr     // overlay addresses
-	upstream  [2]map[protocol.Family][]netip.AddrPort // private port mappings: upstream-LAN candidates
-	pair      protocol.PairFacts
-	transport string
-	memory    StrategyMemory // nil once disabled for the session
-	memKey    StrategyKey
-	hasKey    bool
-	memHit    bool
-	promoted  bool
-	// bgOnly: the built-in memory saw this pair connect only through the
-	// slow birthday (plan.BackgroundOnly).
-	bgOnly bool
-	// mode is the session's mode: background when it was offered and both
-	// clients accepted it.
-	mode       protocol.SessionMode
-	order      []VariantID
-	sandwich   bool // negotiated: natprobe hands the sandwich probes to the session
+	reports    [2]*protocol.ProbeReport
 	summaryAt  time.Duration
 	summarized bool
-	pairRND    bool
-
-	ready   [2]bool
-	portmap [2][]protocol.Assist  // port mappings for each side, sent with the next go (≤ maxQueuedAssists)
-	pending [2][]protocol.Assist  // drifted mappings for each side, sent with the next go (≤ maxQueuedAssists)
-	remaps  [2][2]*protocol.Remap // each side's latest remap echo per family index
-
-	round         int // current round, 0 before the first go
-	cur           roundState
-	firstGoAt     time.Duration
-	punchDeadline time.Duration
-	rescueUsed    bool
-	nonRescue     int
-	prev          []RoundOutcome
-	records       []RoundRecord
-	ev            Evidence
-	lastGranted   protocol.BudgetClass
-	granted       [2]int                       // packets granted so far, per side, pushed targets included
-	credit        [2]int                       // pushed targets' packets the audit has not yet paid
-	strikes       [2]int                       // consecutive audit violations
-	halve         [2]bool                      // the side's grants are halved after a violation
-	gone          [2]bool                      // punching: the side's control link is lost
-	recentPorts   [maxRound + 1][2]int         // distinct ports granted per round and side (10 s window)
-	fireAt        [maxRound + 1]time.Duration  // each round's expected fire time, session time
-	mappings      [2][]MappingSample           // each side's mappings its peer saw while punching
-	directSent    [2][2]map[netip.AddrPort]int // per side and family: the most round sockets each Direct target went out from
-
-	confirmed [2]bool
-	confirmAt [2]time.Duration
-	okResult  [2]bool
-	finals    [2]*ClientFinal
-	paths     [2]*protocol.PathInfo
-	winRound  int
-	winVar    VariantID
-	winFam    protocol.Family
+	ready      [2]bool
+	gone       [2]bool // punching: the side's control link is lost
 
 	rtt       [2]rttEstimator
 	offset    [2]time.Duration
@@ -232,16 +171,110 @@ type sessionState struct {
 	timeline  [timelineCap]StageMark
 	tlN       int
 	lastStage [2]string
-	sandBox   []nat.SandwichEvent
-	sandHalf  [2][2]sandwichHalf      // per side and family
-	refresh   refreshState            // the anchor refresh of the next round
-	drifted   map[netip.AddrPort]bool // drifted mappings already pushed (≤ maxDrifted)
+
+	plan    planState
+	adm     admission
+	audit   audit
+	rounds  roundsState
+	confirm confirmState
+	refresh refreshState // the anchor refresh of the next round
+	sand    sandwichState
+}
+
+// planState is the session plan and the planning under way.
+type planState struct {
+	gen      uint64 // changes invalidate planning done outside the lock (planTicket)
+	planning bool   // the planner runs outside the lock
+	planned  bool
+	planner  plan.Planner // switches to the default planner after a panic
+	cls      plan.Classification
+	cin      plan.ClassifyInput // kept for a fallback classification
+	order    []plan.VariantID
+	views    [2]protocol.PeerView // merged views as sent (wire)
+	rawViews [2]protocol.PeerView // merged without the traits memory: this session's own evidence
+	pviews   [2]protocol.PeerView // the planner's views: the wire views and the endpoints admitted since
+	memory   StrategyMemory       // nil once disabled for the session
+	memKey   StrategyKey
+	hasKey   bool
+	memHit   bool
+	promoted bool
+	// bgOnly: the strategy memory saw this pair connect only through the
+	// slow birthday (engine.BackgroundOnly).
+	bgOnly  bool
+	pairRND bool
+	// mode is the session's mode: background when it was offered and both
+	// clients accepted it.
+	mode      protocol.SessionMode
+	transport string
+}
+
+// admission is what each side's peer may aim at (admission.index): the
+// pair facts and the addresses admitted per side and family.
+type admission struct {
+	pair     protocol.PairFacts
+	verified [2]map[protocol.Family][]netip.Addr
+	lan      [2]map[protocol.Family][]netip.Addr
+	overlay  [2]map[protocol.Family][]netip.Addr     // overlay addresses
+	upstream [2]map[protocol.Family][]netip.AddrPort // private port mappings: upstream-LAN candidates
+}
+
+// audit is each side's packet account (auditLocked).
+type audit struct {
+	granted [2]int  // packets granted so far, per side, pushed targets included
+	credit  [2]int  // pushed targets' packets the audit has not yet paid
+	strikes [2]int  // consecutive audit violations
+	halve   [2]bool // the side's grants are halved after a violation
+}
+
+// roundsState is the punch: the round under way, the rounds before it and
+// the assists queued for the next go.
+type roundsState struct {
+	round         int // current round, 0 before the first go
+	cur           roundState
+	firstGoAt     time.Duration
+	punchDeadline time.Duration
+	rescueUsed    bool
+	nonRescue     int
+	prev          []plan.RoundOutcome
+	records       []RoundRecord
+	ev            plan.Evidence
+	lastGranted   protocol.BudgetClass
+	recentPorts   [protocol.MaxRound + 1][2]int        // distinct ports granted per round and side (10 s window)
+	fireAt        [protocol.MaxRound + 1]time.Duration // each round's expected fire time, session time
+	mappings      [2][]plan.MappingSample              // each side's mappings its peer saw while punching
+	directSent    [2][2]map[netip.AddrPort]int         // per side and family: the most round sockets each Direct target went out from
+
+	portmap [2][]protocol.Assist    // port mappings for each side, sent with the next go (≤ maxQueuedAssists)
+	pending [2][]protocol.Assist    // drifted mappings for each side, sent with the next go (≤ maxQueuedAssists)
+	remaps  [2][2]*protocol.Remap   // each side's latest remap echo per family index
+	drifted map[netip.AddrPort]bool // drifted mappings already pushed (≤ protocol.MaxDrifted)
+}
+
+// confirmState is the confirmations and what they reported.
+type confirmState struct {
+	finals    [2]*ClientFinal
+	paths     [2]*protocol.PathInfo
+	confirmAt [2]time.Duration
+	winFam    protocol.Family
+	winRound  int
+	confirmed [2]bool
+	okResult  [2]bool
+	winVar    plan.VariantID
+}
+
+// sandwichState is the sandwich probe: whether it was negotiated and the
+// probes natprobe handed over.
+type sandwichState struct {
+	echoed     [2]bool // the side accepted the sandwich feature
+	negotiated bool    // natprobe hands the sandwich probes to the session
+	box        []nat.SandwichEvent
+	half       [2][2]sandwichHalf // per side and family
 }
 
 // roundState is the round under way.
 type roundState struct {
 	n          int
-	variant    VariantID
+	variant    plan.VariantID
 	name       string
 	class      protocol.BudgetClass
 	rescue     bool
@@ -254,12 +287,12 @@ type roundState struct {
 	reanchored [2]bool // round 1's plan of the side was re-aimed after its summary: the go carries it
 	results    [2]*protocol.RoundResult
 	granted    [2]int
-	sandwich   [2][2]bool    // the sandwich probe runs, per side and family
-	targets    [2]int        // peer_targets sent to each side
-	pushed     [2][2]int     // their targets and window ports, per side and family
-	assists    [2][2]int     // peer_seen accepted per side and family
-	families   []FamilyRound // the decision's families, as the outcome returns them
-	evaluating bool          // ended; the next round is being decided
+	sandwich   [2][2]bool         // the sandwich probe runs, per side and family
+	targets    [2]int             // peer_targets sent to each side
+	pushed     [2][2]int          // their targets and window ports, per side and family
+	assists    [2][2]int          // peer_seen accepted per side and family
+	families   []plan.FamilyRound // the decision's families, as the outcome returns them
+	evaluating bool               // ended; the next round is being decided
 }
 
 // work is what the session goroutine has to do besides frames.
@@ -276,7 +309,7 @@ const timelineCap = 32
 func (s *Session) ID() string { return s.id }
 
 // PunchStart returns a copy of the punch_start pre-generated for role, for
-// announcing the session out of band (a caller may signal the provider with
+// announcing the session out of band (a caller may signal the responder with
 // it); the same message is written on the stream at Attach, with the
 // AttachOptions.Probe given there. It returns the zero value for an invalid
 // role.
@@ -287,7 +320,7 @@ func (s *Session) PunchStart(role protocol.Role) protocol.PunchStart {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return cloneStart(s.starts[i])
+	return s.starts[i].Clone()
 }
 
 // Context is canceled when the session ends; its cause is ErrSessionDone
@@ -329,11 +362,11 @@ func (s *Session) Snapshot() Snapshot {
 	snap := Snapshot{
 		ID:        s.id,
 		State:     st.state,
-		Round:     st.round,
+		Round:     st.rounds.round,
 		Ready:     st.ready,
-		Confirmed: st.confirmed,
+		Confirmed: st.confirm.confirmed,
 		LastStage: st.lastStage,
-		Variant:   st.cur.name,
+		Variant:   st.rounds.cur.name,
 		CreatedAt: s.epoch,
 		UpdatedAt: s.epoch.Add(st.updated),
 	}
@@ -354,7 +387,7 @@ func (s *Session) Abort(reason protocol.Reason, detail string) {
 	if !reason.Known() {
 		reason = protocol.ReasonCanceled
 	}
-	s.guard("coord.abort", func() { s.finish(terminal{code: reason, detail: truncate(detail, maxDetail)}) })
+	s.guard("coord.abort", func() { s.finish(terminal{code: reason, detail: trunc.String(detail, protocol.MaxDetail)}) })
 }
 
 // acquire takes a reference for work that must finish before Done closes;
@@ -386,14 +419,7 @@ func (s *Session) release() {
 	s.c.emit(Event{Kind: EvClosed, At: res.Timing.Closed, SessionID: s.id, Reason: res.Reason, Detail: res.Detail,
 		Labels: s.labels, Result: res})
 	if fn := s.c.cfg.OnResult; fn != nil {
-		if err := life.Safe("coord.on_result", func() {
-			if faultinject.Point(fiCallback) != nil {
-				return
-			}
-			fn(*res)
-		}); err != nil {
-			s.c.noteCallbackPanic(s.id, err)
-		}
+		s.callout("coord.on_result", fiCallback, func() { fn(*res) })
 	}
 }
 

@@ -73,6 +73,34 @@ func (f *Flags) Config(log *slog.Logger) (cfg client.Config, cleanup func(), err
 	return cfg, cleanup, nil
 }
 
+// Client is a client.Client with what its flags created besides it; Close
+// releases both.
+type Client struct {
+	*client.Client
+	cleanup func()
+}
+
+// Close closes the client, then releases the port mapper, if any.
+func (c *Client) Close() error {
+	err := c.Client.Close()
+	c.cleanup()
+	return err
+}
+
+// NewClient builds the client from the flags (Config, then client.New).
+func (f *Flags) NewClient(log *slog.Logger) (*Client, error) {
+	cfg, cleanup, err := f.Config(log)
+	if err != nil {
+		return nil, err
+	}
+	c, err := client.New(cfg)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	return &Client{Client: c, cleanup: cleanup}, nil
+}
+
 // clientTLS authenticates the server by pin, by CA file, or by the system
 // roots.
 func clientTLS(caFile, pin, serverName string) (*tls.Config, error) {

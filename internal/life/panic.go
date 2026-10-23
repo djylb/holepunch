@@ -5,7 +5,8 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/djylb/holepunch/internal/trunc"
 )
 
 // Limits on what a PanicError retains. The value summary travels in error
@@ -115,11 +116,7 @@ func summarize(r any) (s string) {
 	// invalid byte it stands for.
 	s = strings.ToValidUTF8(s, "\uFFFD")
 	if len(s) > maxPanicText {
-		n := maxPanicText
-		for n > 0 && !utf8.RuneStart(s[n]) {
-			n--
-		}
-		s, cut = s[:n], true
+		s, cut = trunc.String(s, maxPanicText), true
 	}
 	if cut {
 		s += "..."

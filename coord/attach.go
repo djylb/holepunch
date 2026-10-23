@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
-	"slices"
 	"time"
 
 	"github.com/djylb/holepunch/internal/controlwire"
@@ -57,9 +56,7 @@ func (s *Session) attachProbe(r int, p *protocol.ProbeSpec) (*protocol.ProbeSpec
 	if p == nil {
 		return nil, nil
 	}
-	spec := *p
-	spec.Observers = slices.Clone(spec.Observers)
-	spec.STUN = slices.Clone(spec.STUN)
+	spec := p.Clone()
 	if spec.V == 0 {
 		spec.V = protocol.ProbeSpecVersion
 	}
@@ -67,7 +64,7 @@ func (s *Session) attachProbe(r int, p *protocol.ProbeSpec) (*protocol.ProbeSpec
 	if s.ablate.SinglePortProbe {
 		spec = singlePortSpec(spec)
 	}
-	start := cloneStart(s.starts[r])
+	start := s.starts[r].Clone()
 	start.Probe = spec
 	if _, err := msgframe.Encode(start); err != nil {
 		return nil, fmt.Errorf("%w (%w)", argumentError("probe", "AttachOptions.Probe makes an invalid punch_start"), err)
@@ -257,7 +254,7 @@ func (s *Session) commitAttach(l *link, now time.Time) effects {
 			s.handle.Announce(roleOf(r), l.probe.Observers)
 		}
 	}
-	start := cloneStart(s.starts[r])
+	start := s.starts[r].Clone()
 	if other != nil {
 		start.Timeouts.SummaryWaitMs = summaryWaitMs(0, s.to, s.ttl)
 		st.state = StateProbing

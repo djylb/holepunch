@@ -11,8 +11,8 @@ import (
 )
 
 // TestExportedAPI pins the exported surface to its final list: 39 constants
-// and 30 other
-// symbols (8 types, 10 functions, 12 methods), within the ≤ 42 / ≤ 30 budget.
+// and 31 other
+// symbols (8 types, 11 functions, 12 methods), within the ≤ 42 / ≤ 31 budget.
 func TestExportedAPI(t *testing.T) {
 	wantConsts := []string{
 		"B0Max", "B0Min", "DefaultResidualWindow", "ErrAuth", "ErrForeign", "ErrPayload", "ErrRate",
@@ -24,7 +24,7 @@ func TestExportedAPI(t *testing.T) {
 	}
 	wantOthers := []string{
 		"Codec", "DecodeError", "Header", "PadPolicy", "Role", "SeqWindow", "TLVs", "Type",
-		"DropResidual", "NewCodec", "NewPadPolicy", "PacerSeed", "Precheck", "ReplyLengths", "SpraySeed", "UnmaskRoute",
+		"CandID", "DropResidual", "NewCodec", "NewPadPolicy", "PacerSeed", "Precheck", "ReplyLengths", "SpraySeed", "UnmaskRoute",
 		"Unwrap", "Wrapped",
 		"Codec.BindPeers", "Codec.CheckRole", "Codec.NextSeq", "Codec.Now", "Codec.Open", "Codec.OpenProbe",
 		"Codec.Peers", "Codec.Role", "Codec.Seal", "Codec.Wrap", "DecodeError.String", "SeqWindow.Accept",

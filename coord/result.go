@@ -3,6 +3,7 @@ package coord
 import (
 	"time"
 
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -72,15 +73,15 @@ type RoundRecord struct {
 	Sent      [2]int               // initiated packets each side reported
 	Round     int
 	Duration  time.Duration
-	Variant   VariantID
+	Variant   plan.VariantID
 	Rescue    bool
-	Class     RoundClass
+	Class     plan.RoundClass
 }
 
 // WinnerInfo is the confirmed path.
 type WinnerInfo struct {
 	Round   int
-	Variant VariantID
+	Variant plan.VariantID
 	Family  protocol.Family
 	Path    [2]*protocol.PathInfo // by role; nil for a side that did not report its path
 	// ExtraPaths are, by role, the other paths each side handed over with

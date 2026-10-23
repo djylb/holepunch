@@ -49,11 +49,13 @@ func WithEventLog(n int) Option {
 	}
 }
 
-// WithClock replaces the real clock. With a *clock.Fake the network is fully
-// event-driven and starts no goroutine: delayed packets, pipe data and
-// deadlines move only while the test advances the Fake, on the advancing
-// goroutine, so a single-goroutine test is reproducible packet by packet.
-// Any other clock drives the scheduler goroutine. A nil clock is ignored.
+// WithClock replaces the real clock. With a manual clock — a *clock.Fake, or
+// any clock that also has the Fake's AdvanceTo(time.Time) int, such as a
+// wrapper embedding one — the network is fully event-driven and starts no
+// goroutine: delayed packets, pipe data and deadlines move only while the
+// test advances the clock, on the advancing goroutine, so a single-goroutine
+// test is reproducible packet by packet. Any other clock drives the
+// scheduler goroutine. A nil clock is ignored.
 func WithClock(c clock.Clock) Option {
 	return func(o *options) {
 		if c != nil {

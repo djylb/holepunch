@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	"github.com/djylb/holepunch/coord/internal/simclient"
-	"github.com/djylb/holepunch/internal/plan"
+	engine "github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -22,9 +24,9 @@ var (
 
 // lanPlanner is the default planner that also aims round 1 at every
 // endpoint of the peer's view, LAN ones included: admission decides.
-type lanPlanner struct{ plan.DefaultPlanner }
+type lanPlanner struct{ engine.DefaultPlanner }
 
-func (p lanPlanner) Round(in RoundInput) RoundDecision {
+func (p lanPlanner) Round(in plan.RoundInput) plan.RoundDecision {
 	d := p.DefaultPlanner.Round(in)
 	for r := range d.Sides {
 		for i := range d.Sides[r] {
@@ -106,13 +108,13 @@ func TestLANNeedsSameLAN(t *testing.T) {
 			}
 			if c.sameLAN {
 				for _, st := range sum.Plan.Round1.Sides[0].Stages {
-					if slices.Contains(st.Targets, c.lanR) && (st.Repeats > lanRepeats || len(st.Targets) != 1) {
+					if slices.Contains(st.Targets, c.lanR) && (st.Repeats > protocol.LANRepeats || len(st.Targets) != 1) {
 						t.Fatalf("LAN stage %+v", st)
 					}
 				}
 			} else {
 				// Events reach the observer on a goroutine of their own.
-				eventually(t, "a not_same_lan rejection", func() bool {
+				testkit.WaitFor(t, "a not_same_lan rejection", func() bool {
 					return slices.ContainsFunc(r.eventsOf(EvTargetRejected), func(e Event) bool {
 						d := e.Data.(TargetRejectedData)
 						return d.Rule == "not_same_lan" && d.Addr == c.lanR
@@ -230,10 +232,10 @@ func checkPushed(t *testing.T, p *pair, g0, g1 *protocol.PunchGo, n int) {
 	if g0 != nil && (g0.Plan != nil || g1.Plan != nil) {
 		t.Fatalf("round 1 go plans: initiator %v, responder %v", g0.Plan != nil, g1.Plan != nil)
 	}
-	eventually(t, "push charge", func() bool {
+	testkit.WaitFor(t, "push charge", func() bool {
 		p.s.mu.Lock()
 		defer p.s.mu.Unlock()
-		return p.s.st.credit == [2]int{0, n * pushPackets}
+		return p.s.st.audit.credit == [2]int{0, n * protocol.PushPackets}
 	})
 }
 
@@ -310,7 +312,7 @@ func TestUnverifiedFamily(t *testing.T) {
 				}
 			}
 		}
-		if len(targets) == 0 || len(targets) > maxUnverifiedTargets || int(v6.MaxPackets) > unverifiedPerTarget*len(targets) {
+		if len(targets) == 0 || len(targets) > protocol.MaxUnverifiedTargets || int(v6.MaxPackets) > protocol.UnverifiedRepeats*len(targets) {
 			t.Fatalf("v6 side %+v", v6)
 		}
 		p.s.Abort(protocol.ReasonCanceled, "")
@@ -331,12 +333,12 @@ func TestUnverifiedFamily(t *testing.T) {
 		}
 		p.s.mu.Lock()
 		defer p.s.mu.Unlock()
-		if pair := p.s.st.pair; !slices.Equal(pair.SharedFamilies, []protocol.Family{u4}) || pair.Unverified != nil {
+		if pair := p.s.st.adm.pair; !slices.Equal(pair.SharedFamilies, []protocol.Family{u4}) || pair.Unverified != nil {
 			t.Fatalf("pair %+v", pair)
 		}
 		for r := range 2 {
-			if _, ok := familyView(p.s.st.views[r], u6); ok {
-				t.Fatalf("v6 view %+v", p.s.st.views[r])
+			if _, ok := familyView(p.s.st.plan.views[r], u6); ok {
+				t.Fatalf("v6 view %+v", p.s.st.plan.views[r])
 			}
 		}
 	})

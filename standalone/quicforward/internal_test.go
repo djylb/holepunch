@@ -14,6 +14,7 @@ import (
 	"github.com/djylb/holepunch"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/standalone/client"
+	"github.com/djylb/holepunch/standalone/internal/testkit"
 	"github.com/djylb/holepunch/standalone/internal/testworld"
 	"github.com/djylb/holepunch/standalone/proto"
 )
@@ -252,14 +253,7 @@ func quicPair(t *testing.T) (host, dial *Conn) {
 		cancel()
 		<-served
 	})
-	for deadline := time.Now().Add(10 * time.Second); len(w.Broker.Snapshot().Hosts) == 0; {
-		if time.Now().After(deadline) {
-			t.Fatal("host not registered")
-		}
-		if !pause(ctx, 5*time.Millisecond) {
-			t.Fatal("canceled")
-		}
-	}
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) != 0 })
 	dialC := w.Client(w.NATHost(nattest.FullCone()), nil)
 	ds, err := dialC.Open(ctx, client.OpenRequest{HostID: "office", TransportMode: Mode, TransportData: dialID.TransportData()})
 	if err != nil {

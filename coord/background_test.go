@@ -67,19 +67,19 @@ func TestBackgroundClassGuard(t *testing.T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := &s.st
-	st.lastGranted, st.pairRND = protocol.BudgetBalanced, true
+	st.rounds.lastGranted, st.plan.pairRND = protocol.BudgetBalanced, true
 	if got := s.guardClassLocked(2, protocol.BudgetBackground, 0); got != protocol.BudgetHeavy {
 		t.Fatalf("interactive session: %s", got)
 	}
-	st.mode = protocol.ModeBackground
+	st.plan.mode = protocol.ModeBackground
 	if got := s.guardClassLocked(2, protocol.BudgetBackground, 0); got != protocol.BudgetBackground {
 		t.Fatalf("background session, round 2: %s", got)
 	}
-	st.lastGranted = ""
+	st.rounds.lastGranted = ""
 	if got := s.guardClassLocked(1, protocol.BudgetBackground, 0); got != protocol.BudgetBackground {
 		t.Fatalf("round 1, the memory's choice: %s", got)
 	}
-	st.pairRND, st.lastGranted = false, protocol.BudgetBalanced
+	st.plan.pairRND, st.rounds.lastGranted = false, protocol.BudgetBalanced
 	if got := s.guardClassLocked(2, protocol.BudgetBackground, 0); got != protocol.BudgetBalanced {
 		t.Fatalf("no random side: %s", got)
 	}

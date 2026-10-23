@@ -49,8 +49,9 @@ type Network struct {
 	drops           dropCounters // drops in the core, on its link and at Close
 }
 
-// NewNetwork creates an empty network. Unless the clock is a *clock.Fake it
-// starts the scheduler goroutine, so the caller must Close the network.
+// NewNetwork creates an empty network. Unless the clock is manual — a
+// *clock.Fake, or a clock with its AdvanceTo method (WithClock) — it starts
+// the scheduler goroutine, so the caller must Close the network.
 func NewNetwork(opts ...Option) *Network {
 	o := options{seed: defaultSeed, coreHops: defaultCoreHops, eventLog: defaultEventLog, clock: clock.System{}}
 	for _, f := range opts {

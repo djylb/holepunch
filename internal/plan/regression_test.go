@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/msgframe"
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -40,11 +41,11 @@ func TestBirthdayTierGate(t *testing.T) {
 	var p DefaultPlanner
 	// tier conservative + AllowExtreme: pdf_x_seq r5 (balanced one-sided birthday) unreachable.
 	cl := p.Classify(classifyInput(pdfTraits(f), seqTraits(f)))
-	prev := []RoundOutcome{
-		{Round: 1, Variant: vPDFSeq1, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 2, Variant: vPDFSeq2, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 3, Variant: vPDFSeq3, Class: RCNoContact, Budget: protocol.BudgetHeavy},
-		{Round: 4, Variant: vPDFSeq4, Class: RCNoContact, Budget: protocol.BudgetHeavy},
+	prev := []api.RoundOutcome{
+		{Round: 1, Variant: vPDFSeq1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 2, Variant: vPDFSeq2, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 3, Variant: vPDFSeq3, Class: api.RoundNoContact, Budget: protocol.BudgetHeavy},
+		{Round: 4, Variant: vPDFSeq4, Class: api.RoundNoContact, Budget: protocol.BudgetHeavy},
 	}
 	in := roundInput(cl, pdfTraits(f), seqTraits(f), 5, prev)
 	in.AllowExtreme = true
@@ -56,10 +57,10 @@ func TestBirthdayTierGate(t *testing.T) {
 
 	// pdf_x_rnd r4 (balanced one-sided birthday) unreachable at conservative.
 	clr := p.Classify(classifyInput(pdfTraits(f), rndTraits(f)))
-	prevr := []RoundOutcome{
-		{Round: 1, Variant: vPDFRnd1, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 2, Variant: vPDFRnd2, Class: RCNoContact, Budget: protocol.BudgetHeavy},
-		{Round: 3, Variant: vPDFRnd3, Class: RCNoContact, Budget: protocol.BudgetHeavy},
+	prevr := []api.RoundOutcome{
+		{Round: 1, Variant: vPDFRnd1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 2, Variant: vPDFRnd2, Class: api.RoundNoContact, Budget: protocol.BudgetHeavy},
+		{Round: 3, Variant: vPDFRnd3, Class: api.RoundNoContact, Budget: protocol.BudgetHeavy},
 	}
 	in4 := roundInput(clr, pdfTraits(f), rndTraits(f), 4, prevr)
 	in4.AllowExtreme = true
@@ -71,9 +72,9 @@ func TestBirthdayTierGate(t *testing.T) {
 
 	// rnd_x_rnd r3 unreachable at conservative even with AllowExtreme.
 	clrr := p.Classify(classifyInput(rndTraits(f), rndTraits(f)))
-	in3 := roundInput(clrr, rndTraits(f), rndTraits(f), 3, []RoundOutcome{
-		{Round: 1, Variant: vRndRnd1, Class: RCNoContact, Budget: protocol.BudgetLight},
-		{Round: 2, Variant: vRndRnd2, Class: RCNoContact, Budget: protocol.BudgetBalanced},
+	in3 := roundInput(clrr, rndTraits(f), rndTraits(f), 3, []api.RoundOutcome{
+		{Round: 1, Variant: vRndRnd1, Class: api.RoundNoContact, Budget: protocol.BudgetLight},
+		{Round: 2, Variant: vRndRnd2, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
 	})
 	in3.AllowExtreme = true
 	in3.MaxRounds = 6
@@ -84,7 +85,7 @@ func TestBirthdayTierGate(t *testing.T) {
 	}
 
 	// tier off: pdf_x_rnd r2 (conservative one-sided birthday) must not run.
-	in2 := roundInput(clr, pdfTraits(f), rndTraits(f), 2, []RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: RCNoContact, Budget: protocol.BudgetBalanced}})
+	in2 := roundInput(clr, pdfTraits(f), rndTraits(f), 2, []api.RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}})
 	in2.Policy.Budget.Birthday = protocol.BirthdayOff
 	if dec := p.Round(in2); dec.Stop == "" && dec.Variant == vPDFRnd2 {
 		t.Errorf("pdf_x_rnd r2 one-sided birthday ran at tier off: %s sockets=%d", dec.VariantName, maxSock(dec.Sides[1]))
@@ -99,7 +100,7 @@ func TestUnknownFilteringNoBirthday(t *testing.T) {
 	b := rndTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	in := roundInput(cl, a, b, 2, []RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: RCNoContact, Budget: protocol.BudgetBalanced}})
+	in := roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}})
 	in.Policy.Budget.Birthday = protocol.BirthdayConservative
 	dec := p.Round(in)
 	if dec.Stop == "" && dec.Variant == vPDFRnd2 {
@@ -113,7 +114,7 @@ func TestReplyOnlyMarshals(t *testing.T) {
 	f := protocol.FamilyUDP4
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(pdfTraits(f), seqTraits(f)))
-	in := roundInput(cl, pdfTraits(f), seqTraits(f), 2, []RoundOutcome{{Round: 1, Variant: vPDFSeq1, Class: RCBlocked, Budget: protocol.BudgetBalanced}})
+	in := roundInput(cl, pdfTraits(f), seqTraits(f), 2, []api.RoundOutcome{{Round: 1, Variant: vPDFSeq1, Class: api.RoundBlocked, Budget: protocol.BudgetBalanced}})
 	in.Evidence.ICMPUnreach = [2]uint16{80, 0}
 	dec := p.Round(in)
 	if dec.Stop != "" {
@@ -134,12 +135,12 @@ func TestDualStackBudgetMerged(t *testing.T) {
 	a4, b4 := pdfTraits(protocol.FamilyUDP4), rndTraits(protocol.FamilyUDP4)
 	a6, b6 := pdfTraits(protocol.FamilyUDP6), rndTraits(protocol.FamilyUDP6)
 	var p DefaultPlanner
-	ci := ClassifyInput{Initiator: dual(a4, a6), Responder: dual(b4, b6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}, Timeouts: protocol.DefaultTimeouts()}
+	ci := api.ClassifyInput{Initiator: dual(a4, a6), Responder: dual(b4, b6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}, Timeouts: protocol.DefaultTimeouts()}
 	cl := p.Classify(ci)
 	if len(cl.Families) != 2 {
 		t.Fatalf("expected 2 families, got %v", cl.Families)
 	}
-	in := roundInput(cl, a4, b4, 2, []RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: RCNoContact, Budget: protocol.BudgetBalanced}})
+	in := roundInput(cl, a4, b4, 2, []api.RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}})
 	in.Views = [2]protocol.PeerView{dual(a4, a6), dual(b4, b6)}
 	in.BudgetLeft = [2]int{500, 500}
 	dec := p.Round(in)
@@ -171,13 +172,12 @@ func TestDualStackBudgetMerged(t *testing.T) {
 func TestPerFamilyLadder(t *testing.T) {
 	a4, b4 := pdfTraits(protocol.FamilyUDP4), rndTraits(protocol.FamilyUDP4)
 	a6, b6 := openTraits(protocol.FamilyUDP6), openTraits(protocol.FamilyUDP6)
-	var p DefaultPlanner
-	ci := ClassifyInput{Initiator: dual(a4, a6), Responder: dual(b4, b6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}, Timeouts: protocol.DefaultTimeouts()}
-	cl := p.Classify(ci)
+	ci := api.ClassifyInput{Initiator: dual(a4, a6), Responder: dual(b4, b6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}, Timeouts: protocol.DefaultTimeouts()}
+	fams := famsOf(ci)
 	var v4 *familyPlan
-	for i := range cl.fams {
-		if cl.fams[i].Family == protocol.FamilyUDP4 {
-			v4 = &cl.fams[i]
+	for i := range fams {
+		if fams[i].Family == protocol.FamilyUDP4 {
+			v4 = &fams[i]
 		}
 	}
 	if v4 == nil || v4.PairClass != PairPDFRnd {
@@ -192,7 +192,7 @@ func TestUnreachableVariantSkipped(t *testing.T) {
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(pdfTraits(f), rndTraits(f)))
 	in := roundInput(cl, pdfTraits(f), rndTraits(f), 1, nil)
-	in.Order = []VariantID{vPDFRnd4, vPDFRnd1, vPDFRnd2, vPDFRnd3} // extreme first
+	in.Order = []api.VariantID{vPDFRnd4, vPDFRnd1, vPDFRnd2, vPDFRnd3} // extreme first
 	in.AllowExtreme = false
 	dec := p.Round(in)
 	if dec.Stop != "" {
@@ -210,10 +210,10 @@ func TestEscalationOnActualClass(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	prev := []RoundOutcome{
-		{Round: 1, Variant: vPDFSeq1, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 2, Variant: vPDFSeq2, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 3, Variant: vPDFSeq3, Class: RCOneWay, Budget: protocol.BudgetHeavy},
+	prev := []api.RoundOutcome{
+		{Round: 1, Variant: vPDFSeq1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 2, Variant: vPDFSeq2, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 3, Variant: vPDFSeq3, Class: api.RoundOneWay, Budget: protocol.BudgetHeavy},
 	}
 	var classes []protocol.BudgetClass
 	for round := 4; round <= 6; round++ {
@@ -227,7 +227,7 @@ func TestEscalationOnActualClass(t *testing.T) {
 			break
 		}
 		classes = append(classes, dec.Budget)
-		prev = append(prev, RoundOutcome{Round: round, Variant: dec.Variant, Class: RCNoContact, Rescue: dec.Rescue, Budget: dec.Budget})
+		prev = append(prev, api.RoundOutcome{Round: round, Variant: dec.Variant, Class: api.RoundNoContact, Rescue: dec.Rescue, Budget: dec.Budget})
 	}
 	for i := 1; i < len(classes); i++ {
 		if classes[i].Rank() > classes[i-1].Rank()+1 {
@@ -243,8 +243,8 @@ func TestHeavyRound2NeedsRandomEDM(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	in := roundInput(cl, a, b, 2, []RoundOutcome{{Round: 1, Variant: vPDFSeq2, Class: RCNoContact, Budget: protocol.BudgetBalanced}})
-	in.Order = []VariantID{vPDFSeq2, vPDFSeq3, vPDFSeq4, vPDFSeq5, vPDFSeq1}
+	in := roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: vPDFSeq2, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}})
+	in.Order = []api.VariantID{vPDFSeq2, vPDFSeq3, vPDFSeq4, vPDFSeq5, vPDFSeq1}
 	if dec := p.Round(in); dec.Budget == protocol.BudgetHeavy {
 		t.Errorf("pdf_x_seq (no random EDM) round 2 granted heavy (%s)", dec.VariantName)
 	}
@@ -257,7 +257,7 @@ func TestFirstRoundNotAboveLadder0(t *testing.T) {
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b)) // open_x_edm, Ladder[0] is light
 	in := roundInput(cl, a, b, 1, nil)
-	in.Order = []VariantID{vOpenEDM3, vOpenEDM4, vOpenEDM1, vOpenEDM2}
+	in.Order = []api.VariantID{vOpenEDM3, vOpenEDM4, vOpenEDM1, vOpenEDM2}
 	if dec := p.Round(in); dec.Budget.Rank() > protocol.BudgetLight.Rank() {
 		t.Errorf("round 1 granted %s, Ladder[0] is light and MemoryPromoted=false", dec.Budget)
 	}
@@ -269,7 +269,7 @@ func TestMemoryPromotedFirstRound(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	order := []VariantID{vPDFSeq3} // heavy variant promoted to the front
+	order := []api.VariantID{vPDFSeq3} // heavy variant promoted to the front
 
 	capped := roundInput(cl, a, b, 1, nil)
 	capped.Order = order
@@ -291,10 +291,10 @@ func TestGrantAfterWindowClamp(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	prev := []RoundOutcome{
-		{Round: 1, Variant: vPDFSeq1, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 2, Variant: vPDFSeq2, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 3, Variant: vPDFSeq3, Class: RCNoContact, Budget: protocol.BudgetHeavy},
+	prev := []api.RoundOutcome{
+		{Round: 1, Variant: vPDFSeq1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 2, Variant: vPDFSeq2, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 3, Variant: vPDFSeq3, Class: api.RoundNoContact, Budget: protocol.BudgetHeavy},
 	}
 	in := roundInput(cl, a, b, 4, prev)
 	in.Remaining = 1500 * time.Millisecond
@@ -321,7 +321,7 @@ func TestOneSidedBirthdayWindowExtends(t *testing.T) {
 	a, b := pdfTraits(f), rndTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	in := roundInput(cl, a, b, 2, []RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: RCNoContact, Budget: protocol.BudgetBalanced}})
+	in := roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}})
 	in.Policy.Budget.MaxNewPerSec = 50
 	dec := p.Round(in)
 	g := sumField(dec.Sides[0], sprayCount)
@@ -343,7 +343,7 @@ func TestPoolRangeCapsGrant(t *testing.T) {
 	b.PortAlloc, b.PortAllocConf, b.PortRangeLo, b.PortRangeHi = protocol.AllocPool, protocol.ConfLow, 40000, 40099
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	in := roundInput(cl, a, b, 2, []RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: RCNoContact, Budget: protocol.BudgetBalanced}})
+	in := roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: vPDFRnd1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}})
 	dec := p.Round(in)
 	for _, fs := range dec.Sides[0] {
 		for i, st := range fs.Stages {
@@ -390,11 +390,11 @@ func TestFinalExcludesRescue(t *testing.T) {
 	a, b := openTraits(f), openTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	prev := []RoundOutcome{
-		{Round: 1, Variant: vEasy1, Class: RCNoContact, Budget: protocol.BudgetLight},
-		{Round: 2, Variant: vEasy2, Class: RCOneWay, Budget: protocol.BudgetLight},
-		{Round: 3, Variant: vRescue, Class: RCNoContact, Rescue: true, Budget: protocol.BudgetLight},
-		{Round: 4, Variant: vEasy3, Class: RCNoContact, Budget: protocol.BudgetLight},
+	prev := []api.RoundOutcome{
+		{Round: 1, Variant: vEasy1, Class: api.RoundNoContact, Budget: protocol.BudgetLight},
+		{Round: 2, Variant: vEasy2, Class: api.RoundOneWay, Budget: protocol.BudgetLight},
+		{Round: 3, Variant: vRescue, Class: api.RoundNoContact, Rescue: true, Budget: protocol.BudgetLight},
+		{Round: 4, Variant: vEasy3, Class: api.RoundNoContact, Budget: protocol.BudgetLight},
 	}
 	in := roundInput(cl, a, b, 5, prev)
 	in.RescueUsed = true
@@ -414,9 +414,9 @@ func TestConfirmLostNoSkip(t *testing.T) {
 	a, b := openTraits(f), openTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	prev := []RoundOutcome{
-		{Round: 1, Variant: vEasy1, Class: RCConfirmLost, Budget: protocol.BudgetLight},
-		{Round: 2, Variant: vEasy1, Class: RCNoContact, Budget: protocol.BudgetLight},
+	prev := []api.RoundOutcome{
+		{Round: 1, Variant: vEasy1, Class: api.RoundConfirmLost, Budget: protocol.BudgetLight},
+		{Round: 2, Variant: vEasy1, Class: api.RoundNoContact, Budget: protocol.BudgetLight},
 	}
 	dec := p.Round(roundInput(cl, a, b, 3, prev))
 	if dec.Variant != vEasy2 {
@@ -430,7 +430,7 @@ func TestConfirmLostRepeatsVariant(t *testing.T) {
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
 	r1 := p.Round(roundInput(cl, a, b, 1, nil))
-	dec := p.Round(roundInput(cl, a, b, 2, []RoundOutcome{{Round: 1, Variant: r1.Variant, Class: RCConfirmLost, Budget: r1.Budget}}))
+	dec := p.Round(roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: r1.Variant, Class: api.RoundConfirmLost, Budget: r1.Budget}}))
 	if dec.Variant != r1.Variant {
 		t.Fatalf("ConfirmLost variant %s, want same as r1 %s", dec.VariantName, r1.VariantName)
 	}
@@ -443,9 +443,9 @@ func TestBlockedPersists(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	prev := []RoundOutcome{
-		{Round: 1, Variant: vPDFSeq1, Class: RCBlocked, Budget: protocol.BudgetBalanced},
-		{Round: 2, Variant: vPDFSeq2, Class: RCNoContact, Budget: protocol.BudgetBalanced},
+	prev := []api.RoundOutcome{
+		{Round: 1, Variant: vPDFSeq1, Class: api.RoundBlocked, Budget: protocol.BudgetBalanced},
+		{Round: 2, Variant: vPDFSeq2, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
 	}
 	in := roundInput(cl, a, b, 3, prev)
 	in.Evidence.ICMPUnreach = [2]uint16{80, 0}
@@ -497,7 +497,7 @@ func TestBindFailedSingleSocket(t *testing.T) {
 	a, b := seqTraits(f), rndTraits(f) // seq_x_rnd: the RND side never needs more than one socket
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	prev := []RoundOutcome{{Round: 1, Variant: vSeqRnd1, Class: RCNoContact, Budget: protocol.BudgetBalanced}}
+	prev := []api.RoundOutcome{{Round: 1, Variant: vSeqRnd1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}}
 	in := roundInput(cl, a, b, 2, prev)
 	in.Evidence.BindFailed = [2]uint16{0, 1} // the responder failed its only socket last round
 	dec := p.Round(in)
@@ -515,10 +515,10 @@ func TestBudgetHitStops(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	prev := []RoundOutcome{
-		{Round: 1, Variant: vPDFSeq1, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 2, Variant: vPDFSeq2, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 3, Variant: vPDFSeq3, Class: RCNoContact, Budget: protocol.BudgetHeavy},
+	prev := []api.RoundOutcome{
+		{Round: 1, Variant: vPDFSeq1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 2, Variant: vPDFSeq2, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 3, Variant: vPDFSeq3, Class: api.RoundNoContact, Budget: protocol.BudgetHeavy},
 	}
 	in := roundInput(cl, a, b, 4, prev)
 	in.Evidence.BudgetHit = [2]bool{true, false}
@@ -549,7 +549,7 @@ func TestPDFOpenReceiver(t *testing.T) {
 	a, b := openTraits(f), pdfTraits(f) // responder = PDF
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	var prev []RoundOutcome
+	var prev []api.RoundOutcome
 	for round := 1; round <= 5; round++ {
 		dec := p.Round(roundInput(cl, a, b, round, prev))
 		if dec.Stop != "" {
@@ -558,7 +558,7 @@ func TestPDFOpenReceiver(t *testing.T) {
 		if dec.Sides[1][0].Role == protocol.SideSender {
 			t.Errorf("round %d (%s): PDF side is sender", round, dec.VariantName)
 		}
-		prev = append(prev, RoundOutcome{Round: round, Variant: dec.Variant, Class: RCNoContact, Budget: dec.Budget})
+		prev = append(prev, api.RoundOutcome{Round: round, Variant: dec.Variant, Class: api.RoundNoContact, Budget: dec.Budget})
 		if dec.Final {
 			break
 		}
@@ -571,7 +571,7 @@ func TestExtremeGate(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	for _, dec := range chain(p, cl, a, b, 6, false, RCNoContact, func(in *RoundInput) { in.MaxRounds = 6 }) {
+	for _, dec := range chain(p, cl, a, b, 6, false, api.RoundNoContact, func(in *api.RoundInput) { in.MaxRounds = 6 }) {
 		if dec.Budget == protocol.BudgetExtreme {
 			t.Fatal("extreme round reached without AllowExtreme")
 		}
@@ -594,7 +594,7 @@ func TestSweepMarshal(t *testing.T) {
 	for name, c := range combos {
 		for _, ext := range []bool{false, true} {
 			cl := p.Classify(classifyInput(c[0], c[1]))
-			var prev []RoundOutcome
+			var prev []api.RoundOutcome
 			for round := 1; round <= 6; round++ {
 				in := roundInput(cl, c[0], c[1], round, prev)
 				in.AllowExtreme, in.MaxRounds = ext, 6
@@ -614,7 +614,7 @@ func TestSweepMarshal(t *testing.T) {
 						t.Errorf("%s ext=%v r%d role %d: client Normalize clamps the plan", name, ext, round, r)
 					}
 				}
-				prev = append(prev, RoundOutcome{Round: round, Variant: dec.Variant, Class: RCNoContact, Budget: dec.Budget})
+				prev = append(prev, api.RoundOutcome{Round: round, Variant: dec.Variant, Class: api.RoundNoContact, Budget: dec.Budget})
 				if dec.Final {
 					break
 				}
@@ -625,7 +625,7 @@ func TestSweepMarshal(t *testing.T) {
 
 // assertEmittable checks on every side of a decision that what the stages
 // expand to never exceeds the MaxPackets granted, which equals what they ask.
-func assertEmittable(t *testing.T, dec RoundDecision) {
+func assertEmittable(t *testing.T, dec api.RoundDecision) {
 	t.Helper()
 	for r := range 2 {
 		for _, fs := range dec.Sides[r] {
@@ -639,8 +639,8 @@ func assertEmittable(t *testing.T, dec RoundDecision) {
 // honestEvidence is what an honest client reports after dec: it fired, sent
 // what its stages expand to, and reports budget_hit when
 // the stages needed more than MaxPackets.
-func honestEvidence(dec RoundDecision) Evidence {
-	var ev Evidence
+func honestEvidence(dec api.RoundDecision) api.Evidence {
+	var ev api.Evidence
 	for r := range 2 {
 		ev.Fired[r] = true
 		for _, fs := range dec.Sides[r] {
@@ -652,8 +652,8 @@ func honestEvidence(dec RoundDecision) Evidence {
 	return ev
 }
 
-func outcomeOf(round int, dec RoundDecision, class RoundClass) RoundOutcome {
-	return RoundOutcome{Round: round, Variant: dec.Variant, Class: class, Rescue: dec.Rescue, Budget: dec.Budget, Families: dec.Families}
+func outcomeOf(round int, dec api.RoundDecision, class api.RoundClass) api.RoundOutcome {
+	return api.RoundOutcome{Round: round, Variant: dec.Variant, Class: class, Rescue: dec.Rescue, Budget: dec.Budget, Families: dec.Families}
 }
 
 // The Medium-confidence fallback is part of the grant: every
@@ -686,7 +686,7 @@ func TestMediumFallbackDoesNotEndSession(t *testing.T) {
 	for _, peer := range []protocol.Traits{seqTraits(f), rndTraits(f)} {
 		cl := p.Classify(classifyInput(medPDF, peer))
 		d1 := p.Round(roundInput(cl, medPDF, peer, 1, nil))
-		in2 := roundInput(cl, medPDF, peer, 2, []RoundOutcome{outcomeOf(1, d1, RCNoContact)})
+		in2 := roundInput(cl, medPDF, peer, 2, []api.RoundOutcome{outcomeOf(1, d1, api.RoundNoContact)})
 		in2.Evidence = honestEvidence(d1)
 		if d2 := p.Round(in2); d2.Stop != "" {
 			t.Fatalf("%s: stops after round 1 with %s (budget_hit %v)", cl.PairClass, d2.Stop, in2.Evidence.BudgetHit)
@@ -742,7 +742,7 @@ func TestSprayGrantWithinPacketGrant(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	decs := chain(p, cl, a, b, 4, false, RCNoContact, func(in *RoundInput) {
+	decs := chain(p, cl, a, b, 4, false, api.RoundNoContact, func(in *api.RoundInput) {
 		if in.Round == 4 {
 			in.BudgetLeft = [2]int{100, 100}
 		}
@@ -768,7 +768,7 @@ func TestMultiSocketDirectFitsMaxPackets(t *testing.T) {
 	va := siblingView(a) // two sibling sockets of the PDF side
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	decs := chain(p, cl, a, b, 2, false, RCNoContact, func(in *RoundInput) { in.Views[0] = va })
+	decs := chain(p, cl, a, b, 2, false, api.RoundNoContact, func(in *api.RoundInput) { in.Views[0] = va })
 	dec := decs[len(decs)-1]
 	if dec.Variant != vPDFRnd2 {
 		t.Fatalf("round 2 is %s", dec.VariantName)
@@ -781,7 +781,7 @@ func TestMultiSocketDirectFitsMaxPackets(t *testing.T) {
 	// A peer with a second socket gets both mappings; with a tight budget
 	// the receiver keeps its sockets and drops targets and repeats first.
 	va = apdmView(a)
-	decs = chain(p, cl, a, b, 2, false, RCNoContact, func(in *RoundInput) {
+	decs = chain(p, cl, a, b, 2, false, api.RoundNoContact, func(in *api.RoundInput) {
 		in.Views[0] = va
 		if in.Round == 2 {
 			in.BudgetLeft = [2]int{3000, 70}
@@ -816,8 +816,8 @@ func TestRealisticAPDMRunsLadder(t *testing.T) {
 		ci := classifyInput(c.a, c.b)
 		ci.Initiator, ci.Responder = views[0], views[1]
 		cl := p.Classify(ci)
-		var prev []RoundOutcome
-		var ev Evidence
+		var prev []api.RoundOutcome
+		var ev api.Evidence
 		rounds := 0
 		for round := 1; round <= 6; round++ {
 			in := roundInput(cl, c.a, c.b, round, prev)
@@ -829,7 +829,7 @@ func TestRealisticAPDMRunsLadder(t *testing.T) {
 			rounds++
 			assertEmittable(t, dec)
 			ev = honestEvidence(dec)
-			prev = append(prev, outcomeOf(round, dec, RCNoContact))
+			prev = append(prev, outcomeOf(round, dec, api.RoundNoContact))
 			if dec.Final {
 				break
 			}
@@ -901,7 +901,7 @@ func TestSEQPredictionFromPunchSamples(t *testing.T) {
 	in.FireAt = 4 * time.Second
 	// At 3 s the peer's mapping toward us was 50 300: 296 ports by others in
 	// 2 s besides its own one, 148 ports/s.
-	in.Mappings[1] = []MappingSample{{Addr: netip.AddrPortFrom(b.Observed.Addr(), 50300), At: 3 * time.Second}}
+	in.Mappings[1] = []api.MappingSample{{Addr: netip.AddrPortFrom(b.Observed.Addr(), 50300), At: 3 * time.Second}}
 	var anchor uint16
 	for _, st := range p.Round(in).Sides[0][0].Stages {
 		if st.Kind == protocol.StagePredict {
@@ -912,7 +912,7 @@ func TestSEQPredictionFromPunchSamples(t *testing.T) {
 		t.Fatalf("anchor %d, want 50300 + 148·1 s = %d", anchor, 50300+148)
 	}
 	// A sample older than the anchor, or of another IP, changes nothing.
-	in.Mappings[1] = []MappingSample{{Addr: netip.AddrPortFrom(b.Observed.Addr(), 50300), At: 500 * time.Millisecond},
+	in.Mappings[1] = []api.MappingSample{{Addr: netip.AddrPortFrom(b.Observed.Addr(), 50300), At: 500 * time.Millisecond},
 		{Addr: netip.MustParseAddrPort("198.51.100.99:50900"), At: 3 * time.Second}}
 	for _, st := range p.Round(in).Sides[0][0].Stages {
 		if st.Kind == protocol.StagePredict && st.Anchor != 50003 {
@@ -929,9 +929,9 @@ func TestSecondaryFamilyTierGate(t *testing.T) {
 	respV6.Observed = observedFor(v6, 9)
 	initV4, respV4 := pdfTraits(v4), rndTraits(v4)
 	var p DefaultPlanner
-	ci := ClassifyInput{Initiator: dual(initV4, initV6), Responder: dual(respV4, respV6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+	ci := api.ClassifyInput{Initiator: dual(initV4, initV6), Responder: dual(respV4, respV6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
 	cl := p.Classify(ci)
-	var prev []RoundOutcome
+	var prev []api.RoundOutcome
 	for round := 1; round <= 6; round++ {
 		in := roundInput(cl, initV4, respV4, round, prev)
 		in.Views = [2]protocol.PeerView{dual(initV4, initV6), dual(respV4, respV6)}
@@ -950,7 +950,7 @@ func TestSecondaryFamilyTierGate(t *testing.T) {
 				}
 			}
 		}
-		prev = append(prev, outcomeOf(round, dec, RCNoContact))
+		prev = append(prev, outcomeOf(round, dec, api.RoundNoContact))
 		if dec.Final {
 			break
 		}
@@ -968,13 +968,13 @@ func TestSecondaryLadderRunsToEnd(t *testing.T) {
 	respV6.Observed = observedFor(v6, 9)
 	initV4, respV4 := pdfTraits(v4), seqTraits(v4)
 	var p DefaultPlanner
-	ci := ClassifyInput{Initiator: dual(initV4, initV6), Responder: dual(respV4, respV6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
-	cl := p.Classify(ci)
-	if cl.fams[0].PairClass != PairV6Direct || cl.fams[1].PairClass != PairPDFSeq {
-		t.Fatalf("families %s/%s", cl.fams[0].PairClass, cl.fams[1].PairClass)
+	ci := api.ClassifyInput{Initiator: dual(initV4, initV6), Responder: dual(respV4, respV6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+	cl, fams := p.Classify(ci), famsOf(ci)
+	if fams[0].PairClass != PairV6Direct || fams[1].PairClass != PairPDFSeq {
+		t.Fatalf("families %s/%s", fams[0].PairClass, fams[1].PairClass)
 	}
-	var prev []RoundOutcome
-	var v4Variants []VariantID
+	var prev []api.RoundOutcome
+	var v4Variants []api.VariantID
 	for round := 1; round <= 6; round++ {
 		in := roundInput(cl, initV4, respV4, round, prev)
 		in.Views = [2]protocol.PeerView{dual(initV4, initV6), dual(respV4, respV6)}
@@ -996,12 +996,12 @@ func TestSecondaryLadderRunsToEnd(t *testing.T) {
 				t.Fatalf("round 4: v4 one-sided birthday sprays only %d ports", span)
 			}
 		}
-		prev = append(prev, outcomeOf(round, dec, RCNoContact))
+		prev = append(prev, outcomeOf(round, dec, api.RoundNoContact))
 		if dec.Final {
 			break
 		}
 	}
-	want := []VariantID{vPDFSeq1, vPDFSeq2, vPDFSeq3, vPDFSeq4}
+	want := []api.VariantID{vPDFSeq1, vPDFSeq2, vPDFSeq3, vPDFSeq4}
 	if !slices.Equal(v4Variants, want) {
 		t.Fatalf("v4 ran %v, want %v", v4Variants, want)
 	}
@@ -1015,9 +1015,9 @@ func TestSecondaryLadderExhaustedRepliesOnly(t *testing.T) {
 	initV4, respV4 := rndTraits(v4), rndTraits(v4)
 	respV4.Observed = observedFor(v4, 7)
 	var p DefaultPlanner
-	ci := ClassifyInput{Initiator: dual(initV4, initV6), Responder: dual(respV4, respV6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+	ci := api.ClassifyInput{Initiator: dual(initV4, initV6), Responder: dual(respV4, respV6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
 	cl := p.Classify(ci)
-	var prev []RoundOutcome
+	var prev []api.RoundOutcome
 	for round := 1; round <= 6; round++ {
 		in := roundInput(cl, initV4, respV4, round, prev)
 		in.Views = [2]protocol.PeerView{dual(initV4, initV6), dual(respV4, respV6)}
@@ -1029,7 +1029,7 @@ func TestSecondaryLadderExhaustedRepliesOnly(t *testing.T) {
 		if round >= 3 && (dec.Families[1].Variant != VInvalid || dec.Sides[0][1].Role != protocol.SideReplyOnly) {
 			t.Fatalf("round %d: the exhausted rnd_x_rnd family runs %v", round, dec.Families[1].Variant)
 		}
-		prev = append(prev, outcomeOf(round, dec, RCNoContact))
+		prev = append(prev, outcomeOf(round, dec, api.RoundNoContact))
 		if dec.Final {
 			break
 		}
@@ -1043,13 +1043,13 @@ func TestRescueInEvidenceFamily(t *testing.T) {
 	initV6, respV6 := openTraits(v6), pdfTraits(v6)
 	initV4, respV4 := openTraits(v4), pdfTraits(v4)
 	var p DefaultPlanner
-	ci := ClassifyInput{Initiator: dual(initV4, initV6), Responder: dual(respV4, respV6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+	ci := api.ClassifyInput{Initiator: dual(initV4, initV6), Responder: dual(respV4, respV6), Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
 	cl := p.Classify(ci)
 	src := netip.AddrPortFrom(initV4.Observed.Addr(), 50000) // a new mapping on the initiator's verified IP
-	last := RoundOutcome{Round: 1, Variant: vEasy1, Class: RCOneWay, Budget: protocol.BudgetLight}
+	last := api.RoundOutcome{Round: 1, Variant: vEasy1, Class: api.RoundOneWay, Budget: protocol.BudgetLight}
 	last.SeenFrom[1] = []netip.AddrPort{src, netip.MustParseAddrPort("198.51.100.7:50000")} // only v4 worked one way: the responder heard the initiator
 
-	in := roundInput(cl, initV4, respV4, 2, []RoundOutcome{last})
+	in := roundInput(cl, initV4, respV4, 2, []api.RoundOutcome{last})
 	in.Views = [2]protocol.PeerView{dual(initV4, initV6), dual(respV4, respV6)}
 	dec := p.Round(in)
 	if !dec.Rescue {
@@ -1083,8 +1083,8 @@ func TestConfirmLostDoesNotEscalate(t *testing.T) {
 	b.Observed = observedFor(f, 7)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	classes := []RoundClass{RCNoContact, RCNoContact, RCConfirmLost, RCConfirmLost}
-	var prev []RoundOutcome
+	classes := []api.RoundClass{api.RoundNoContact, api.RoundNoContact, api.RoundConfirmLost, api.RoundConfirmLost}
+	var prev []api.RoundOutcome
 	for round := 1; round <= 4; round++ {
 		in := roundInput(cl, a, b, round, prev)
 		in.AllowExtreme, in.MaxRounds, in.HandshakeMs = true, 6, 40000
@@ -1102,9 +1102,9 @@ func TestConfirmLostDoesNotEscalate(t *testing.T) {
 		prev = append(prev, outcomeOf(round, dec, classes[round-1]))
 	}
 	// After a rescue round, ConfirmLost does not escalate either.
-	in := roundInput(cl, a, b, 3, []RoundOutcome{
-		{Round: 1, Variant: vRndRnd1, Class: RCOneWay, Budget: protocol.BudgetLight},
-		{Round: 2, Variant: vRescue, Class: RCConfirmLost, Rescue: true, Budget: protocol.BudgetLight},
+	in := roundInput(cl, a, b, 3, []api.RoundOutcome{
+		{Round: 1, Variant: vRndRnd1, Class: api.RoundOneWay, Budget: protocol.BudgetLight},
+		{Round: 2, Variant: vRescue, Class: api.RoundConfirmLost, Rescue: true, Budget: protocol.BudgetLight},
 	})
 	in.RescueUsed = true
 	if dec := p.Round(in); dec.Budget != protocol.BudgetLight {
@@ -1120,10 +1120,10 @@ func TestNAT66BirthdayCapped(t *testing.T) {
 	a.NoNAT, b.NoNAT = protocol.TriFalse, protocol.TriFalse
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	decs := chain(p, cl, a, b, 6, true, RCNoContact, func(in *RoundInput) {
+	decs := chain(p, cl, a, b, 6, true, api.RoundNoContact, func(in *api.RoundInput) {
 		in.Policy.Budget.Birthday = protocol.BirthdayBalanced
 	})
-	ran := map[VariantID]bool{}
+	ran := map[api.VariantID]bool{}
 	for _, d := range decs {
 		ran[d.Variant] = true
 	}
@@ -1132,9 +1132,8 @@ func TestNAT66BirthdayCapped(t *testing.T) {
 	}
 	// A public v6 pair keeps the session's tier.
 	a.NoNAT, b.NoNAT = protocol.TriTrue, protocol.TriTrue
-	cl = p.Classify(classifyInput(a, b))
-	if cl.fams[0].TierCap != "" {
-		t.Fatalf("no-NAT v6 capped at %s", cl.fams[0].TierCap)
+	if fams := famsOf(classifyInput(a, b)); fams[0].TierCap != "" {
+		t.Fatalf("no-NAT v6 capped at %s", fams[0].TierCap)
 	}
 }
 
@@ -1175,10 +1174,10 @@ func TestRescueUsesRoundEvidence(t *testing.T) {
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
 	srcI, srcR := observedFor(f, 2), observedFor(f, 3)
-	oneWay := RoundOutcome{Round: 2, Variant: vPDFSeq1, Class: RCOneWay, Budget: protocol.BudgetBalanced}
+	oneWay := api.RoundOutcome{Round: 2, Variant: vPDFSeq1, Class: api.RoundOneWay, Budget: protocol.BudgetBalanced}
 	oneWay.SeenFrom[1] = []netip.AddrPort{srcI}
-	in := roundInput(cl, a, b, 3, []RoundOutcome{
-		{Round: 1, Variant: vPDFSeq1, Class: RCConfirmLost, Budget: protocol.BudgetBalanced},
+	in := roundInput(cl, a, b, 3, []api.RoundOutcome{
+		{Round: 1, Variant: vPDFSeq1, Class: api.RoundConfirmLost, Budget: protocol.BudgetBalanced},
 		oneWay,
 	})
 	in.Evidence.SeenFrom = [2][]netip.AddrPort{{srcR}, {srcI}} // cumulative: both heard in round 1
@@ -1205,9 +1204,9 @@ func TestRescueAPDMHearerReplies(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f) // b: APDM
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	oneWay := RoundOutcome{Round: 1, Variant: vPDFSeq1, Class: RCOneWay, Budget: protocol.BudgetBalanced}
+	oneWay := api.RoundOutcome{Round: 1, Variant: vPDFSeq1, Class: api.RoundOneWay, Budget: protocol.BudgetBalanced}
 	oneWay.SeenFrom[1] = []netip.AddrPort{observedFor(f, 2)}
-	dec := p.Round(roundInput(cl, a, b, 2, []RoundOutcome{oneWay}))
+	dec := p.Round(roundInput(cl, a, b, 2, []api.RoundOutcome{oneWay}))
 	if !dec.Rescue {
 		t.Fatalf("want rescue, got %s", dec.VariantName)
 	}
@@ -1221,7 +1220,7 @@ func TestRescueAPDMHearerReplies(t *testing.T) {
 
 	// The PDF side hearing the APDM one still sends to what it heard.
 	oneWay.SeenFrom = [2][]netip.AddrPort{{observedFor(f, 3)}, nil}
-	dec = p.Round(roundInput(cl, a, b, 2, []RoundOutcome{oneWay}))
+	dec = p.Round(roundInput(cl, a, b, 2, []api.RoundOutcome{oneWay}))
 	if fs := dec.Sides[0][0]; fs.Role != protocol.SideSender || !slices.Contains(directTargetsOf(fs), observedFor(f, 3)) {
 		t.Fatalf("EIM hearer %s", describe(fs))
 	}
@@ -1235,9 +1234,9 @@ func TestBindFailedStopsMultiSocketLadder(t *testing.T) {
 	a, b := pdfTraits(f), rndTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	prev := []RoundOutcome{
-		{Round: 1, Variant: vPDFRnd1, Class: RCNoContact, Budget: protocol.BudgetBalanced},
-		{Round: 2, Variant: vPDFRnd2, Class: RCNoContact, Budget: protocol.BudgetHeavy},
+	prev := []api.RoundOutcome{
+		{Round: 1, Variant: vPDFRnd1, Class: api.RoundNoContact, Budget: protocol.BudgetBalanced},
+		{Round: 2, Variant: vPDFRnd2, Class: api.RoundNoContact, Budget: protocol.BudgetHeavy},
 	}
 	in := roundInput(cl, a, b, 3, prev)
 	in.Evidence.BindFailed = [2]uint16{0, 30} // the responder bound 2 of its 32 sockets
@@ -1256,11 +1255,11 @@ func TestBindFailedStopsMultiSocketLadder(t *testing.T) {
 func TestEasyRound3Swap(t *testing.T) {
 	f := protocol.FamilyUDP4
 	var p DefaultPlanner
-	prev := []RoundOutcome{
-		{Round: 1, Variant: vEasy1, Class: RCNoContact, Budget: protocol.BudgetLight},
-		{Round: 2, Variant: vEasy2, Class: RCNoContact, Budget: protocol.BudgetLight},
+	prev := []api.RoundOutcome{
+		{Round: 1, Variant: vEasy1, Class: api.RoundNoContact, Budget: protocol.BudgetLight},
+		{Round: 2, Variant: vEasy2, Class: api.RoundNoContact, Budget: protocol.BudgetLight},
 	}
-	roles := func(a, b protocol.Traits, round int, prev []RoundOutcome) [2]protocol.SideRole {
+	roles := func(a, b protocol.Traits, round int, prev []api.RoundOutcome) [2]protocol.SideRole {
 		cl := p.Classify(classifyInput(a, b))
 		dec := p.Round(roundInput(cl, a, b, round, prev))
 		return [2]protocol.SideRole{dec.Sides[0][0].Role, dec.Sides[1][0].Role}
@@ -1303,7 +1302,7 @@ func TestWindowEndsByDeadline(t *testing.T) {
 		}
 	}
 	// The rescue round too.
-	in := roundInput(cl, a, b, 2, []RoundOutcome{{Round: 1, Variant: vEasy1, Class: RCOneWay, Budget: protocol.BudgetLight}})
+	in := roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: vEasy1, Class: api.RoundOneWay, Budget: protocol.BudgetLight}})
 	in.Evidence.SeenFrom[0] = []netip.AddrPort{observedFor(f, 2)}
 	in.Remaining, in.D = 1500*time.Millisecond, 500*time.Millisecond
 	if dec := p.Round(in); !dec.Rescue || in.D+dec.Window > in.Remaining {
@@ -1357,27 +1356,27 @@ func TestPredictPeerSampleBase(t *testing.T) {
 	tr := seqTraits(protocol.FamilyUDP4)
 	tr.PortAnchorMs, tr.PortVelocity = 0, 0
 	ip := tr.Observed.Addr()
-	in := RoundInput{FireAt: 5 * time.Second, D: 100 * time.Millisecond}
-	in.Mappings[1] = []MappingSample{
+	in := api.RoundInput{FireAt: 5 * time.Second, D: 100 * time.Millisecond}
+	in.Mappings[1] = []api.MappingSample{
 		{Addr: netip.AddrPortFrom(ip, 41000), At: 2 * time.Second},
 		{Addr: netip.AddrPortFrom(ip, 41021), At: 3 * time.Second}, // 20 by others in 1 s besides its own one
 		{Addr: netip.MustParseAddrPort("198.51.100.1:9"), At: 4 * time.Second},
 	}
-	if p := predictPeer(in, 1, tr, ip); p.anchor != 41021+40 || p.minSpan != 2*(2+1) {
+	if p := predictPeer(input{RoundInput: in}, 1, tr, ip); p.anchor != 41021+40 || p.minSpan != 2*(2+1) {
 		t.Fatalf("prediction %+v, want anchor 41061 and span 6", p)
 	}
 	// a single sample: the new anchor, no velocity
 	in.Mappings[1] = in.Mappings[1][:1]
-	if p := predictPeer(in, 1, tr, ip); p.anchor != 41000 {
+	if p := predictPeer(input{RoundInput: in}, 1, tr, ip); p.anchor != 41000 {
 		t.Fatalf("prediction %+v", p)
 	}
 	// the peer's own allocations cover the gap: no velocity
-	in.Mappings[1] = []MappingSample{{Addr: netip.AddrPortFrom(ip, 41000), At: 2 * time.Second}, {Addr: netip.AddrPortFrom(ip, 41001), At: 3 * time.Second}}
-	if p := predictPeer(in, 1, tr, ip); p.anchor != 41001 {
+	in.Mappings[1] = []api.MappingSample{{Addr: netip.AddrPortFrom(ip, 41000), At: 2 * time.Second}, {Addr: netip.AddrPortFrom(ip, 41001), At: 3 * time.Second}}
+	if p := predictPeer(input{RoundInput: in}, 1, tr, ip); p.anchor != 41001 {
 		t.Fatalf("prediction %+v", p)
 	}
 	// nothing to predict from
-	if p := predictPeer(RoundInput{}, 1, protocol.Traits{}, ip); p.anchor != 0 || len(p.steps) != 1 || p.steps[0] != 1 {
+	if p := predictPeer(input{RoundInput: api.RoundInput{}}, 1, protocol.Traits{}, ip); p.anchor != 0 || len(p.steps) != 1 || p.steps[0] != 1 {
 		t.Fatalf("prediction %+v", p)
 	}
 }
@@ -1411,7 +1410,7 @@ func TestPredictPeerHugeVelocity(t *testing.T) {
 		b.PortVelocity = vel
 		in := roundInput(cl, a, b, 1, nil)
 		in.FireAt = 2 * time.Second // one second after the anchor
-		if pr := predictPeer(in, 1, b, b.Observed.Addr()); pr.anchor != want || pr.minSpan != portRange {
+		if pr := predictPeer(input{RoundInput: in}, 1, b, b.Observed.Addr()); pr.anchor != want || pr.minSpan != portRange {
 			t.Errorf("velocity %g: anchor %d, window %d; want anchor %d and the whole range", vel, pr.anchor, pr.minSpan, want)
 		}
 		dec := p.Round(in)

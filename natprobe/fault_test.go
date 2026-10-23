@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/faultinject"
+	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/internal/udpwire"
 )
 
@@ -21,11 +22,11 @@ func TestPacketPanicInjected(t *testing.T) {
 	disarm := faultinject.Arm(pointPacket, faultinject.Panic(), 1)
 	defer disarm()
 	to := observerAddr(t, s, 0)
-	c.send(to, probeOpts{obs: 0})
+	c.send(to, probetest.Probe{Obs: 0})
 	if reps := c.recv(1, 200*time.Millisecond); len(reps) != 0 {
 		t.Fatal("the panicking packet was answered")
 	}
-	if reps := c.exchange(to, probeOpts{obs: 0}, 1); len(reps) != 1 {
+	if reps := c.exchange(to, probetest.Probe{Obs: 0}, 1); len(reps) != 1 {
 		t.Fatal("the reader stopped after a packet panic")
 	}
 	if st := s.Stats(); st.Panics != 1 || st.DeadListeners != 0 {
@@ -41,7 +42,7 @@ func TestExtraPointInjected(t *testing.T) {
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 	disarm := faultinject.Arm(pointExtra, faultinject.Error(nil), 0)
 	defer disarm()
-	if out := r.deliver(0, c.probe(probeOpts{extra: true}), srcA); len(out) != 1 {
+	if out := r.deliver(0, c.probe(probetest.Probe{Extra: true}), srcA); len(out) != 1 {
 		t.Fatalf("%d replies", len(out))
 	}
 }
@@ -54,10 +55,10 @@ func TestPacketErrorInjected(t *testing.T) {
 	c := newClient(t, tok(1), rt(1), udpwire.RoleInitiator)
 	disarm := faultinject.Arm(pointPacket, faultinject.Error(nil), 1)
 	defer disarm()
-	if out := r.deliver(0, c.probe(probeOpts{}), srcA); len(out) != 0 || r.stats.packetsIn.Load() != 1 {
+	if out := r.deliver(0, c.probe(probetest.Probe{}), srcA); len(out) != 0 || r.stats.packetsIn.Load() != 1 {
 		t.Fatalf("%d replies", len(out))
 	}
-	if out := r.deliver(0, c.probe(probeOpts{}), srcA); len(out) != 1 {
+	if out := r.deliver(0, c.probe(probetest.Probe{}), srcA); len(out) != 1 {
 		t.Fatalf("%d replies after the fault", len(out))
 	}
 }

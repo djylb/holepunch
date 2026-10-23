@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -69,18 +70,14 @@ func TestReadLoopSurvivesOversizedDatagram(t *testing.T) {
 		}
 	}
 	foreign := &rt.fam(protocol.FamilyUDP4).cnt.drops[dropForeign]
-	deadline := time.Now().Add(5 * time.Second)
-	for foreign.Load() < 2 {
+	testkit.WaitFor(t, "2 datagrams dropped as foreign", func() bool {
 		select {
 		case <-s.readDone:
 			t.Fatal("the read loop ended")
 		default:
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%d of 2 datagrams dropped as foreign", foreign.Load())
-		}
-		time.Sleep(time.Millisecond)
-	}
+		return foreign.Load() >= 2
+	})
 }
 
 // A paced socket the session's socket budget refuses counts in

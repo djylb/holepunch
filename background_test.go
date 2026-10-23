@@ -43,9 +43,9 @@ func TestAcceptedMode(t *testing.T) {
 func pacedPlan(k int, r protocol.Role, views [2]protocol.PeerView) protocol.RoundPlan {
 	side := protocol.FamilySide{Family: protocol.FamilyUDP4, Role: protocol.SideReplyOnly, Sockets: 1, Stages: []protocol.Stage{{Kind: protocol.StageReplyOnly}}}
 	if r == protocol.RoleInitiator {
-		peer := views[1].Families[0].Endpoints[0].Addr
 		side = protocol.FamilySide{Family: protocol.FamilyUDP4, Role: protocol.SideBoth, Sockets: 12, OpenPerSec: 50, MaxPackets: 36,
-			MaxPPS: 64, MaxNewPerSec: 25, MaxDistinctPorts: 1, Stages: []protocol.Stage{{Kind: protocol.StageDirect, Targets: []netip.AddrPort{peer}, Repeats: 3}}}
+			MaxPPS: 64, MaxNewPerSec: 25, MaxDistinctPorts: 1,
+			Stages: []protocol.Stage{{Kind: protocol.StageDirect, Targets: []netip.AddrPort{peerAddr(r, views)}, Repeats: 3}}}
 	}
 	return protocol.RoundPlan{Round: uint8(k), Variant: "test_paced", Budget: protocol.BudgetBackground, WindowMs: 1000, Seed: uint32(k), Final: true,
 		Sides: []protocol.FamilySide{side}}

@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/djylb/holepunch/internal/life"
-	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/udpsock"
 )
@@ -143,7 +143,7 @@ func (s *Server) bind(g *life.Group) ([]*listener, [2]*pool, error) {
 			l.pool = p
 		}
 		if grp.Alt {
-			alt[famIndex(fam)] = p
+			alt[fam.Index()] = p
 		}
 		ls = append(ls, group...)
 		og += grp.Slots
@@ -194,7 +194,7 @@ func (s *Server) open(g *life.Group, name, network string, laddr netip.AddrPort,
 		if rb, ok := pc.(interface{ SetReadBuffer(int) error }); ok && readBuffer > 0 {
 			_ = rb.SetReadBuffer(readBuffer)
 		}
-		port = localAddrPort(pc).Port()
+		port = netaddr.AddrPortOf(pc.LocalAddr()).Port()
 	}); perr != nil {
 		return nil, 0, fmt.Errorf("natprobe: listen %s %v: %w", network, laddr, perr)
 	}
@@ -208,14 +208,14 @@ func (s *Server) open(g *life.Group, name, network string, laddr netip.AddrPort,
 func wildcardFamilies(groups []ObserverGroup, prefixes []netip.Prefix) []protocol.Family {
 	var global [2]int
 	for _, p := range prefixes {
-		if a := p.Addr().Unmap(); nat.ScopeOf(a) == nat.ScopeGlobal {
-			global[famIndex(protocol.FamilyOf(a))]++
+		if a := p.Addr().Unmap(); netaddr.Public(a) {
+			global[protocol.FamilyOf(a).Index()]++
 		}
 	}
 	var out []protocol.Family
 	for _, grp := range groups {
 		fam := protocol.FamilyOf(grp.Bind)
-		if grp.Bind.IsUnspecified() && global[famIndex(fam)] >= 2 && !slices.Contains(out, fam) {
+		if grp.Bind.IsUnspecified() && global[fam.Index()] >= 2 && !slices.Contains(out, fam) {
 			out = append(out, fam)
 		}
 	}

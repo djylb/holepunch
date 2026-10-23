@@ -16,6 +16,7 @@ import (
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/standalone/broker"
 	"github.com/djylb/holepunch/standalone/client"
+	"github.com/djylb/holepunch/standalone/internal/testkit"
 	"github.com/djylb/holepunch/standalone/internal/testworld"
 	"github.com/djylb/holepunch/standalone/proto"
 	"github.com/djylb/holepunch/standalone/quicforward"
@@ -39,7 +40,7 @@ func hostRun(t *testing.T, w *testworld.World, hostC *client.Client, reg client.
 		cancel()
 		<-done
 	})
-	waitFor(t, 5*time.Second, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 }
 
 // TestAcceptBounded: a dialer that never dials QUIC leaves the host waiting
@@ -254,7 +255,7 @@ func TestStreamPolicy(t *testing.T) {
 		<-served
 		targets.wg.Wait()
 	}()
-	waitFor(t, 5*time.Second, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 	id, _ := identities(t)
 	dialC := w.Client(w.NATHost(nattest.FullCone()), nil)
 	d, err := dialC.Open(context.Background(), client.OpenRequest{HostID: "office", TransportMode: quicforward.Mode, TransportData: id.TransportData()})
@@ -314,7 +315,7 @@ func TestTargetUnreachable(t *testing.T) {
 		cancel()
 		<-served
 	}()
-	waitFor(t, 5*time.Second, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 	id, _ := identities(t)
 	dialC := w.Client(w.NATHost(nattest.FullCone()), nil)
 	d, err := dialC.Open(context.Background(), client.OpenRequest{HostID: "office", TransportMode: quicforward.Mode, TransportData: id.TransportData()})
@@ -408,7 +409,7 @@ func TestReportFailureKeepsQUIC(t *testing.T) {
 		r.hostDone <- quicforward.Serve(ctx, r.hostC, client.Registration{HostID: "office"},
 			quicforward.HostConfig{Targets: []string{"svc.test:80"}, Dial: r.targets.dial})
 	}()
-	waitFor(t, 5*time.Second, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 	dialC := w.Client(w.NATHost(nattest.PortRestricted()), nil)
 	go func() {
 		r.dialDone <- quicforward.Connect(ctx, dialC, quicforward.ConnectConfig{Open: client.OpenRequest{HostID: "office"}, Listener: r.ln})
@@ -441,7 +442,7 @@ func TestConnectReopens(t *testing.T) {
 			done <- quicforward.Serve(ctx, c, client.Registration{HostID: "office"},
 				quicforward.HostConfig{Targets: []string{"svc.test:80"}, Dial: targets.dial})
 		}()
-		waitFor(t, 5*time.Second, func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
+		testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 		return c, done
 	}
 	host1, done1 := serveHost()
@@ -468,13 +469,13 @@ func TestConnectReopens(t *testing.T) {
 	if err := <-done1; err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 5*time.Second, func() bool { return len(w.Broker.Snapshot().Hosts) == 0 })
+	testkit.WaitFor(t, "the host to unregister", func() bool { return len(w.Broker.Snapshot().Hosts) == 0 })
 	host2, done2 := serveHost()
 	defer func() {
 		_ = host2.Close()
 		<-done2
 	}()
-	waitFor(t, 10*time.Second, func() bool {
+	testkit.WaitFor(t, "a round trip through the new host", func() bool {
 		c := ln.dial(t)
 		defer func() { _ = c.Close() }()
 		return tryRoundTrip(c, []byte("two"))

@@ -1,5 +1,7 @@
 package proto
 
+import "maps"
+
 // Register opens a host's registration link (client → server).
 type Register struct {
 	// HostID names the host; dialers open sessions by it.
@@ -51,6 +53,15 @@ type SessionInfo struct {
 	DialerMetadata map[string]string `json:"dialer_metadata,omitempty"`
 	// Policy restricts what the dialer may reach through the host.
 	Policy AccessPolicy `json:"policy"`
+}
+
+// Clone returns a deep copy of m.
+func (m *SessionInfo) Clone() SessionInfo {
+	c := *m
+	c.HostMetadata = maps.Clone(m.HostMetadata)
+	c.DialerMetadata = maps.Clone(m.DialerMetadata)
+	c.Policy = m.Policy.Clone()
+	return c
 }
 
 // Incoming tells a host, on its registration link, that a dialer opened a

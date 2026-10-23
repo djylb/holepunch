@@ -263,11 +263,11 @@ func (s *Server) ProbeSpecAt(addrs ...netip.Addr) protocol.ProbeSpec {
 	return spec
 }
 
-// specObservers joins the two families' observers within maxSpecObservers
+// specObservers joins the two families' observers within protocol.MaxObservers
 // (ProbeSpec).
 func specObservers(v4, v6 []protocol.ObserverSpec) []protocol.ObserverSpec {
-	n4 := min(len(v4), max(maxSpecObservers/2, maxSpecObservers-len(v6)))
-	n6 := min(len(v6), maxSpecObservers-n4)
+	n4 := min(len(v4), max(protocol.MaxObservers/2, protocol.MaxObservers-len(v6)))
+	n6 := min(len(v6), protocol.MaxObservers-n4)
 	return append(pickObservers(v4, n4), pickObservers(v6, n6)...)
 }
 

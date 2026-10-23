@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
@@ -51,9 +52,9 @@ func (fr *familyRound) reobserveAt() time.Time {
 // first main-group observer on a global address. natprobe takes what an
 // observer on a private address sees as LAN evidence only, and an
 // unverified family has no observer at all.
-func (w *worker) reobserver() (protocol.ObserverSpec, bool) {
+func (w *worker) reobserver() (nat.Observer, bool) {
 	if w.unverified {
-		return protocol.ObserverSpec{}, false
+		return nat.Observer{}, false
 	}
 	return globalObserver(w.fs.observers)
 }
@@ -66,25 +67,15 @@ func (w *worker) reobserver() (protocol.ObserverSpec, bool) {
 // however fast it comes.
 func (fr *familyRound) reobserve(ctx context.Context) {
 	rt, w := fr.rt, fr.w
-	st := rt.punch
 	obs, ok := w.reobserver()
 	if !ok {
 		return
 	}
-	to := netaddr.Canon(obs.Addr)
-	h := udpwire.Header{Type: udpwire.TProbe, Cand: udpwire.NoCand, Aux: uint16(obs.ID)}
-	st.mu.Lock()
-	rs := st.statsFor(w.fam)
-	quiet := rs.recv == 0
-	if quiet {
-		h.Seq = rt.codec.NextSeq()
-		rs.reobserve = reobservation{seq: h.Seq, observer: obs.ID, to: to}
-	}
-	st.mu.Unlock()
+	seq, quiet := rt.punch.beginReobserve(w.fam, obs.ID, netaddr.Canon(obs.Addr), rt.codec.NextSeq)
 	if !quiet {
 		return
 	}
-	_ = rt.sender.Send(ctx, w.primary, to, &h, nil, sendOpt{class: classProbe, stage: txProbe})
+	rt.probeObserver(ctx, w.primary, obs, seq, nil)
 }
 
 // reobserved consumes the ack of the current round's re-observation probe —
@@ -96,45 +87,24 @@ func (fr *familyRound) reobserve(ctx context.Context) {
 // of the NAT the traits memory should learn. An ack without a cookie (the
 // observer had no slot left) cannot be verified and is not reported.
 func (rt *runtime) reobserved(s *udpSock, from netip.AddrPort, h *udpwire.Header, t *udpwire.TLVs) bool {
-	st := rt.punch
-	if h.Type != udpwire.TProbeAck || !st.active.Load() {
+	if h.Type != udpwire.TProbeAck || !rt.punch.isActive() {
 		return false
 	}
 	w := rt.fam(s.fam).worker
 	if w == nil || s != w.primary {
 		return false
 	}
-	st.mu.Lock()
-	rs := st.stats[s.fam]
-	if rs == nil || rs.reobserve.seq == 0 || h.EchoSeq != rs.reobserve.seq || h.Aux != uint16(rs.reobserve.observer) ||
-		netaddr.Canon(from) != rs.reobserve.to {
-		st.mu.Unlock()
-		return false
-	}
-	observer := rs.reobserve.observer
-	rs.reobserve = reobservation{}
 	mapped := netaddr.Canon(t.Observed)
-	fresh := t.Cookie != 0 && reportable(s.fam, mapped) &&
-		!slices.Contains(w.selfMapped, mapped) && !slices.Contains(st.remapped[s.fam], mapped)
-	if fresh {
-		// At most one a round: the list stays within the wire's 8 rounds.
-		st.remapped[s.fam] = append(st.remapped[s.fam], mapped)
-		rs.remap = &protocol.Remap{Observer: observer, Observed: mapped, Cookie: t.Cookie}
-		rs.drift = true
-	}
-	round := st.round
-	st.mu.Unlock()
+	// A remap that is no usable endpoint would make round_result fail
+	// validation, and with it the whole frame.
+	matched, fresh, round := rt.punch.matchReobserve(s.fam, reobserveAck{
+		from: netaddr.Canon(from), mapped: mapped, echoSeq: h.EchoSeq, cookie: t.Cookie, observer: h.Aux,
+		novel: t.Cookie != 0 && protocol.UsableEndpoint(s.fam, mapped) && !slices.Contains(w.selfMapped, mapped),
+	})
 	if fresh {
 		rt.progress(progressEvent{stage: stageDriftDetected, status: protocol.StatusInfo, family: s.fam, round: round})
 	}
-	return true
-}
-
-// reportable reports whether a can be a remap of family fam on the wire:
-// round_result validation refuses anything else, and with it the whole frame.
-func reportable(fam protocol.Family, a netip.AddrPort) bool {
-	ip := a.Addr()
-	return a.Port() != 0 && fam.Matches(ip) && !ip.IsUnspecified() && !ip.IsMulticast()
+	return matched
 }
 
 // cloneRemap copies a remap for round_result.

@@ -7,105 +7,14 @@ import (
 	"io"
 	"net"
 	"os"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/wiretype"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
-
-// event is one call the library made on a recorded connection.
-type event struct {
-	op string    // "read", "write", "rdl", "wdl", "close"
-	t  time.Time // deadline argument for rdl/wdl
-	at time.Time // when the call started
-}
-
-// recConn wraps a net.Conn, counts and records every call, and lets tests
-// inject faults per call.
-type recConn struct {
-	net.Conn
-
-	reads, writes, setRead, setWrite atomic.Int64
-
-	mu     sync.Mutex
-	events []event
-
-	// Hooks run before the call is forwarded; a hook may block or panic.
-	onRead     func(p []byte)
-	onWrite    func(p []byte)
-	onSetWrite func(t time.Time)
-	onSetRead  func(t time.Time)
-}
-
-func (c *recConn) record(op string, t time.Time) {
-	c.mu.Lock()
-	c.events = append(c.events, event{op: op, t: t, at: time.Now()})
-	c.mu.Unlock()
-}
-
-func (c *recConn) Read(p []byte) (int, error) {
-	c.reads.Add(1)
-	c.record("read", time.Time{})
-	if c.onRead != nil {
-		c.onRead(p)
-	}
-	return c.Conn.Read(p)
-}
-
-func (c *recConn) Write(p []byte) (int, error) {
-	c.writes.Add(1)
-	c.record("write", time.Time{})
-	if c.onWrite != nil {
-		c.onWrite(p)
-	}
-	return c.Conn.Write(p)
-}
-
-func (c *recConn) SetReadDeadline(t time.Time) error {
-	c.setRead.Add(1)
-	c.record("rdl", t)
-	if c.onSetRead != nil {
-		c.onSetRead(t)
-	}
-	return c.Conn.SetReadDeadline(t)
-}
-
-func (c *recConn) SetWriteDeadline(t time.Time) error {
-	c.setWrite.Add(1)
-	c.record("wdl", t)
-	if c.onSetWrite != nil {
-		c.onSetWrite(t)
-	}
-	return c.Conn.SetWriteDeadline(t)
-}
-
-func (c *recConn) SetDeadline(t time.Time) error {
-	if err := c.SetReadDeadline(t); err != nil {
-		return err
-	}
-	return c.SetWriteDeadline(t)
-}
-
-func (c *recConn) snapshot() []event {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]event(nil), c.events...)
-}
-
-// eventsAfter returns the calls that started after t.
-func (c *recConn) eventsAfter(t time.Time) []event {
-	var out []event
-	for _, e := range c.snapshot() {
-		if e.at.After(t) {
-			out = append(out, e)
-		}
-	}
-	return out
-}
 
 // memConn is a net.Conn whose reads come from a fixed byte stream (optionally
 // in small chunks) and whose writes are discarded. Deadlines are accepted and
@@ -155,7 +64,7 @@ func rawFrame(major uint8, t Type, payload string) []byte {
 	return append(b, payload...)
 }
 
-func frameBytes(t Type, payload string) []byte { return rawFrame(Version, t, payload) }
+func frameBytes(t Type, payload string) []byte { return rawFrame(wiretype.Version, t, payload) }
 
 // readFrames reads n complete frames from r.
 func readFrames(t testing.TB, r io.Reader, n int) []Frame {
@@ -185,17 +94,6 @@ func payloadsOf(frames []Frame) []string {
 		out[i] = string(f.Payload)
 	}
 	return out
-}
-
-func eventually(t testing.TB, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 // within runs fn and fails if it does not return within d.

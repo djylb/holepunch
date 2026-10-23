@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/standalone/client"
+	"github.com/djylb/holepunch/standalone/internal/life"
 )
 
 // reopenGap is the shortest time between two attempts to open a session

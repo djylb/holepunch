@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord"
-	"github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
+	"go.uber.org/goleak"
 )
 
 // errUserPanic is the value user code panics with in the user-code faults.
@@ -63,31 +63,27 @@ func (m panicMapper) Map(context.Context, net.PacketConn, protocol.PortMappingPo
 // clockPanicCall is the call of Now that panics: well into the session.
 const clockPanicCall = 40
 
-// panicClock is the system clock, except that the nth call of Now panics
-// once.
-type panicClock struct {
-	clock.Clock
-	n    *atomic.Int32
-	nth  int32
-	seen atomic.Int32
-}
-
-func (c *panicClock) Now() time.Time {
-	if c.seen.Add(1) == c.nth {
-		c.n.Add(1)
-		panic(errUserPanic)
-	}
-	return c.Clock.Now()
+// nthNowPanics returns the system clock, except that its nth call of Now
+// panics once, counted in n.
+func nthNowPanics(nth int32, n *atomic.Int32) clock.Clock {
+	var seen atomic.Int32
+	return testkit.PanicClock{Clock: clock.System{}, Panic: func(method string) any {
+		if method != "Now" || seen.Add(1) != nth {
+			return nil
+		}
+		n.Add(1)
+		return errUserPanic
+	}}
 }
 
 // panicPlanner panics in Classify; the coordinator replaces it with the
-// DefaultPlanner.
+// built-in planner.
 type panicPlanner struct {
-	plan.DefaultPlanner
+	plan.Planner
 	n *atomic.Int32
 }
 
-func (p panicPlanner) Classify(coord.ClassifyInput) coord.Classification {
+func (p panicPlanner) Classify(plan.ClassifyInput) plan.Classification {
 	p.n.Add(1)
 	panic(errUserPanic)
 }
@@ -95,12 +91,17 @@ func (p panicPlanner) Classify(coord.ClassifyInput) coord.Classification {
 // panicMemory is a StrategyMemory that panics.
 type panicMemory struct{ n *atomic.Int32 }
 
-func (m panicMemory) Recommend(coord.StrategyKey, []coord.VariantID) []coord.VariantID {
+func (m panicMemory) Recommend(coord.StrategyKey, []plan.VariantID) []plan.VariantID {
 	m.n.Add(1)
 	panic(errUserPanic)
 }
 
-func (m panicMemory) Report(coord.StrategyKey, coord.VariantID, coord.MemoryResult) {
+func (m panicMemory) Score(coord.StrategyKey, plan.VariantID) int {
+	m.n.Add(1)
+	panic(errUserPanic)
+}
+
+func (m panicMemory) Report(coord.StrategyKey, plan.VariantID, coord.MemoryResult) {
 	m.n.Add(1)
 	panic(errUserPanic)
 }
@@ -163,10 +164,10 @@ func userFaults() []userFault {
 			return fmt.Errorf("no side warns %s after a HopLimiter panic", protocol.WarnLowTTLUnsupported)
 		}},
 		{name: "client_clock", allowInternal: true, client: func(_ [2]*side, spec *sessionSpec, n *atomic.Int32) {
-			spec.clock[observed] = &panicClock{Clock: clock.System{}, nth: clockPanicCall, n: n}
+			spec.clock[observed] = nthNowPanics(clockPanicCall, n)
 		}},
 		{name: "server_planner", count: serverPanics, server: func(wc *worldConfig, n *atomic.Int32) {
-			wc.planner = panicPlanner{n: n}
+			wc.planner = panicPlanner{Planner: coord.DefaultPlanner(), n: n}
 		}},
 		{name: "server_strategy_memory", count: serverPanics, server: func(wc *worldConfig, n *atomic.Int32) {
 			wc.memory = panicMemory{n: n}
@@ -287,5 +288,3 @@ func TestFaultUserCode(t *testing.T) {
 	})
 	goleak.VerifyNone(t)
 }
-
-var _ clock.Clock = (*panicClock)(nil)

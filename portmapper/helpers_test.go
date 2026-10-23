@@ -11,6 +11,7 @@ import (
 
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/leak"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
 	"go.uber.org/goleak"
 )
@@ -197,32 +198,6 @@ func policy(lease uint32, methods ...protocol.PortMapMethod) protocol.PortMappin
 	return p
 }
 
-// waitBound is how long a test waits for something that must happen on
-// real loopback sockets: until shortly before the test binary's deadline,
-// so that a loaded machine — every package's tests in parallel under the
-// race detector — slows the test down instead of failing it. Without a
-// deadline it is a minute.
-func waitBound(t *testing.T) time.Duration {
-	d, ok := t.Deadline()
-	if !ok {
-		return time.Minute
-	}
-	return max(time.Until(d)*9/10, time.Second)
-}
-
-// waitFor polls cond until it holds, at most waitBound.
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	d := waitBound(t)
-	deadline := time.Now().Add(d)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out after %s waiting for %s", d, what)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
 // goroutineBase records the goroutines running now; noLeak checks that only
 // those are left (goleak retries while goroutines wind down).
 func goroutineBase() goleak.Option { return goleak.IgnoreCurrent() }
@@ -235,10 +210,10 @@ func noLeak(t *testing.T, base goleak.Option) {
 }
 
 // waitPending waits until the fake clock has n timers armed, at most
-// waitBound.
+// testkit.WaitBound.
 func waitPending(t *testing.T, fc *clock.Fake, n int) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), waitBound(t))
+	ctx, cancel := context.WithTimeout(context.Background(), testkit.WaitBound(t))
 	defer cancel()
 	if err := fc.WaitPending(ctx, n); err != nil {
 		t.Fatalf("waiting for %d timers: %v", n, err)

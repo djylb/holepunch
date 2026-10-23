@@ -5,8 +5,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/djylb/holepunch/internal/faultinject"
-	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -90,7 +89,7 @@ type GoData struct {
 type RoundEndedData struct {
 	Sent  [2]int
 	Hit   [2]bool
-	Class RoundClass
+	Class plan.RoundClass
 }
 
 // PeerTargetsData is the data of EvPeerTargets.
@@ -176,12 +175,9 @@ func (d *dispatcher) run(ctx context.Context) {
 }
 
 func (d *dispatcher) deliver(ev Event) {
-	if err := life.Safe("coord.observer", func() {
-		if err := faultinject.Point(fiCallback); err != nil {
-			return
-		}
-		d.fn(ev)
-	}); err != nil {
+	// Not Coordinator.callout: a panic of the observer is counted, never
+	// reported to it as an event.
+	if callout("coord.observer", fiCallback, func() { d.fn(ev) }) != nil {
 		d.panics()
 	}
 }

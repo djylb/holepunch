@@ -29,9 +29,6 @@ const (
 	// maxTotal is the hard upper bound of T; beyond it summary_wait and
 	// handshake shrink in proportion.
 	maxTotal = 150 * time.Second
-	// Option limits.
-	maxTransportData = 8 << 10
-	maxPolicyHops    = 8
 )
 
 // Fault-injection points of the session entry and waits.
@@ -165,10 +162,7 @@ func attach(ctx context.Context, control net.Conn, opts Options) (*Session, erro
 	rt := newRuntime(ctx, opts)
 	if err := rt.ctl.open(control); err != nil {
 		_ = rt.g.Close(joinBound)
-		r, d, ok := msgframe.Reason(err)
-		if !ok {
-			r, d = protocol.ReasonInvalidArgument, "control"
-		}
+		r, d := msgframe.ReasonOr(err, protocol.ReasonInvalidArgument, "control")
 		return nil, &Error{Reason: r, Phase: protocol.PhaseCreated, Detail: d, Err: err}
 	}
 	if rt.sink != nil {
@@ -231,7 +225,7 @@ func validateOptions(control net.Conn, o *Options) *Error {
 	switch {
 	case protocol.CheckTransportMode(o.TransportMode) != nil:
 		return argError("transport_mode", nil)
-	case len(o.TransportData) > maxTransportData:
+	case len(o.TransportData) > protocol.MaxTransportData:
 		return argError("transport_data", nil)
 	case o.Network != nil && life.IsNil(o.Network):
 		return argError("nil_network", nil)
@@ -245,7 +239,7 @@ func validateOptions(control net.Conn, o *Options) *Error {
 		return argError("max_paths", nil)
 	}
 	if p := o.Policy; p != nil {
-		if len(p.LowTTLHops) > maxPolicyHops {
+		if len(p.LowTTLHops) > protocol.MaxLowTTLHops {
 			return argError("policy.low_ttl_hops", nil)
 		}
 		if b := p.Budget.Birthday; b != "" && !b.Valid() {
@@ -297,7 +291,7 @@ type runtime struct {
 	// replaced: the read loops, which start with the probing sockets, read
 	// both pointers without synchronisation. The summary only opens them
 	// (startPunching): it starts the nomination goroutine with the settled
-	// handover timeout and sets punch.active.
+	// handover timeout and activates punch.
 	punch *punchState
 	nom   *nominator
 
@@ -342,6 +336,7 @@ type runtime struct {
 	udpBlocked   atomic.Bool // set by a round goroutine
 	timing       timings
 	traitsSource [2]atomic.Bool
+	primaryPath  protocol.PathInfo   // set by finish: the primary path handed over
 	extraPaths   []protocol.PathInfo // set by finish: the extra paths handed over
 
 	warnMu sync.Mutex
@@ -355,10 +350,10 @@ func newRuntime(ctx context.Context, o Options) *runtime {
 		g: life.New(ctx), phases: newPhaseTracker(), followUps: make(chan struct{}, maxFollowUps),
 		localIPs: map[netip.Addr]struct{}{}, punch: newPunchState(),
 	}
-	rt.nom = newNominator(rt)
 	if rt.clk == nil {
 		rt.clk = clock.System{}
 	}
+	rt.nom = newNominator(rt.clk, rt)
 	if rt.netw == nil {
 		rt.netw = SystemNetwork()
 	}
@@ -378,7 +373,7 @@ func newRuntime(ctx context.Context, o Options) *runtime {
 }
 
 // fam returns the state of family f.
-func (rt *runtime) fam(f protocol.Family) *famState { return rt.fams[famIndex(f)] }
+func (rt *runtime) fam(f protocol.Family) *famState { return rt.fams[f.Index()] }
 
 // isObserver reports whether ap is one of punch_start's natprobe observers.
 func (rt *runtime) isObserver(ap netip.AddrPort) bool { return rt.observers[netaddr.Canon(ap)] }
@@ -413,34 +408,25 @@ func (rt *runtime) waitStart() (startMsg, error) {
 	if err := faultinject.Point(fiAttachReadStart); err != nil {
 		return startMsg{}, err
 	}
-	select {
-	case s := <-rt.ctl.startCh:
-		return s, nil
-	case f := <-rt.ctl.faultCh:
-		return startMsg{}, f
-	case ab := <-rt.ctl.abortCh:
-		return startMsg{}, abortFailure(ab.msg)
-	case <-rt.ctl.conn.Done():
-		return startMsg{}, rt.ctl.lost()
-	case <-ctx.Done():
-		return startMsg{}, context.Cause(ctx)
-	case <-t.C():
+	s, w, err := waitControl(rt.ctl, ctx, rt.ctl.startCh, t.C(), nil)
+	switch {
+	case err != nil:
+		return startMsg{}, err
+	case w == wokeTick:
 		return startMsg{}, fail(protocol.ReasonControlTimeout, "start_wait", nil)
 	}
+	return s, nil
 }
 
-// acceptStart validates punch_start and sets the session up: codec, timeouts
-// and waits, merged policy, accepted features, send gate, sockets, the
-// session deadline. A start that names its session but is invalid is
-// answered with punch_result{ok:false} by finish; a version mismatch is
-// answered with nothing.
+// acceptStart validates punch_start and sets the session up
+// (setupSession), reads the host's addresses, accepts the session on the
+// control link and arms the session deadline. A start that names its
+// session but is invalid is answered with punch_result{ok:false} by finish;
+// a version mismatch is answered with nothing.
 func (rt *runtime) acceptStart(s startMsg) error {
 	m := s.msg
 	if s.err != nil {
-		r, d, ok := msgframe.Reason(s.err)
-		if !ok {
-			r, d = protocol.ReasonProtocolViolation, "punch_start"
-		}
+		r, d := msgframe.ReasonOr(s.err, protocol.ReasonProtocolViolation, "punch_start")
 		if r != protocol.ReasonControlVersionMismatch && m.Role.IsPunch() && m.SessionID != "" {
 			rt.start, rt.role, rt.startAt, rt.started = m, m.Role, s.at, true
 			rt.initCounters()
@@ -448,7 +434,26 @@ func (rt *runtime) acceptStart(s startMsg) error {
 		return fail(r, d, s.err)
 	}
 	m, _ = m.Normalize()
-	rt.start, rt.role, rt.startAt, rt.started = m, m.Role, s.at, true
+	if err := rt.setupSession(m, s.at); err != nil {
+		return err
+	}
+	rt.readHosts()
+	rt.ctl.accept(m.SessionID)
+	deadline := rt.waits.total
+	rt.deadline = rt.clk.AfterFunc(max(s.at.Add(deadline).Sub(rt.clk.Now()), 0), func() {
+		_ = life.Safe("session_deadline", func() { rt.g.Fail(fail(protocol.ReasonControlTimeout, "session_deadline", nil)) })
+	})
+	now := rt.clk.Now()
+	rt.phases.advance(protocol.PhaseProbing, "start_received", now)
+	rt.progress(progressEvent{stage: stageProbeStarted, status: protocol.StatusInfo})
+	return nil
+}
+
+// setupSession installs the normalized punch_start m, read at `at`: codec,
+// flow opener, timeouts and waits, merged policy, accepted features, pacer,
+// send gate, socket pool and the natprobe observers.
+func (rt *runtime) setupSession(m protocol.PunchStart, at time.Time) error {
+	rt.start, rt.role, rt.startAt, rt.started = m, m.Role, at, true
 	codec, err := udpwire.NewCodec(m.Token, m.Wire.RouteID, udpwire.Role(m.Role.Code()),
 		udpwire.PadPolicy{Min: m.Wire.PayloadMin, Max: m.Wire.PayloadMax}, rt.clk.Now)
 	if err != nil {
@@ -465,19 +470,10 @@ func (rt *runtime) acceptStart(s startMsg) error {
 	rt.features = protocol.AcceptFeatures(m.Control.Features, protocol.SupportedFeatures())
 	rt.pace = newPacer(m.Token, m.Wire.RouteID, codec.Role())
 	rt.initCounters()
-	rt.readHosts()
 	rt.observers = map[netip.AddrPort]bool{}
 	for _, o := range m.Probe.Observers {
 		rt.observers[netaddr.Canon(o.Addr)] = true
 	}
-	rt.ctl.accept(m.SessionID)
-	deadline := rt.waits.total
-	rt.deadline = rt.clk.AfterFunc(max(s.at.Add(deadline).Sub(rt.clk.Now()), 0), func() {
-		_ = life.Safe("session_deadline", func() { rt.g.Fail(fail(protocol.ReasonControlTimeout, "session_deadline", nil)) })
-	})
-	now := rt.clk.Now()
-	rt.phases.advance(protocol.PhaseProbing, "start_received", now)
-	rt.progress(progressEvent{stage: stageProbeStarted, status: protocol.StatusInfo})
 	return nil
 }
 
@@ -487,12 +483,14 @@ func (rt *runtime) initCounters() {
 	if rt.sender != nil {
 		return
 	}
-	rt.sender = newSender(rt, rt.codec)
+	cnt := [2]*famCounters{&rt.fams[0].cnt, &rt.fams[1].cnt}
+	rt.sender = newSender(rt.codec, rt.clk, rt.pace, cnt, rt, rt.punch)
 	limit := int(rt.policy.Budget.MaxSockets)
 	if limit == 0 {
 		limit = int(protocol.DefaultBudget().MaxSockets)
 	}
-	rt.socks = newSocketPool(rt, limit)
+	rt.socks = newSocketPool(poolDeps{g: rt.g, netw: rt.netw, opener: rt.opener, pace: rt.pace, cnt: cnt,
+		panics: &rt.cnt.callbackPanics, sink: rt}, limit)
 }
 
 // computeWaits derives the local waits from the timeouts: client waits that
@@ -533,24 +531,19 @@ func (rt *runtime) waitSummary() (stamped[protocol.ProbeSummary], error) {
 	for {
 		now := rt.clk.Now()
 		t.Reset(max(earliest(deadline, keepalive).Sub(now), 0))
-		select {
-		case s := <-rt.ctl.summaryCh:
-			return s, nil
-		case a := <-rt.ctl.assistCh:
+		s, w, err := waitControl(rt.ctl, ctx, rt.ctl.summaryCh, t.C(), func(a stamped[protocol.Assist]) {
 			// Round 1's anchor refresh follows the summary on the link: when
 			// both wait here, the select may take it first.
 			if a.msg.Kind == protocol.AssistRefresh && !rt.abl.NoAssistRelay {
 				rt.refreshAnchor(a.msg)
 			}
-		case f := <-rt.ctl.faultCh:
-			return zero, f
-		case ab := <-rt.ctl.abortCh:
-			return zero, abortFailure(ab.msg)
-		case <-rt.ctl.conn.Done():
-			return zero, rt.ctl.lost()
-		case <-ctx.Done():
-			return zero, context.Cause(ctx)
-		case <-t.C():
+		})
+		switch {
+		case err != nil:
+			return zero, err
+		case w == wokeValue:
+			return s, nil
+		case w == wokeTick:
 			now = rt.clk.Now()
 			if !now.Before(deadline) {
 				return zero, fail(protocol.ReasonControlTimeout, "summary_wait", nil)

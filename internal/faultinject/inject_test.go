@@ -4,6 +4,7 @@ package faultinject_test
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/faultinject"
+	"github.com/djylb/holepunch/internal/testkit"
 )
 
 // documentedPoints is the full list of injection points, with
@@ -322,11 +324,5 @@ func TestConcurrentHitsAreCountedExactly(t *testing.T) {
 
 func waitFired(t *testing.T, name string, n int) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for faultinject.Fired(name) < n {
-		if time.Now().After(deadline) {
-			t.Fatalf("%s fired %d times, want %d", name, faultinject.Fired(name), n)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	testkit.WaitFor(t, fmt.Sprintf("%s to fire %d times", name, n), func() bool { return faultinject.Fired(name) >= n })
 }

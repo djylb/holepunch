@@ -113,7 +113,7 @@ func TestPacketShapePerSession(t *testing.T) {
 			route[i] = byte(rng.Uint32())
 		}
 		for _, purpose := range []string{"probe", "sibling"} {
-			pc, err := h.ListenPacket(context.Background(), "udp4", netip.AddrPort{}, purpose)
+			pc, err := h.ListenUDP(context.Background(), "udp4", netip.AddrPort{}, purpose)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +126,7 @@ func TestPacketShapePerSession(t *testing.T) {
 				if legacy {
 					copy(p[1:], route[:])
 				}
-				if _, err := pc.(udp).WriteToUDPAddrPort(p, addrOf(o)); err != nil {
+				if _, err := pc.WriteToUDPAddrPort(p, addrOf(o)); err != nil {
 					t.Fatal(err)
 				}
 				drain(o)
@@ -137,13 +137,13 @@ func TestPacketShapePerSession(t *testing.T) {
 	session(48, 112, false)
 	session(160, 416, false)
 	session(60, 120, true)
-	pmap, err := h.ListenPacket(context.Background(), "udp4", netip.AddrPort{}, "portmap")
+	pmap, err := h.ListenUDP(context.Background(), "udp4", netip.AddrPort{}, "portmap")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = pmap.Close() }()
 	for range 3 { // a NAT-PMP request: constant bytes, excluded by purpose
-		_, _ = pmap.(udp).WriteToUDPAddrPort([]byte{0, 1, 0, 0, 0x13, 0x88, 0, 0, 0, 0, 0x0e, 0x10}, addrOf(o))
+		_, _ = pmap.WriteToUDPAddrPort([]byte{0, 1, 0, 0, 0x13, 0x88, 0, 0, 0, 0, 0x0e, 0x10}, addrOf(o))
 	}
 
 	st := h.Stats()

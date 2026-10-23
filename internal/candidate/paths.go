@@ -77,12 +77,8 @@ func (c *Candidate) route() protocol.PathKind {
 		return protocol.PathPublic
 	case c.Path != "":
 		return c.Path
-	case c.Kind == KindLAN:
-		return protocol.PathLAN
-	case c.Kind == KindOverlay:
-		return protocol.PathOverlay
 	}
-	return protocol.PathPublic
+	return c.Kind.PathKind()
 }
 
 // duplicate reports whether two pairs are the same path: the same

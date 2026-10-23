@@ -152,17 +152,25 @@ func (h *Host) families() uint8 {
 
 func (h *Host) isClosed() bool { return h.inert || h.n.closed.Load() }
 
-// ListenPacket opens a UDP socket. network is "udp", "udp4" or "udp6". A
-// zero or unspecified laddr address binds every address of the family, dual
+// Conn is a socket of a Host: a net.PacketConn with the address-port calls,
+// the hop limit (SetHopLimit, holepunch.HopLimiter) and the buffer sizes. It
+// follows its deadlines on the network's clock.
+type Conn interface {
+	net.PacketConn
+	ReadFromUDPAddrPort(b []byte) (int, netip.AddrPort, error)
+	WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error)
+	SetHopLimit(hops int) error
+	SetReadBuffer(bytes int) error
+	SetWriteBuffer(bytes int) error
+}
+
+// ListenUDP opens a UDP socket. network is "udp", "udp4" or "udp6". A zero
+// or unspecified laddr address binds every address of the family, dual
 // stack for "udp"; port 0 picks a seeded ephemeral port in [32768, 60999].
 // purpose is free text, normally a holepunch.Purpose* constant, that
-// FailBinds, FailWrites and the statistics refer to.
-//
-// The returned conn implements SetHopLimit(hops int) error
-// (holepunch.HopLimiter), ReadFromUDPAddrPort, WriteToUDPAddrPort,
-// SetReadBuffer and SetWriteBuffer, and follows its deadlines on the
-// network's clock. A canceled ctx fails the call.
-func (h *Host) ListenPacket(ctx context.Context, network string, laddr netip.AddrPort, purpose string) (net.PacketConn, error) {
+// FailBinds, FailWrites and the statistics refer to. A canceled ctx fails
+// the call.
+func (h *Host) ListenUDP(ctx context.Context, network string, laddr netip.AddrPort, purpose string) (Conn, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return nil, &net.OpError{Op: "listen", Net: network, Err: err}
@@ -171,14 +179,20 @@ func (h *Host) ListenPacket(ctx context.Context, network string, laddr netip.Add
 	return h.listen(network, laddr, purpose)
 }
 
-// Listen is ListenPacket with the purpose "listen" and without a context. Its
+// ListenPacket is ListenUDP with the signature of holepunch.Network: the
+// returned conn is a Conn.
+func (h *Host) ListenPacket(ctx context.Context, network string, laddr netip.AddrPort, purpose string) (net.PacketConn, error) {
+	return h.ListenUDP(ctx, network, laddr, purpose)
+}
+
+// Listen is ListenUDP with the purpose "listen" and without a context. Its
 // signature is that of natprobe.ServerConfig.Listen, so h.Listen can be
-// injected there directly.
+// injected there directly; the returned conn is a Conn.
 func (h *Host) Listen(network string, laddr netip.AddrPort) (net.PacketConn, error) {
 	return h.listen(network, laddr, purposeListen)
 }
 
-func (h *Host) listen(network string, laddr netip.AddrPort, purpose string) (net.PacketConn, error) {
+func (h *Host) listen(network string, laddr netip.AddrPort, purpose string) (Conn, error) {
 	ip := laddr.Addr().Unmap()
 	wild := !ip.IsValid() || ip.IsUnspecified()
 	fail := func(err error) error {

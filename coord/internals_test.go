@@ -11,17 +11,9 @@ import (
 
 	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
-
-func TestTruncate(t *testing.T) {
-	if truncate("abc", 5) != "abc" || truncate("abcdef", 3) != "abc" {
-		t.Fatal("ascii")
-	}
-	if got := truncate("ab€", 4); got != "ab" { // € is three bytes
-		t.Fatalf("rune boundary: %q", got)
-	}
-}
 
 func TestApplyTraitsUpdate(t *testing.T) {
 	m, c, f, step, vel, hp := protocol.MapADM, protocol.ConfHigh, protocol.FiltEIF, int16(2), float32(3), protocol.TriTrue
@@ -79,7 +71,7 @@ func TestClassifyLoss(t *testing.T) {
 			t.Errorf("%v: %+v", c.err, got)
 		}
 	}
-	if term := internalTerm(errors.New(strings.Repeat("x", 400))); len(term.detail) != maxDetail || term.panic != nil {
+	if term := internalTerm(errors.New(strings.Repeat("x", 400))); len(term.detail) != protocol.MaxDetail || term.panic != nil {
 		t.Fatalf("internal term %+v", term)
 	}
 }
@@ -126,9 +118,6 @@ func TestEventKindNames(t *testing.T) {
 	}
 	if EventKind(0).String() != "unknown" || EventKind(99).String() != "unknown" {
 		t.Fatal("unknown kinds")
-	}
-	if famIndex(protocol.FamilyUDP6) != 1 || famIndex(protocol.FamilyUDP4) != 0 {
-		t.Fatal("famIndex")
 	}
 }
 
@@ -184,12 +173,12 @@ func TestStatsHistograms(t *testing.T) {
 	c.record(&Result{Outcome: OutcomeSucceeded, RTT: [2]time.Duration{30 * time.Millisecond, 2 * time.Second},
 		Winner: &WinnerInfo{Round: 2}, MemoryHit: true, Confirmed: [2]bool{true, false},
 		Timing: Timing{Created: created, FirstConfirm: created.Add(1500 * time.Millisecond)},
-		Rounds: []RoundRecord{{Class: RoundNoContact}, {Class: RoundConfirmed}}})
+		Rounds: []RoundRecord{{Class: plan.RoundNoContact}, {Class: plan.RoundConfirmed}}})
 	c.record(&Result{Outcome: OutcomeFailed, Reason: protocol.ReasonCandidateTimeout})
 	s := c.snapshot()
 	if s.SessionsTotal != 2 || s.ByOutcome != [3]int64{1, 1, 0} || s.ByReason[protocol.ReasonCandidateTimeout] != 1 ||
 		s.HalfConfirmed != 1 || s.ConfirmAtRound[2] != 1 || s.ConfirmAtRound[0] != 1 || s.RTTHistogramMs[1] != 1 ||
-		s.RTTHistogramMs[7] != 1 || s.TimeToConfirm[2] != 1 || s.MemoryHits != 1 || s.RoundsByClass[RoundNoContact] != 1 {
+		s.RTTHistogramMs[7] != 1 || s.TimeToConfirm[2] != 1 || s.MemoryHits != 1 || s.RoundsByClass[plan.RoundNoContact] != 1 {
 		t.Fatalf("stats %+v", s)
 	}
 }

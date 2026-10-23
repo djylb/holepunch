@@ -5,9 +5,10 @@
 //
 // A frame is an 8-byte header — 'h' 'p', major version 1, type, payload
 // length as a big-endian uint32 — followed by the payload (a JSON object,
-// decoded by package protocol). The type table in this package is the only
-// definition of the twelve version-1 types, their payload caps, the side that
-// sends each one and its write priority. A header is validated before its
+// decoded by package protocol). The twelve version-1 types, their payload
+// caps, the side that sends each one and its write priority come from the
+// type table of internal/wiretype, which package protocol shares. A header
+// is validated before its
 // payload is read or allocated: an oversized frame costs eight bytes of
 // reading and no allocation.
 //

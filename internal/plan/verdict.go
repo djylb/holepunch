@@ -1,6 +1,9 @@
 package plan
 
-import "github.com/djylb/holepunch/protocol"
+import (
+	api "github.com/djylb/holepunch/plan"
+	"github.com/djylb/holepunch/protocol"
+)
 
 // CheapRounds is how many rungs of a ladder every pair runs before the
 // evidence may end it: rnd_x_rnd's r1 and r2, seq_x_rnd's r1 and
@@ -20,14 +23,14 @@ const CheapRounds = 2
 // traits, not a conclusion the traits memory raised), and no rung after the
 // two cheap ones can run in this session. Anything less runs the cheap
 // rounds and lets their evidence end the ladder (TerminalReason).
-func summaryVerdict(in ClassifyInput, cl Classification) bool {
-	for i, fp := range cl.fams {
+func summaryVerdict(in api.ClassifyInput, fams []familyPlan) bool {
+	for i, fp := range fams {
 		if fp.PairClass != PairRndRnd || !measuredRandom(in.Measured[0], fp.Family) || !measuredRandom(in.Measured[1], fp.Family) ||
-			laterRungRuns(in, cl, i) {
+			laterRungRuns(in, fams, i) {
 			return false
 		}
 	}
-	return len(cl.fams) > 0
+	return len(fams) > 0
 }
 
 // measuredRandom reports whether natprobe measured the side's port
@@ -45,9 +48,9 @@ func measuredRandom(v protocol.PeerView, f protocol.Family) bool {
 // the session policy's tier is already clamped to conservative without it
 // (protocol.SessionBudgetLimit), which keeps the two-sided birthday out by
 // default.
-func laterRungRuns(in ClassifyInput, cl Classification, i int) bool {
-	fp := cl.fams[i]
-	rin := RoundInput{Class: cl, Policy: in.Policy, AllowExtreme: true, HandshakeMs: in.Timeouts.HandshakeTimeoutMs}
+func laterRungRuns(in api.ClassifyInput, fams []familyPlan, i int) bool {
+	fp := fams[i]
+	rin := input{RoundInput: api.RoundInput{Policy: in.Policy, AllowExtreme: true, HandshakeMs: in.Timeouts.HandshakeTimeoutMs}, fams: fams}
 	for j := CheapRounds; j < len(fp.Ladder); j++ {
 		round := j + 1
 		if mr := int(in.Timeouts.MaxRounds); mr > 0 && round > mr {
@@ -116,8 +119,8 @@ func adviceFor(fp familyPlan, reject protocol.Reason, pol protocol.Policy) proto
 // slow birthday, from the strategy memory's scores for its key:
 // the slow birthday succeeded (score ≥ +1) and every interactive rung of
 // pdf_x_rnd that ran failed (none above 0, one below). score reads one
-// variant's score; the coordinator passes its built-in memory's.
-func BackgroundOnly(score func(VariantID) int8) bool {
+// variant's score, of which only the sign counts (coord.StrategyMemory.Score).
+func BackgroundOnly(score func(api.VariantID) int) bool {
 	if score(vPDFRndSlow) < 1 {
 		return false
 	}

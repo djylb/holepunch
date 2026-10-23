@@ -5,34 +5,19 @@ import (
 	"net"
 	"net/netip"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"go.uber.org/goleak"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/probetest"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
 
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
-
-// manualClock is a settable clock for registry tests; its timers are the
-// system's.
-type manualClock struct {
-	clock.System
-	ns atomic.Int64
-}
-
-func newManualClock() *manualClock {
-	c := &manualClock{}
-	c.ns.Store(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano())
-	return c
-}
-func (c *manualClock) Now() time.Time          { return time.Unix(0, c.ns.Load()) }
-func (c *manualClock) Advance(d time.Duration) { c.ns.Add(int64(d)) }
 
 func tok(b byte) protocol.Token {
 	var t protocol.Token
@@ -85,7 +70,7 @@ type rig struct {
 	t     *testing.T
 	s     *Server
 	reg   *Registry
-	clk   *manualClock
+	clk   *testkit.StepClock // a step back tests a server clock set back
 	ls    []*listener
 	rds   []*reader
 	out   []captured
@@ -102,7 +87,7 @@ type rigOpts struct {
 
 func newRig(t *testing.T, o rigOpts) *rig {
 	t.Helper()
-	r := &rig{t: t, clk: newManualClock()}
+	r := &rig{t: t, clk: testkit.NewStepClock(t, time.Time{})}
 	o.reg.Clock = r.clk
 	r.reg = NewRegistry(o.reg)
 	if o.srcRate == (Rate{}) {
@@ -145,7 +130,6 @@ type client struct {
 	t     *testing.T
 	codec *udpwire.Codec
 	win   udpwire.SeqWindow
-	role  udpwire.Role
 }
 
 func newClient(t *testing.T, token protocol.Token, route protocol.RouteID, role udpwire.Role) *client {
@@ -154,32 +138,12 @@ func newClient(t *testing.T, token protocol.Token, route protocol.RouteID, role 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &client{t: t, codec: c, role: role}
+	return &client{t: t, codec: c}
 }
 
-type probeOpts struct {
-	sandwich *[2]uint8
-	plainLen int
-	seq      uint32
-	sock     uint8
-	obs      uint8
-	extra    bool
-	alt      bool
-}
-
-func (c *client) probe(o probeOpts) []byte {
+func (c *client) probe(o probetest.Probe) []byte {
 	c.t.Helper()
-	seq := o.seq
-	if seq == 0 {
-		seq = c.codec.NextSeq()
-	}
-	h := udpwire.Header{Type: udpwire.TProbe, Role: c.role, FA: o.extra, FB: o.alt, Sock: o.sock, Cand: udpwire.NoCand,
-		Aux: uint16(o.obs), Seq: seq, TS: c.codec.Now()}
-	var tl udpwire.TLVs
-	if o.sandwich != nil {
-		tl.Sandwich.Round, tl.Sandwich.Phase, tl.Sandwich.Set = o.sandwich[0], o.sandwich[1], true
-	}
-	pkt, err := c.codec.Seal(nil, &h, &tl, o.plainLen)
+	pkt, err := probetest.Seal(c.codec, o)
 	if err != nil {
 		c.t.Fatal(err)
 	}
@@ -188,12 +152,7 @@ func (c *client) probe(o probeOpts) []byte {
 
 // open decodes a server reply as the client's read pump would.
 func (c *client) open(b []byte) (udpwire.Header, udpwire.TLVs, bool) {
-	var h udpwire.Header
-	var tl udpwire.TLVs
-	if c.codec.Open(b, make([]byte, len(b)), &h, &tl) != udpwire.OK || c.codec.CheckRole(&h) != udpwire.OK {
-		return h, tl, false
-	}
-	return h, tl, true
+	return probetest.Open(c.codec, b, make([]byte, len(b)))
 }
 
 func register(t *testing.T, reg *Registry, id string, token protocol.Token, route protocol.RouteID) *handle {

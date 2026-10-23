@@ -132,7 +132,7 @@ func TestEndpointBounds(t *testing.T) {
 	for i := range 20 {
 		rows = append(rows, srow(v4P, uint8(i%3), netip.AddrPortFrom(ip("203.0.113.5"), uint16(1000+i)).String(), uint32(i+1), true))
 	}
-	if eps := serverTable(socks, rows...).Endpoints(); len(eps) != maxEndpoints {
+	if eps := serverTable(socks, rows...).Endpoints(); len(eps) != protocol.MaxEndpoints {
 		t.Fatalf("%d endpoints", len(eps))
 	}
 	// LAN only fills what is left and never more than four
@@ -142,7 +142,7 @@ func TestEndpointBounds(t *testing.T) {
 			lan++
 		}
 	}
-	if lan != maxLANEndpoints {
+	if lan != protocol.MaxLANTargets {
 		t.Fatalf("%d LAN endpoints", lan)
 	}
 	// a private observer's verified row is no server endpoint while global
@@ -265,5 +265,46 @@ func TestLANObservedReportedFallback(t *testing.T) {
 	priv.RecordServer(srow(v4P, 1, local, 2, true))
 	if priv.Classify().LANObserved {
 		t.Fatal("a private-scope deployment counted as LAN-observed")
+	}
+}
+
+// A view from the client's own report follows the Endpoints rules with
+// nothing verified: observations by socket kind and creation order, STUN
+// and port mapping, the local-port guess, LAN addresses without the shared
+// space, the host's global addresses at the primary port, and overlays.
+func TestSelfReportedView(t *testing.T) {
+	fr := protocol.FamilyReport{
+		Family: protocol.FamilyUDP4,
+		Sockets: []protocol.SocketReport{
+			{ID: v4B, Kind: protocol.SocketSibling, Local: ap("100.64.0.7:40002"),
+				Rows: []protocol.RowReport{{Observed: ap("203.0.113.5:50020"), FirstSeq: 1}}},
+			{ID: v4P, Kind: protocol.SocketPrimary, Local: ap("192.168.1.10:40000"),
+				Rows: []protocol.RowReport{{Observed: ap("203.0.113.5:50002"), FirstSeq: 3}, {Observed: ap("203.0.113.5:50001"), FirstSeq: 2},
+					{Observed: ap("0.0.0.0:1"), FirstSeq: 4}, {Observed: ap("127.0.0.1:50003"), FirstSeq: 5},
+					{Observed: ap("255.255.255.255:50004"), FirstSeq: 6}}},
+		},
+		STUN:       []protocol.RowReport{{Observed: ap("203.0.113.5:50001")}, {Observed: ap("203.0.113.9:50005")}, {Observed: ap("127.0.0.2:50006")}},
+		PortMap:    &protocol.PortMapReport{External: ap("10.0.0.1:6000")},
+		LocalAddrs: []netip.Addr{ip("192.168.1.10"), ip("198.51.100.4"), ip("2001:db8::1")},
+		Overlay:    []netip.Addr{ip("100.100.1.1"), ip("127.0.0.1")},
+		Traits:     protocol.Traits{PortAnchorMs: 77},
+	}
+	fv := SelfReportedView(fr)
+	want := []protocol.Endpoint{
+		{Addr: ap("203.0.113.5:50001"), Source: protocol.EndpointServer, Socket: v4P},
+		{Addr: ap("203.0.113.5:50002"), Source: protocol.EndpointServer, Socket: v4P},
+		{Addr: ap("203.0.113.5:50020"), Source: protocol.EndpointSibling, Socket: v4B},
+		{Addr: ap("203.0.113.9:50005"), Source: protocol.EndpointSTUN, Socket: v4P},
+		{Addr: ap("10.0.0.1:6000"), Source: protocol.EndpointPortmap, Socket: v4P},
+		{Addr: ap("203.0.113.5:40000"), Source: protocol.EndpointLocalPort, Socket: v4P},
+		{Addr: ap("192.168.1.10:40000"), Source: protocol.EndpointLAN, Socket: v4P},
+		{Addr: ap("198.51.100.4:40000"), Source: protocol.EndpointLAN, Socket: v4P},
+		{Addr: ap("100.100.1.1:40000"), Source: protocol.EndpointOverlay, Socket: v4P},
+	}
+	if !slices.Equal(fv.Endpoints, want) {
+		t.Fatalf("endpoints\n%v\nwant\n%v", fv.Endpoints, want)
+	}
+	if fv.Family != protocol.FamilyUDP4 || fv.Traits.Family != protocol.FamilyUDP4 || fv.Traits.PortAnchorMs != 0 || fv.Traits.Samples != 1 {
+		t.Fatalf("traits %+v", fv.Traits)
 	}
 }

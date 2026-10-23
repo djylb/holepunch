@@ -6,6 +6,7 @@ import (
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/trunc"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -17,7 +18,7 @@ import (
 func (s *Session) sendMarkedLocked(r int, m protocol.Message, mark *atomic.Int64) effects {
 	f, err := msgframe.Encode(m)
 	if err != nil {
-		return effects{term: &terminal{code: protocol.ReasonInternal, detail: truncate("encode: "+err.Error(), maxDetail)}}
+		return effects{term: &terminal{code: protocol.ReasonInternal, detail: trunc.String("encode: "+err.Error(), protocol.MaxDetail)}}
 	}
 	var fx effects
 	fx.sendErr[r] = s.st.links[r].sendMarked(f, mark, s.epoch)
@@ -58,7 +59,7 @@ func (s *Session) rearmLocked(now time.Duration) {
 			next = min(next, l.ping.due)
 		}
 	}
-	if len(st.sandBox) > 0 {
+	if len(st.sand.box) > 0 {
 		next = now
 	}
 	if st.refresh.pending {
@@ -94,7 +95,7 @@ func (s *Session) timerLocked(now time.Duration) effects {
 	if st.state == StateClosed {
 		return fx
 	}
-	if len(st.sandBox) > 0 {
+	if len(st.sand.box) > 0 {
 		s.sandwichLocked(now)
 	}
 	if st.refresh.pending && now >= st.refresh.until {
@@ -131,7 +132,7 @@ func (s *Session) deadlineLocked(now time.Duration) effects {
 	case StateCreated, StateBinding:
 		fx.end(&terminal{code: protocol.ReasonPeerOffline, detail: detailJoinTimeout, failed: missing(st.links[0] != nil, st.links[1] != nil)})
 	case StateProbing:
-		if st.planning {
+		if st.plan.planning {
 			fx.end(&terminal{code: protocol.ReasonInternal, detail: detailPlannerTimeout})
 			return fx
 		}
@@ -142,7 +143,7 @@ func (s *Session) deadlineLocked(now time.Duration) effects {
 			notifyFailed: true})
 	case StatePunching:
 		switch {
-		case now >= st.punchDeadline && st.planning:
+		case now >= st.rounds.punchDeadline && st.plan.planning:
 			fx.end(&terminal{code: protocol.ReasonInternal, detail: detailPlannerTimeout})
 		case st.gone[0] || st.gone[1]:
 			g := 0
@@ -150,9 +151,9 @@ func (s *Session) deadlineLocked(now time.Duration) effects {
 				g = 1
 			}
 			fx.end(goneTerm(roleOf(g)))
-		case now >= st.punchDeadline:
+		case now >= st.rounds.punchDeadline:
 			fx.end(s.stopTermLocked("", ""))
-		case !st.cur.evaluating:
+		case !st.rounds.cur.evaluating:
 			fx.merge(s.endRoundLocked(now))
 		}
 	case StateConfirming:

@@ -18,6 +18,7 @@ import (
 
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/natprobe"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -74,13 +75,35 @@ const (
 // Implementations must be safe for concurrent use and must not block; the
 // coordinator calls them outside every lock and inside a recover boundary,
 // and a panicking memory is ignored for the rest of the session.
+//
+// Planning a session, the coordinator asks Recommend for the order of the
+// primary ladder and then Score for what the memory knows: a first variant
+// that scores positive is a memory hit (Result.MemoryHit) and, when the
+// memory moved it ahead of the ladder's first, may lift the first round's
+// class cap up to heavy (plan.RoundInput.MemoryPromoted); a reordering
+// without a positive score is used as an order only. A pair whose one
+// positive variant is the slow birthday while the interactive pdf_x_rnd
+// rounds failed is reported as background_only in the summaries.
+//
+// The key has no transport dimension: the variants open the NATs for UDP,
+// whatever upper-layer transport then runs over the path, so a success
+// under one transport mode is evidence for every other. A transport that
+// fails on a confirmed path (Coordinator.Memory) counts against the
+// variant for the pair as a whole, a weak signal against the gain of a
+// success.
 type StrategyMemory interface {
-	// Recommend returns the ladder reordered by preference (a permutation of
-	// ladder); the built-in memory also lowers the first entry by
-	// RotatePenalty, which rotates repeatedly failing variants away.
-	Recommend(key StrategyKey, ladder []VariantID) []VariantID
+	// Recommend returns the ladder reordered by preference, a permutation
+	// of ladder; anything else keeps the ladder's order. The built-in
+	// memory also lowers the first entry by RotatePenalty, which rotates
+	// repeatedly failing variants away.
+	Recommend(key StrategyKey, ladder []plan.VariantID) []plan.VariantID
+	// Score is what the memory knows of variant v for key: positive when v
+	// connected the pair before, negative when it failed and its failures
+	// outweigh its successes, 0 for nothing either way. Only the sign is
+	// read. It must not count as a use of the key.
+	Score(key StrategyKey, v plan.VariantID) int
 	// Report records the outcome of one round.
-	Report(key StrategyKey, v VariantID, r MemoryResult)
+	Report(key StrategyKey, v plan.VariantID, r MemoryResult)
 }
 
 // NoMemory remembers nothing. It is both a StrategyMemory and a
@@ -89,12 +112,15 @@ type StrategyMemory interface {
 type NoMemory struct{}
 
 // Recommend returns a copy of ladder.
-func (NoMemory) Recommend(_ StrategyKey, ladder []VariantID) []VariantID {
+func (NoMemory) Recommend(_ StrategyKey, ladder []plan.VariantID) []plan.VariantID {
 	return slices.Clone(ladder)
 }
 
+// Score returns 0.
+func (NoMemory) Score(StrategyKey, plan.VariantID) int { return 0 }
+
 // Report does nothing.
-func (NoMemory) Report(StrategyKey, VariantID, MemoryResult) {}
+func (NoMemory) Report(StrategyKey, plan.VariantID, MemoryResult) {}
 
 // Apply returns current unchanged.
 func (NoMemory) Apply(_ natprobe.TraitsKey, current protocol.Traits) protocol.Traits { return current }
@@ -235,7 +261,7 @@ func (m *memory) expired(e *memEntry, now int64) bool {
 // Recommend implements StrategyMemory: the ladder ordered by score, highest
 // first, ties in ladder order; an unknown key keeps the ladder order. The
 // first entry loses RotatePenalty.
-func (m *memory) Recommend(key StrategyKey, ladder []VariantID) []VariantID {
+func (m *memory) Recommend(key StrategyKey, ladder []plan.VariantID) []plan.VariantID {
 	out := slices.Clone(ladder)
 	if len(out) == 0 {
 		return out
@@ -245,14 +271,14 @@ func (m *memory) Recommend(key StrategyKey, ladder []VariantID) []VariantID {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e := sh.lookup(m, key, now, true)
-	slices.SortStableFunc(out, func(a, b VariantID) int { return int(e.score(b)) - int(e.score(a)) })
+	slices.SortStableFunc(out, func(a, b plan.VariantID) int { return int(e.score(b)) - int(e.score(a)) })
 	e.add(out[0], -m.cfg.RotatePenalty, m.cfg.ScoreMin, m.cfg.ScoreMax)
 	return out
 }
 
 // Report implements StrategyMemory, at most ReportsPerMin times per key and
 // minute.
-func (m *memory) Report(key StrategyKey, v VariantID, r MemoryResult) {
+func (m *memory) Report(key StrategyKey, v plan.VariantID, r MemoryResult) {
 	if r != MemSuccess && r != MemFailure {
 		return
 	}
@@ -275,15 +301,14 @@ func (m *memory) Report(key StrategyKey, v VariantID, r MemoryResult) {
 	}
 }
 
-// score returns v's current score for key without touching the entry; the
-// coordinator reads it for the escalation guard (only proven variants, score
-// >= +1, may lift the first-round class cap).
-func (m *memory) score(key StrategyKey, v VariantID) int8 {
+// Score implements StrategyMemory: v's current score for key, read without
+// touching the entry.
+func (m *memory) Score(key StrategyKey, v plan.VariantID) int {
 	now := m.cfg.Clock.Now().Unix()
 	sh := m.shard(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	return sh.lookup(m, key, now, false).score(v)
+	return int(sh.lookup(m, key, now, false).score(v))
 }
 
 // len counts the entries (Stats.MemoryEntries).
@@ -476,14 +501,14 @@ func (sh *memShard) unlink(e *memEntry) {
 	e.prev, e.next = nil, nil
 }
 
-func (e *memEntry) score(v VariantID) int8 {
+func (e *memEntry) score(v plan.VariantID) int8 {
 	if int(v) >= memMaxVariants {
 		return 0
 	}
 	return e.scores[v]
 }
 
-func (e *memEntry) add(v VariantID, d, lo, hi int8) {
+func (e *memEntry) add(v plan.VariantID, d, lo, hi int8) {
 	if int(v) >= memMaxVariants {
 		return
 	}

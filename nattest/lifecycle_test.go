@@ -14,6 +14,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/testkit"
 )
 
 func TestCloseSemantics(t *testing.T) {
@@ -114,7 +115,7 @@ func TestCloseJoinBound(t *testing.T) {
 	if !n.sched.push(event{at: n.now(), p: p}) {
 		t.Fatal("push refused")
 	}
-	waitFor(t, func() bool { return n.sched.pending() == 0 })
+	testkit.WaitFor(t, "the scheduler to drain", func() bool { return n.sched.pending() == 0 })
 	start := time.Now()
 	errs := make(chan error, 2)
 	for range 2 {
@@ -134,7 +135,7 @@ func TestCloseJoinBound(t *testing.T) {
 	if err := n.Close(); !errors.Is(err, err1) {
 		t.Fatalf("a later Close returned %v", err)
 	}
-	waitFor(t, func() bool { return n.sched.group.Stats().Running == 0 })
+	testkit.WaitFor(t, "the scheduler goroutines to exit", func() bool { return n.sched.group.Stats().Running == 0 })
 }
 
 // TestClosePanicErr: a panic of the scheduler goroutine is recovered and
@@ -143,7 +144,7 @@ func TestClosePanicErr(t *testing.T) {
 	n := NewNetwork()
 	// A pipe chunk without its pipe makes handle dereference nil.
 	n.sched.push(event{at: n.now(), pc: &pipeChunk{}})
-	waitFor(t, func() bool { return n.sched.group.Context().Err() != nil })
+	testkit.WaitFor(t, "the scheduler context to end", func() bool { return n.sched.group.Context().Err() != nil })
 	err := n.Close()
 	var perr *life.PanicError
 	if !errors.As(err, &perr) || perr.Where() != "nattest.scheduler" {
@@ -230,18 +231,6 @@ func TestDump(t *testing.T) {
 	var b2 bytes.Buffer
 	if err := n2.Dump(&b2); err != nil || !bytes.Contains(b2.Bytes(), []byte(`"events": []`)) {
 		t.Fatalf("a disabled log dumps events: %v", err)
-	}
-}
-
-// waitFor polls cond in real time for up to five seconds.
-func waitFor(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not reached")
-		}
-		time.Sleep(time.Millisecond)
 	}
 }
 

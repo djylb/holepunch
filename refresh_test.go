@@ -1,11 +1,13 @@
 package holepunch
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -31,16 +33,11 @@ func TestRefreshAnchor(t *testing.T) {
 	so.report()
 	open := so.host.OpenSockets()
 	so.link.send(protocol.Assist{SessionID: so.s.sid, From: protocol.RoleServer, Kind: protocol.AssistRefresh, Round: 1, Family: protocol.FamilyUDP4})
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	testkit.WaitFor(t, "two refresh events", func() bool {
 		mu.Lock()
-		n := len(got)
-		mu.Unlock()
-		if n >= 2 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		defer mu.Unlock()
+		return len(got) >= 2
+	})
 	mu.Lock()
 	evs := append([]nat.SandwichEvent(nil), got...)
 	mu.Unlock()
@@ -53,12 +50,7 @@ func TestRefreshAnchor(t *testing.T) {
 	if gap := evs[1].At.Sub(evs[0].At); gap < refreshGap/2 {
 		t.Fatalf("probes %v apart, want about %v", gap, refreshGap)
 	}
-	for i := 0; so.host.OpenSockets() != open && i < 100; i++ {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if n := so.host.OpenSockets(); n != open {
-		t.Fatalf("%d sockets open after the refresh, %d before", n, open)
-	}
+	testkit.WaitFor(t, fmt.Sprintf("the %d sockets open before the refresh", open), func() bool { return so.host.OpenSockets() == open })
 	so.cancel()
 	so.result(10 * time.Second)
 }

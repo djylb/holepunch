@@ -21,6 +21,7 @@ import (
 	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -55,7 +56,7 @@ func New(nc net.Conn, role protocol.Role, o Options) (*Client, error) {
 
 // intercept answers pings at once, the way the client runtime does.
 func (c *Client) intercept(cw *controlwire.Conn, f controlwire.Frame) bool {
-	if f.Type != controlwire.TypePing {
+	if f.Type != wiretype.Ping {
 		return false
 	}
 	c.pings.Add(1)
@@ -67,7 +68,7 @@ func (c *Client) intercept(cw *controlwire.Conn, f controlwire.Frame) bool {
 		return true
 	}
 	at := f.At
-	_ = cw.SendFunc(controlwire.TypePong, func(now time.Time) ([]byte, error) {
+	_ = cw.SendFunc(wiretype.Pong, func(now time.Time) ([]byte, error) {
 		fr, err := msgframe.Encode(protocol.PongFor(p, at, now))
 		return fr.Payload, err
 	})
@@ -118,7 +119,7 @@ func (c *Client) Send(ctx context.Context, m protocol.Message) error {
 
 // SendFrame writes a frame as is (any type, any payload within the type's
 // cap).
-func (c *Client) SendFrame(ctx context.Context, t controlwire.Type, payload []byte) error {
+func (c *Client) SendFrame(ctx context.Context, t wiretype.Type, payload []byte) error {
 	return c.conn.WriteFrame(ctx, controlwire.Frame{Type: t, Payload: payload})
 }
 
@@ -154,7 +155,7 @@ func Report(start protocol.PunchStart, elapsedMs uint32, mode string, fams ...Fa
 	rep := protocol.ProbeReport{
 		SessionID: start.SessionID,
 		Role:      start.Role,
-		Control: protocol.ControlSpec{Version: controlwire.Version,
+		Control: protocol.ControlSpec{Version: wiretype.Version,
 			Features: protocol.AcceptFeatures(start.Control.Features, protocol.SupportedFeatures())},
 		Caps:      protocol.ClientCaps{Impl: "simclient", MaxSockets: 64},
 		ElapsedMs: elapsedMs,

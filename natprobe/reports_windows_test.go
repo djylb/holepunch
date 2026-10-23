@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/probetest"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/udpsock"
 )
 
@@ -60,7 +62,7 @@ func probeAfterUnreachable(t *testing.T, s *Server, reg *Registry, seen *atomic.
 		t.Fatal(err)
 	}
 	if seen != nil {
-		deadline := time.Now().Add(waitBound(t))
+		deadline := time.Now().Add(testkit.WaitBound(t))
 		for seen.Load() == 0 && time.Now().Before(deadline) {
 			time.Sleep(time.Millisecond)
 		}
@@ -70,7 +72,7 @@ func probeAfterUnreachable(t *testing.T, s *Server, reg *Registry, seen *atomic.
 	}
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
-	if reps := c.exchange(obs, probeOpts{obs: 0}, 1); len(reps) != 1 {
+	if reps := c.exchange(obs, probetest.Probe{Obs: 0}, 1); len(reps) != 1 {
 		t.Fatalf("%d replies after port unreachable", len(reps))
 	}
 	if st := s.Stats(); st.ReadErrors != 0 || st.DeadListeners != 0 {

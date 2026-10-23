@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/testkit"
 )
 
 // driver runs the same timer scenario against System and Fake, so that the
@@ -153,7 +154,7 @@ func TestConformance(t *testing.T) {
 				// One elapse suffices unless System's timer fires late. The
 				// Reset that finds it fired re-arms it, and it fires again.
 				tm := d.clk.AfterFunc(unit, nil)
-				deadline := time.Now().Add(5 * time.Second)
+				deadline := time.Now().Add(testkit.WaitBound(t))
 				for range 2 {
 					for d.elapse(unit); tm.Reset(unit); d.elapse(unit) {
 						if time.Now().After(deadline) {

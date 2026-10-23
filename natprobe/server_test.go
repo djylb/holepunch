@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/leak"
+	"github.com/djylb/holepunch/internal/probetest"
+	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -66,7 +68,7 @@ func newUDPClient(t *testing.T, token protocol.Token, route protocol.RouteID) *u
 
 func (c *udpClient) local() netip.AddrPort { return c.conn.LocalAddr().(*net.UDPAddr).AddrPort() }
 
-func (c *udpClient) send(to netip.AddrPort, o probeOpts) {
+func (c *udpClient) send(to netip.AddrPort, o probetest.Probe) {
 	c.t.Helper()
 	if _, err := c.conn.WriteToUDPAddrPort(c.probe(o), to); err != nil {
 		c.t.Fatal(err)
@@ -77,19 +79,6 @@ type reply struct {
 	h    udpwire.Header
 	tl   udpwire.TLVs
 	from netip.AddrPort
-}
-
-// waitBound is how long a test waits for something that must happen over
-// real loopback sockets: until shortly before the test binary's deadline,
-// so that a loaded machine — every package's tests in parallel under the
-// race detector — slows the test down instead of failing it. Without a
-// deadline it is a minute.
-func waitBound(t *testing.T) time.Duration {
-	d, ok := t.Deadline()
-	if !ok {
-		return time.Minute
-	}
-	return max(time.Until(d)*9/10, time.Second)
 }
 
 // recv reads replies until n arrived or timeout. Replies that must come are
@@ -147,7 +136,7 @@ const (
 // exchange sends a probe built from o to `to` and returns the n replies to
 // one transmission of it. Until one transmission has them all, it sends the
 // probe again every retransmitEvery, each time with a fresh seq (the server
-// refuses a replayed one), for at most exchangeBound or a shorter waitBound,
+// refuses a replayed one), for at most exchangeBound or a shorter testkit.WaitBound,
 // and then returns the most replies one transmission got. Replies are
 // grouped by the seq they echo, so a reply to another transmission is never
 // counted with them, nor by a later read when it comes late; a reply to a
@@ -155,12 +144,12 @@ const (
 // probe to the server, counted in its stats, rate and budget: tests that
 // count those exactly or test a limit send once in retry attempts, and a
 // check that no reply comes uses send and recv.
-func (c *udpClient) exchange(to netip.AddrPort, o probeOpts, n int) []reply {
+func (c *udpClient) exchange(to netip.AddrPort, o probetest.Probe, n int) []reply {
 	c.t.Helper()
-	if o.seq != 0 {
+	if o.Seq != 0 {
 		c.t.Fatal("exchange: every transmission needs a fresh seq")
 	}
-	end := time.Now().Add(min(waitBound(c.t), exchangeBound))
+	end := time.Now().Add(min(testkit.WaitBound(c.t), exchangeBound))
 	var sent []uint32
 	defer func() {
 		for _, seq := range sent {
@@ -170,8 +159,8 @@ func (c *udpClient) exchange(to netip.AddrPort, o probeOpts, n int) []reply {
 	got := map[uint32][]reply{}
 	var best []reply
 	for {
-		o.seq = c.codec.NextSeq()
-		sent = append(sent, o.seq)
+		o.Seq = c.codec.NextSeq()
+		sent = append(sent, o.Seq)
 		c.send(to, o)
 		next := time.Now().Add(retransmitEvery)
 		if next.After(end) {
@@ -204,7 +193,7 @@ func (c *udpClient) exchange(to netip.AddrPort, o probeOpts, n int) []reply {
 }
 
 // retry runs attempt until it reports that every reply it waited for
-// arrived, for at most exchangeBound or a shorter waitBound, and fails the
+// arrived, for at most exchangeBound or a shorter testkit.WaitBound, and fails the
 // test when no attempt did. It is for the tests that count the server's
 // probes, replies or quotas exactly and so cannot send a probe again: an
 // attempt starts its own server and client, sends each probe once and waits
@@ -216,7 +205,7 @@ func (c *udpClient) exchange(to netip.AddrPort, o probeOpts, n int) []reply {
 // a slow machine still gets its time.
 func retry(t *testing.T, attempt func(wait time.Duration) bool) {
 	t.Helper()
-	bound := min(waitBound(t), exchangeBound)
+	bound := min(testkit.WaitBound(t), exchangeBound)
 	end := time.Now().Add(bound)
 	for wait := firstAttemptWait; ; wait *= 2 {
 		if attempt(min(wait, time.Until(end))) {
@@ -315,7 +304,7 @@ func loopbackAttempt(t *testing.T, wait time.Duration) bool {
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
 	for _, o := range obs {
-		c.send(o.Addr, probeOpts{obs: o.ID, extra: true})
+		c.send(o.Addr, probetest.Probe{Obs: o.ID, Extra: true})
 	}
 	reps := c.recv(6, wait)
 	if len(reps) != 6 {
@@ -351,7 +340,7 @@ func loopbackAttempt(t *testing.T, wait time.Duration) bool {
 	// A reply is counted after its write returns, so the client can hold all
 	// six before the last count lands. The counts only grow: one past 3
 	// fails at once, without waiting for the other.
-	deadline := time.Now().Add(waitBound(t))
+	deadline := time.Now().Add(testkit.WaitBound(t))
 	for st := s.Stats(); min(st.Acks, st.Extras) < 3 && max(st.Acks, st.Extras) <= 3 && time.Now().Before(deadline); st = s.Stats() {
 		time.Sleep(time.Millisecond)
 	}
@@ -455,7 +444,7 @@ func TestSpecObservers(t *testing.T) {
 	} {
 		got := specObservers(c.v4, c.v6)
 		is4 := func(o protocol.ObserverSpec) bool { return o.Addr.Addr().Is4() }
-		if n4, n6 := count(got, is4), len(got)-count(got, is4); n4 != c.n4 || n6 != c.n6 || len(got) > maxSpecObservers {
+		if n4, n6 := count(got, is4), len(got)-count(got, is4); n4 != c.n4 || n6 != c.n6 || len(got) > protocol.MaxObservers {
 			t.Fatalf("%s: %d v4 + %d v6, want %d + %d", c.name, n4, n6, c.n4, c.n6)
 		}
 		for _, fam := range [][]protocol.ObserverSpec{c.v4, c.v6} {
@@ -585,7 +574,7 @@ func TestServerReaderLoopPanic(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(&lockedWriter{w: &logs, mu: &logMu}, nil))
 	s := startServer(t, ServerConfig{Registry: reg, Listen: listen, Logger: logger})
-	deadline := time.Now().Add(waitBound(t))
+	deadline := time.Now().Add(testkit.WaitBound(t))
 	for s.Stats().DeadListeners == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
@@ -599,7 +588,7 @@ func TestServerReaderLoopPanic(t *testing.T) {
 	}
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
-	if reps := c.exchange(obs[1].Addr, probeOpts{obs: 2}, 1); len(reps) != 1 {
+	if reps := c.exchange(obs[1].Addr, probetest.Probe{Obs: 2}, 1); len(reps) != 1 {
 		t.Fatal("the surviving listener does not answer")
 	}
 	if err := s.Close(); err != nil {
@@ -643,7 +632,7 @@ func TestServerGenericConn(t *testing.T) {
 	s := startServer(t, ServerConfig{Registry: reg, Listen: listen, ReadersPerListener: 1, ExtraSockets: 1})
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
-	reps := c.exchange(observerAddr(t, s, 0), probeOpts{obs: 0, extra: true}, 2)
+	reps := c.exchange(observerAddr(t, s, 0), probetest.Probe{Obs: 0, Extra: true}, 2)
 	if len(reps) != 2 {
 		t.Fatalf("%d replies", len(reps))
 	}
@@ -670,7 +659,7 @@ func TestServerReadErrors(t *testing.T) {
 		return &failingConn{PacketConn: c, reads: &reads}, nil
 	}
 	s := startServer(t, ServerConfig{Listen: listen, ReadersPerListener: 1})
-	deadline := time.Now().Add(waitBound(t))
+	deadline := time.Now().Add(testkit.WaitBound(t))
 	for s.Stats().ReadErrors < 2*readErrorBurst && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
@@ -775,7 +764,7 @@ func altGroupAttempt(t *testing.T, wait time.Duration) bool {
 	}
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
-	c.send(observerAddr(t, s, 0), probeOpts{obs: 0, alt: true})
+	c.send(observerAddr(t, s, 0), probetest.Probe{Obs: 0, Alt: true})
 	reps := c.recv(2, wait)
 	if len(reps) != 2 {
 		st := s.Stats()
@@ -808,7 +797,7 @@ func altGroupAttempt(t *testing.T, wait time.Duration) bool {
 	}
 	// counted after the write returns (see TestServerLoopback); the ack is
 	// counted before the alt is sent
-	deadline := time.Now().Add(waitBound(t))
+	deadline := time.Now().Add(testkit.WaitBound(t))
 	for s.Stats().Alts < 1 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
@@ -835,7 +824,7 @@ func TestExplicitBindReplySource(t *testing.T) {
 		id := byte(i + 1)
 		register(t, reg, fmt.Sprint("s", id), tok(id), rt(id))
 		c := newUDPClient(t, tok(id), rt(id))
-		reps := c.exchange(o.Addr, probeOpts{obs: o.ID}, 1)
+		reps := c.exchange(o.Addr, probetest.Probe{Obs: o.ID}, 1)
 		if len(reps) != 1 || reps[0].from != o.Addr {
 			t.Fatalf("observer %v answered from %v", o.Addr, reps)
 		}
@@ -848,7 +837,7 @@ func TestServerWildcard(t *testing.T) {
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
 	o := s.Observers(protocol.FamilyUDP4)[0]
-	if reps := c.exchange(o.Addr, probeOpts{obs: 0}, 1); len(reps) != 1 {
+	if reps := c.exchange(o.Addr, probetest.Probe{Obs: 0}, 1); len(reps) != 1 {
 		t.Fatal("the wildcard listener does not answer")
 	}
 	t.Logf("wildcard_multi_ip on this host: %v", s.Stats().WildcardMultiIP)
@@ -874,25 +863,6 @@ func TestWildcardFamilies(t *testing.T) {
 	}
 	if f := wildcardFamilies([]ObserverGroup{wild4, wild6}, pfx("198.51.100.1/24", "10.0.0.1/8", "2001:db8::1/64", "2001:db8:1::1/64")); len(f) != 1 || f[0] != protocol.FamilyUDP6 {
 		t.Fatalf("families %v", f)
-	}
-}
-
-// The helpers that adapt net.Addr values.
-func TestAddrHelpers(t *testing.T) {
-	if a := addrPortOf(nil); a.IsValid() {
-		t.Fatal("nil addr")
-	}
-	if a := addrPortOf((*net.UDPAddr)(nil)); a.IsValid() {
-		t.Fatal("nil udp addr")
-	}
-	if a := addrPortOf(&net.IPAddr{IP: net.IPv4(1, 2, 3, 4)}); a.IsValid() {
-		t.Fatalf("ip addr %v", a)
-	}
-	if a := addrPortOf(fakeAddr("1.2.3.4:5")); a != netip.MustParseAddrPort("1.2.3.4:5") {
-		t.Fatalf("string addr %v", a)
-	}
-	if famIndex(protocol.FamilyUDP6) != 1 || famIndex(protocol.FamilyUDP4) != 0 {
-		t.Fatal("family index")
 	}
 }
 

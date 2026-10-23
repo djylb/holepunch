@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -50,7 +51,7 @@ func TestPDFSeqResend(t *testing.T) {
 		}
 		return out
 	}
-	prev := []RoundOutcome{outcomeOf(1, dec1, RCNoContact)}
+	prev := []api.RoundOutcome{outcomeOf(1, dec1, api.RoundNoContact)}
 	dec2 := p.Round(roundInput(cl, a, b, 2, prev))
 	if got, want := directTargetsOf(dec2.Sides[0][0]), at(c, c+1, c-1, c+2); !slices.Equal(got, want) {
 		t.Fatalf("round 2 resend %v, want %v", got, want)
@@ -69,28 +70,28 @@ func TestPDFSeqResend(t *testing.T) {
 	b2.PortStep, b2.PortAnchor = 2, 4495 // centre 4497: 4499, 4495, 4501 around it, 4500 never
 	cl2 := p.Classify(classifyInput(a, b2))
 	d1 := p.Round(roundInput(cl2, a, b2, 1, nil))
-	d2 := p.Round(roundInput(cl2, a, b2, 2, []RoundOutcome{outcomeOf(1, d1, RCNoContact)}))
+	d2 := p.Round(roundInput(cl2, a, b2, 2, []api.RoundOutcome{outcomeOf(1, d1, api.RoundNoContact)}))
 	if got, want := directTargetsOf(d2.Sides[0][0]), at(4497, 4499, 4495, 4501); !slices.Equal(got, want) {
 		t.Fatalf("step 2: resend %v, want %v", got, want)
 	}
 	b2.PortStep, b2.PortAnchor = 1, 4499 // centre 4500 is sensitive (IPsec NAT-T)
 	cl2 = p.Classify(classifyInput(a, b2))
 	d1 = p.Round(roundInput(cl2, a, b2, 1, nil))
-	d2 = p.Round(roundInput(cl2, a, b2, 2, []RoundOutcome{outcomeOf(1, d1, RCNoContact)}))
+	d2 = p.Round(roundInput(cl2, a, b2, 2, []api.RoundOutcome{outcomeOf(1, d1, api.RoundNoContact)}))
 	if got, want := directTargetsOf(d2.Sides[0][0]), at(4501, 4499, 4502); !slices.Equal(got, want) {
 		t.Fatalf("sensitive centre: resend %v, want %v", got, want)
 	}
 
 	// After a rescue round, or without the previous round's families, the
 	// mapping's state is unknown: nothing is resent.
-	rescue := RoundOutcome{Round: 2, Variant: vRescue, Class: RCOneWay, Rescue: true, Budget: protocol.BudgetLight,
-		Families: []FamilyRound{{Family: f, Variant: vRescue, Center: dec1.Families[0].Center}}}
+	rescue := api.RoundOutcome{Round: 2, Variant: vRescue, Class: api.RoundOneWay, Rescue: true, Budget: protocol.BudgetLight,
+		Families: []api.FamilyRound{{Family: f, Variant: vRescue, Center: dec1.Families[0].Center}}}
 	in := roundInput(cl, a, b, 3, append(slices.Clone(prev), rescue))
 	in.RescueUsed = true
 	if got := directTargetsOf(p.Round(in).Sides[0][0]); len(got) != 0 {
 		t.Errorf("after a rescue round: resend %v", got)
 	}
-	bare := []RoundOutcome{{Round: 1, Variant: dec1.Variant, Class: RCNoContact, Budget: dec1.Budget}}
+	bare := []api.RoundOutcome{{Round: 1, Variant: dec1.Variant, Class: api.RoundNoContact, Budget: dec1.Budget}}
 	if got := directTargetsOf(p.Round(roundInput(cl, a, b, 2, bare)).Sides[0][0]); len(got) != 0 {
 		t.Errorf("without the previous centre: resend %v", got)
 	}

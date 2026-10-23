@@ -14,6 +14,7 @@ import (
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/udpsock"
@@ -152,7 +153,7 @@ func (rd *reader) process(pkt []byte, src netip.AddrPort, dst netip.Addr) {
 	if faultinject.Point(pointPacket) != nil {
 		return
 	}
-	src = netip.AddrPortFrom(src.Addr().Unmap(), src.Port())
+	src = netaddr.Unmap(src)
 	if src.Port() == 0 || !src.Addr().IsValid() || src.Addr().IsUnspecified() {
 		st.foreign.Add(1) // no address a reply could go to
 		return
@@ -256,7 +257,7 @@ type replyPlan struct {
 func (rd *reader) admit(e *entry, h *udpwire.Header, src netip.AddrPort, now time.Time, mono int64, size int, wrapped bool) (replyPlan, *atomic.Uint64) {
 	st, l, cfg := rd.st, rd.l, &rd.s.reg.cfg
 	ms := uint32(min(max(now.Sub(e.created)/time.Millisecond, 0), math.MaxUint32))
-	altPool := rd.s.altPools[famIndex(l.fam)]
+	altPool := rd.s.altPools[l.fam.Index()]
 	rs := &e.roles[h.Role-1]
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -316,7 +317,7 @@ func (rd *reader) reply(e *entry, h *udpwire.Header, src netip.AddrPort, dst net
 	case p.sendExtra:
 		xconn, xmsg, xport = l.pool.pick()
 	case p.sendAlt:
-		xconn, _, _ = rd.s.altPools[famIndex(l.fam)].pick()
+		xconn, _, _ = rd.s.altPools[l.fam.Index()].pick()
 	}
 	var from []byte // the reply source's control data
 	if dst.IsValid() {

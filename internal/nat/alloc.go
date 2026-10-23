@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -23,9 +24,6 @@ const (
 	// socket's probes. Over a shorter one a single foreign mapping reads as
 	// tens of ports a second.
 	minVelocityBase = 100 * time.Millisecond
-	// portRange is the width of the range a sequential allocator wraps
-	// around in, 1024–65535: a step from 65535 to 1024 is one step.
-	portRange = 65536 - 1024
 )
 
 // allocSample is one mapping of an allocation sequence: the row it came
@@ -49,7 +47,7 @@ type allocSample struct {
 // AllocPreserveFresh at High confidence, one at Medium. A sequential allocator
 // stays Sequential: its prediction covers every mapping, not only a socket's
 // first.
-func (t *ObsTable) classifyAllocationLocked(tr *protocol.Traits, samples []sample, p SocketMeta, scope Scope) {
+func (t *ObsTable) classifyAllocationLocked(tr *protocol.Traits, samples []sample, p SocketMeta, scope netaddr.Scope) {
 	seq0 := t.sendIndexedLocked(p.ID, rowsOf(samples), scope)
 	var seq1 []allocSample
 	fresh := 0
@@ -72,7 +70,7 @@ func (t *ObsTable) classifyAllocationLocked(tr *protocol.Traits, samples []sampl
 		tr.PortVelocity = probeVelocity(int(tr.PortStep), last, next, own)
 		// Over the gap between the sockets, however short, a port beyond
 		// this side's own steps is another host's.
-		tr.PortNoisy = tr.PortNoisy || portDelta(last.Observed.Port(), next.Observed.Port()) != own*int(tr.PortStep)
+		tr.PortNoisy = tr.PortNoisy || netaddr.PortDelta(last.Observed.Port(), next.Observed.Port()) != own*int(tr.PortStep)
 	}
 	tr.FirstPreserved = samples[0].Observed.Port() == p.Local.Port()
 	if fresh > 0 && tr.PortAlloc != protocol.AllocSequential {
@@ -96,7 +94,7 @@ func preservedFresh(seq []allocSample, local netip.AddrPort) bool {
 // whose probes never arrived (natprobe's merge keeps them) — because the lost
 // probe made its mapping on the way out. The seq alone would not do: every
 // socket and family of the session draws from one counter.
-func (t *ObsTable) sendIndexedLocked(sock uint8, rows []Row, scope Scope) []allocSample {
+func (t *ObsTable) sendIndexedLocked(sock uint8, rows []Row, scope netaddr.Scope) []allocSample {
 	points := t.crossingPointsLocked(scope, func(k PointKey) bool { return k.Socket == sock })
 	out := make([]allocSample, len(rows))
 	for i, r := range rows {
@@ -108,7 +106,7 @@ func (t *ObsTable) sendIndexedLocked(sock uint8, rows []Row, scope Scope) []allo
 // pointsBetweenLocked counts the probe points of the family, on any
 // socket, whose first send came after seq a and no later than seq b: the
 // mappings this host created in between, answered or not.
-func (t *ObsTable) pointsBetweenLocked(a, b uint32, scope Scope) int {
+func (t *ObsTable) pointsBetweenLocked(a, b uint32, scope netaddr.Scope) int {
 	n := 0
 	for _, p := range t.crossingPointsLocked(scope, func(PointKey) bool { return true }) {
 		if p.FirstSeq > a && p.FirstSeq <= b {
@@ -122,7 +120,7 @@ func (t *ObsTable) pointsBetweenLocked(a, b uint32, scope Scope) int {
 // group) that keep selects and whose packets crossed the NAT — its
 // observer is in the classification scope, or unknown to the table — in
 // first-send order; only the key and the first seq of a row are meant.
-func (t *ObsTable) crossingPointsLocked(scope Scope, keep func(PointKey) bool) []Row {
+func (t *ObsTable) crossingPointsLocked(scope netaddr.Scope, keep func(PointKey) bool) []Row {
 	var out []Row
 	for _, r := range t.rows {
 		if r.Key.Source != SourceServer && r.Key.Source != SourceServerAlt || !keep(r.Key) {
@@ -147,7 +145,7 @@ func (t *ObsTable) crossingPointsLocked(scope Scope, keep func(PointKey) bool) [
 // destination IP, so this is the sequence its allocator produced, one
 // allocation apart. A single-IP deployment has at most two such mappings,
 // too few to classify.
-func (t *ObsTable) perIPMappingsLocked(sock uint8, samples []sample, scope Scope) []allocSample {
+func (t *ObsTable) perIPMappingsLocked(sock uint8, samples []sample, scope netaddr.Scope) []allocSample {
 	var rows []Row
 	var groups []uint8
 	for _, s := range samples {
@@ -219,7 +217,7 @@ func stepDiffs(seq []allocSample) []int {
 	var out []int
 	for i := 1; i < len(seq); i++ {
 		a, b := seq[i-1], seq[i]
-		d := portDelta(a.Observed.Port(), b.Observed.Port())
+		d := netaddr.PortDelta(a.Observed.Port(), b.Observed.Port())
 		if k := b.send - a.send; a.send >= 0 && b.send >= 0 && k > 1 && d%k == 0 {
 			d /= k
 		}
@@ -239,7 +237,7 @@ func probeVelocity(step int, last, next Row, own int) float32 {
 	if last.FirstSent < 0 || next.FirstSent < 0 || dt < minVelocityBase {
 		return 0
 	}
-	others := portDelta(last.Observed.Port(), next.Observed.Port()) - own*step
+	others := netaddr.PortDelta(last.Observed.Port(), next.Observed.Port()) - own*step
 	if sign(others) != sign(step) {
 		return 0
 	}
@@ -255,23 +253,11 @@ func foreignSteps(step int, seq []allocSample) bool {
 		if a.send >= 0 && b.send > a.send {
 			k = b.send - a.send
 		}
-		if portDelta(a.Observed.Port(), b.Observed.Port()) != k*step {
+		if netaddr.PortDelta(a.Observed.Port(), b.Observed.Port()) != k*step {
 			return true
 		}
 	}
 	return false
-}
-
-// portDelta is b − a along the wrapping port range: the short way round.
-func portDelta(a, b uint16) int {
-	d := int(b) - int(a)
-	switch {
-	case d > portRange/2:
-		d -= portRange
-	case d < -portRange/2:
-		d += portRange
-	}
-	return d
 }
 
 // dominantStep returns d* when there are at least two differences, d* is

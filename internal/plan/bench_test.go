@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -15,7 +16,7 @@ func BenchmarkClassifyRound(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		cl := p.Classify(in)
-		p.Round(roundInput(cl, a, peer, 2, []RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: RCNoContact, Budget: protocol.BudgetBalanced}}))
+		p.Round(roundInput(cl, a, peer, 2, []api.RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}}))
 	}
 }
 
@@ -55,11 +56,11 @@ func BenchmarkClassifyRoundDualStack(b *testing.B) {
 		{Families: append(apdmView(b6).Families, apdmView(b4).Families...)},
 	}
 	var p DefaultPlanner
-	ci := ClassifyInput{Initiator: views[0], Responder: views[1], Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+	ci := api.ClassifyInput{Initiator: views[0], Responder: views[1], Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		cl := p.Classify(ci)
-		in := roundInput(cl, a4, b4, 2, []RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: RCNoContact, Budget: protocol.BudgetBalanced}})
+		in := roundInput(cl, a4, b4, 2, []api.RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}})
 		in.Views = views
 		in.FireAt = 3 * time.Second
 		p.Round(in)
@@ -78,13 +79,13 @@ func BenchmarkClassifyRoundTopology(b *testing.B) {
 		}
 		b.Run(name, func(b *testing.B) {
 			var p DefaultPlanner
-			ci := ClassifyInput{Initiator: c.views[0], Responder: c.views[1], Pair: c.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
+			ci := api.ClassifyInput{Initiator: c.views[0], Responder: c.views[1], Pair: c.pair, Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
 			b.ReportAllocs()
 			for b.Loop() {
 				cl := p.Classify(ci)
-				in := roundInput(cl, protocol.Traits{}, protocol.Traits{}, 2, []RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: RCNoContact,
+				in := roundInput(cl, protocol.Traits{}, protocol.Traits{}, 2, []api.RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: api.RoundNoContact,
 					Budget: protocol.BudgetBalanced}})
-				in.Views = c.views
+				in.Views, in.Pair = c.views, c.pair
 				p.Round(in)
 			}
 		})

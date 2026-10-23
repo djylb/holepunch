@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"sync"
 	"time"
 
@@ -74,17 +73,9 @@ type sideResult struct {
 	// it could not be marked. extra are the views of the extra paths'
 	// sockets, by Result.ExtraPaths; nil where a path shares the
 	// primary path's socket.
-	handed  handedConn
-	extra   []handedConn
+	handed  nattest.Conn
+	extra   []nattest.Conn
 	markErr error
-}
-
-// handedConn is the application's view of a handed-over socket
-// (nattest.Host.MarkHandover): calls through it are not the library's.
-type handedConn interface {
-	ReadFromUDPAddrPort([]byte) (int, netip.AddrPort, error)
-	WriteToUDPAddrPort([]byte, netip.AddrPort) (int, error)
-	Close() error
 }
 
 // ok reports a success.
@@ -223,16 +214,11 @@ func (r *run) client(i int) {
 	if o.err == nil {
 		// From here on every library call on the winning socket counts as a
 		// call after the handover.
-		var v any
-		if v, o.markErr = r.sides[i].host.MarkHandover(o.sess.Result().Path.LocalAddr); o.markErr == nil {
-			o.handed = v.(handedConn)
-		}
+		o.handed, o.markErr = r.sides[i].host.MarkHandover(o.sess.Result().Path.LocalAddr)
 		for k, p := range o.sess.Result().ExtraPaths {
-			var h handedConn
+			var h nattest.Conn
 			if o.markErr == nil && o.sess.Result().ExtraPaths[k].Conn != o.sess.PacketConn() {
-				if v, o.markErr = r.sides[i].host.MarkHandover(p.LocalAddr); o.markErr == nil {
-					h = v.(handedConn)
-				}
+				h, o.markErr = r.sides[i].host.MarkHandover(p.LocalAddr)
 			}
 			o.extra = append(o.extra, h)
 		}
@@ -283,7 +269,7 @@ func (r *run) checkHandover() error {
 // checkHandoverOpt is checkHandover, with the winner check only when send
 // is set.
 func (r *run) checkHandoverOpt(send bool) error {
-	var views [2]handedConn
+	var views [2]nattest.Conn
 	for i := range 2 {
 		o := &r.out[i]
 		if o.markErr != nil {

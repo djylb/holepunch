@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -133,7 +134,7 @@ func TestWildcardRepliesFromProbedAddress(t *testing.T) {
 		if o.ID%portsPerGroup != 0 {
 			continue
 		}
-		reps := c.exchange(o.Addr, probeOpts{obs: o.ID, extra: true}, 2)
+		reps := c.exchange(o.Addr, probetest.Probe{Obs: o.ID, Extra: true}, 2)
 		if len(reps) != 2 {
 			t.Fatalf("observer %d at %v: %d replies", o.ID, o.Addr, len(reps))
 		}

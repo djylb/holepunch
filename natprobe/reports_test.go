@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+
+	"github.com/djylb/holepunch/internal/probetest"
 )
 
 // ICMP reports are not read failures: a listener whose reads keep returning
@@ -26,7 +28,7 @@ func TestServerSkipsICMPReports(t *testing.T) {
 	s := startServer(t, ServerConfig{Registry: reg, Listen: listen, ReadersPerListener: 1})
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
-	if reps := c.exchange(observerAddr(t, s, 0), probeOpts{obs: 0}, 1); len(reps) != 1 {
+	if reps := c.exchange(observerAddr(t, s, 0), probetest.Probe{Obs: 0}, 1); len(reps) != 1 {
 		t.Fatalf("%d replies after the reports; stats %+v", len(reps), s.Stats())
 	}
 	if left.Load() > 0 {
@@ -71,7 +73,7 @@ func TestServerOversizedDatagrams(t *testing.T) {
 	s := startServer(t, ServerConfig{Registry: reg, Listen: listen, ReadersPerListener: 1})
 	register(t, reg, "s1", tok(1), rt(1))
 	c := newUDPClient(t, tok(1), rt(1))
-	if reps := c.exchange(observerAddr(t, s, 0), probeOpts{obs: 0}, 1); len(reps) != 1 {
+	if reps := c.exchange(observerAddr(t, s, 0), probetest.Probe{Obs: 0}, 1); len(reps) != 1 {
 		t.Fatalf("%d replies after the oversized datagrams; stats %+v", len(reps), s.Stats())
 	}
 	st := s.Stats()

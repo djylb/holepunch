@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/faultconn"
 	"github.com/djylb/holepunch/internal/msgframe"
+	"github.com/djylb/holepunch/internal/testkit"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -47,7 +50,7 @@ func TestVersionMismatchWritesNothing(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	so := newSolo(t, w, nil, nil)
-	if _, err := so.srvEnd.Write(rawFrame(2, byte(controlwire.TypePunchStart), []byte("{}"))); err != nil {
+	if _, err := so.srvEnd.Write(rawFrame(2, byte(wiretype.PunchStart), []byte("{}"))); err != nil {
 		t.Fatal(err)
 	}
 	so.wantFailure(so.result(5*time.Second), protocol.ReasonControlVersionMismatch)
@@ -72,7 +75,7 @@ func TestControlVersionInStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	ping, _ := msgframe.Encode(protocol.Ping{Seq: 1})
-	frames := append(rawFrame(1, byte(controlwire.TypePunchStart), body), rawFrame(1, byte(controlwire.TypePing), ping.Payload)...)
+	frames := append(rawFrame(1, byte(wiretype.PunchStart), body), rawFrame(1, byte(wiretype.Ping), ping.Payload)...)
 	if _, err := so.srvEnd.Write(frames); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +99,7 @@ func TestInvalidStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	so.open()
-	if _, err := so.srvEnd.Write(rawFrame(1, byte(controlwire.TypePunchStart), body)); err != nil {
+	if _, err := so.srvEnd.Write(rawFrame(1, byte(wiretype.PunchStart), body)); err != nil {
 		t.Fatal(err)
 	}
 	pr := so.punchResult()
@@ -307,7 +310,7 @@ func TestProtocolViolations(t *testing.T) {
 			so.link.send(so.w.startFor(so.s, so.role, testTimeouts(), nil))
 		}},
 		{"bad json", func(so *solo) {
-			_ = so.link.conn.Send(controlwire.Frame{Type: controlwire.TypeProbeSummary, Payload: []byte("[1,2]")})
+			_ = so.link.conn.Send(controlwire.Frame{Type: wiretype.ProbeSummary, Payload: []byte("[1,2]")})
 		}},
 	}
 	for _, c := range cases {
@@ -354,7 +357,7 @@ func TestGoPlanPlacement(t *testing.T) {
 			}
 			g := protocol.PunchGo{SessionID: so.s.sid, Round: c.round, WindowMs: r1.WindowMs}
 			if c.plan != nil {
-				p := cloneRound(r1)
+				p := r1.Clone()
 				c.plan(&p)
 				g.Plan = &p
 			}
@@ -362,7 +365,7 @@ func TestGoPlanPlacement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = so.link.conn.Send(controlwire.Frame{Type: controlwire.TypePunchGo, Payload: payload})
+			_ = so.link.conn.Send(controlwire.Frame{Type: wiretype.PunchGo, Payload: payload})
 			pr := so.punchResult()
 			if pr.OK || pr.Reason != protocol.ReasonProtocolViolation || pr.Detail != c.detail {
 				t.Fatalf("punch_result %+v", pr)
@@ -456,7 +459,7 @@ func TestGoWindow(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				_ = so.link.conn.Send(controlwire.Frame{Type: controlwire.TypePunchGo, Payload: payload})
+				_ = so.link.conn.Send(controlwire.Frame{Type: wiretype.PunchGo, Payload: payload})
 			}
 			pr := so.punchResult()
 			if pr.OK || pr.Reason != protocol.ReasonProtocolViolation || pr.Detail != "window" {
@@ -536,7 +539,7 @@ func TestControlCutWhilePunching(t *testing.T) {
 	so.link.send(protocol.PunchGo{SessionID: so.s.sid, Round: 1, WindowMs: r1.WindowMs})
 	// Cut once round 1 runs, which go_received reports, however long the
 	// client takes to read the go.
-	for until := time.Now().Add(5 * time.Second); ; {
+	for until := time.Now().Add(testkit.WaitBound(t)); ; {
 		m, ok := so.link.next(time.Until(until), protocol.MsgProgress)
 		if !ok {
 			t.Fatal("no go_received")
@@ -685,22 +688,14 @@ func TestDeadlineUnsupported(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = a.Close() }()
 	defer func() { _ = b.Close() }()
-	_, err := Punch(context.Background(), noDeadlines{a}, Options{ControlSecurity: protocol.ControlSecurityDeclared})
+	fc := faultconn.Wrap(a)
+	fc.NoDeadlines()
+	_, err := Punch(context.Background(), fc, Options{ControlSecurity: protocol.ControlSecurityDeclared})
 	var e *Error
 	if !errors.As(err, &e) || e.Reason != protocol.ReasonInvalidArgument || e.Detail != "deadline_unsupported" {
 		t.Fatalf("got %v", err)
 	}
 }
-
-type noDeadlines struct{ net.Conn }
-
-func (noDeadlines) SetReadDeadline(time.Time) error  { return syscall.ENOTSUP }
-func (noDeadlines) SetWriteDeadline(time.Time) error { return syscall.ENOTSUP }
-
-// failingWrites is a control connection whose writes fail.
-type failingWrites struct{ net.Conn }
-
-func (failingWrites) Write([]byte) (int, error) { return 0, syscall.EPIPE }
 
 // A control write failure while probing ends the session at once with
 // control_interrupted, the failed write as its cause. The observers never
@@ -714,7 +709,9 @@ func TestControlWriteFailure(t *testing.T) {
 	h := w.host(nil)
 	c, s := w.pipe(h, time.Millisecond)
 	defer func() { _ = s.Close() }()
-	res := runClient(context.Background(), failingWrites{c}, clientOpts(h))
+	fc := faultconn.Wrap(c)
+	fc.FailWrites(syscall.EPIPE)
+	res := runClient(context.Background(), fc, clientOpts(h))
 	sess := w.newSession()
 	l := newSrvLink(t, s)
 	defer l.close()

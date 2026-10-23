@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -53,25 +54,25 @@ func TestSummaryVerdictNeedsMeasuredHigh(t *testing.T) {
 	high := measured(rndTraits(f), protocol.AllocRandom, protocol.ConfHigh)
 	cases := []struct {
 		name string
-		mut  func(*ClassifyInput)
+		mut  func(*api.ClassifyInput)
 	}{
-		{"one side medium", func(in *ClassifyInput) {
+		{"one side medium", func(in *api.ClassifyInput) {
 			in.Measured[1] = measured(rndTraits(f), protocol.AllocRandom, protocol.ConfMedium)
 		}},
-		{"one side a pool", func(in *ClassifyInput) {
+		{"one side a pool", func(in *api.ClassifyInput) {
 			in.Measured[0] = measured(rndTraits(f), protocol.AllocPool, protocol.ConfLow)
 		}},
 		// the views say Random/High, but nobody measured it: self-reported
 		// traits (NoObserver mode, an unobserved family) or a memory
-		{"not measured", func(in *ClassifyInput) { in.Measured = [2]protocol.PeerView{} }},
-		{"one side not measured", func(in *ClassifyInput) { in.Measured[1] = protocol.PeerView{} }},
-		{"measured without samples", func(in *ClassifyInput) {
+		{"not measured", func(in *api.ClassifyInput) { in.Measured = [2]protocol.PeerView{} }},
+		{"one side not measured", func(in *api.ClassifyInput) { in.Measured[1] = protocol.PeerView{} }},
+		{"measured without samples", func(in *api.ClassifyInput) {
 			tr := rndTraits(f)
 			tr.Samples = 0
 			in.Measured[0] = view(tr)
 		}},
 		// the two-sided birthday can still run: aggressive tier and a 30 s handshake
-		{"two-sided birthday reachable", func(in *ClassifyInput) {
+		{"two-sided birthday reachable", func(in *api.ClassifyInput) {
 			in.Policy.Budget.Birthday = protocol.BirthdayAggressive
 			in.Timeouts.HandshakeTimeoutMs = 30000
 		}},
@@ -88,13 +89,13 @@ func TestSummaryVerdictNeedsMeasuredHigh(t *testing.T) {
 			if c.name == "two-sided birthday reachable" {
 				return // the ladder goes on to the two-sided birthday when the round input allows extreme
 			}
-			decs := chain(p, cl, rndTraits(f), rndTraits(f), 6, false, RCNoContact, nil)
+			decs := chain(p, cl, rndTraits(f), rndTraits(f), 6, false, api.RoundNoContact, nil)
 			if len(decs) != CheapRounds || !decs[CheapRounds-1].Final {
 				t.Fatalf("ladder %v", decs)
 			}
-			var prev []RoundOutcome
+			var prev []api.RoundOutcome
 			for i, d := range decs {
-				prev = append(prev, RoundOutcome{Round: i + 1, Variant: d.Variant, Class: RCNoContact, Budget: d.Budget})
+				prev = append(prev, api.RoundOutcome{Round: i + 1, Variant: d.Variant, Class: api.RoundNoContact, Budget: d.Budget})
 			}
 			in3 := roundInput(cl, rndTraits(f), rndTraits(f), CheapRounds+1, prev)
 			in3.Evidence.Sent, in3.Evidence.Fired = [2]uint32{1, 1}, [2]bool{true, true}
@@ -140,7 +141,7 @@ func TestSeqRndVerdict(t *testing.T) {
 	var p DefaultPlanner
 	f := protocol.FamilyUDP4
 	seq, rnd := seqTraits(f), rndTraits(f)
-	run := func(seq protocol.Traits, measuredOK bool, contact bool) RoundDecision {
+	run := func(seq protocol.Traits, measuredOK bool, contact bool) api.RoundDecision {
 		in := classifyInput(seq, rnd)
 		if measuredOK {
 			in.Measured = [2]protocol.PeerView{view(seq), view(rnd)}
@@ -150,16 +151,16 @@ func TestSeqRndVerdict(t *testing.T) {
 			t.Fatalf("pair %s reject %q", cl.PairClass, cl.Reject)
 		}
 		ledger := mappingLedger{}
-		var prev []RoundOutcome
+		var prev []api.RoundOutcome
 		for round := 1; round <= 2; round++ {
-			dec := p.Round(roundInput(cl, seq, rnd, round, prev))
+			dec := p.Round(classified(roundInput(cl, seq, rnd, round, prev), in))
 			if dec.Stop != "" {
 				t.Fatalf("round %d stopped: %s", round, dec.Stop)
 			}
-			prev = append(prev, ledger.outcome(round, dec, RCNoContact))
+			prev = append(prev, ledger.outcome(round, dec, api.RoundNoContact))
 		}
-		in3 := roundInput(cl, seq, rnd, 3, prev)
-		in3.Evidence = Evidence{Fired: [2]bool{true, true}, Sent: [2]uint32{20, 20}}
+		in3 := classified(roundInput(cl, seq, rnd, 3, prev), in)
+		in3.Evidence = api.Evidence{Fired: [2]bool{true, true}, Sent: [2]uint32{20, 20}}
 		if contact {
 			in3.Evidence.SeenFrom[0] = []netip.AddrPort{rnd.Observed}
 			in3.RescueUsed = true
@@ -171,7 +172,7 @@ func TestSeqRndVerdict(t *testing.T) {
 	}
 	adf := seq
 	adf.Filtering = protocol.FiltADF
-	for name, dec := range map[string]RoundDecision{
+	for name, dec := range map[string]api.RoundDecision{
 		"SEQ filtering ADF":     run(adf, true, false),
 		"not measured":          run(seq, false, false),
 		"contact in the rounds": run(seq, true, true),

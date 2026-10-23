@@ -5,9 +5,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/djylb/holepunch/internal/faultinject"
-	"github.com/djylb/holepunch/internal/life"
-	"github.com/djylb/holepunch/internal/plan"
+	engine "github.com/djylb/holepunch/internal/plan"
+	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -25,9 +24,9 @@ const (
 // decision is a planner's round decision; after a panic the default planner
 // took over and classified the pair again.
 type decision struct {
-	dec      RoundDecision
-	cls      Classification
-	planner  Planner
+	dec      plan.RoundDecision
+	cls      plan.Classification
+	planner  plan.Planner
 	switched bool
 	ok       bool
 }
@@ -35,34 +34,16 @@ type decision struct {
 // decide runs the planner's Round outside the lock. A panicking planner is
 // replaced by the default one (which classifies the pair again from the same
 // input); a panicking default planner fails the decision.
-func (s *Session) decide(p Planner, cin ClassifyInput, in RoundInput) decision {
+func (s *Session) decide(p plan.Planner, cin plan.ClassifyInput, in plan.RoundInput) decision {
 	d := decision{planner: p, cls: in.Class}
-	err := life.Safe("coord.plan", func() {
-		if err := faultinject.Point(fiPlan); err != nil {
-			panic(err)
-		}
-		d.dec = p.Round(in)
-	})
-	if err == nil {
-		d.ok = true
-		return d
-	}
-	s.c.noteCallbackPanic(s.id, err)
-	if _, isDefault := p.(plan.DefaultPlanner); isDefault {
-		return d
-	}
-	def := plan.DefaultPlanner{}
-	if life.Safe("coord.plan.default", func() {
+	d.planner, d.switched, d.ok = s.callPlanner(p, func(p plan.Planner) { d.dec = p.Round(in) }, func(def plan.Planner) {
 		d.cls = def.Classify(cin)
 		in.Class, in.Order, in.MemoryPromoted = d.cls, nil, false
 		d.dec = def.Round(in)
 		if d.cls.Reject != "" {
-			d.dec = RoundDecision{Stop: d.cls.Reject}
+			d.dec = plan.RoundDecision{Stop: d.cls.Reject}
 		}
-	}) != nil {
-		return d
-	}
-	d.planner, d.switched, d.ok = def, true, true
+	})
 	return d
 }
 
@@ -73,42 +54,45 @@ func (s *Session) takeDecisionLocked(d decision) bool {
 	}
 	if d.switched {
 		st := &s.st
-		st.planner, st.cls = d.planner, d.cls
-		st.order, st.promoted = slices.Clone(d.cls.Ladder), false
+		st.plan.planner, st.plan.cls = d.planner, d.cls
+		st.plan.order, st.plan.promoted = slices.Clone(d.cls.Ladder), false
 	}
 	return true
 }
 
 // roundInputLocked is the planner input of round k at session time now.
-func (s *Session) roundInputLocked(k int, now time.Duration) RoundInput {
+func (s *Session) roundInputLocked(k int, now time.Duration) plan.RoundInput {
 	st := &s.st
 	a := align([2]*rttEstimator{&st.rtt[0], &st.rtt[1]}, s.ablate.NoRTTAlign)
-	// The planner runs outside the lock and may write its input: what it
-	// shares with the session state is copied.
-	in := RoundInput{
+	in := plan.RoundInput{
 		Round:             k,
-		Class:             cloneClassification(st.cls),
-		Order:             slices.Clone(st.order),
-		Prev:              slices.Clone(st.prev),
-		Evidence:          cloneEvidence(st.ev),
+		Class:             st.plan.cls,
+		Order:             st.plan.order,
+		Prev:              st.rounds.prev,
+		Evidence:          st.rounds.ev,
 		RTT:               a.rtt,
 		Remaining:         s.remainingLocked(now),
 		D:                 a.d,
 		BudgetLeft:        [2]int{s.budgetLeftLocked(0, now), s.budgetLeftLocked(1, now)},
 		Recent10sDistinct: s.recentDistinctLocked(now),
 		Gone:              st.gone,
-		RescueUsed:        st.rescueUsed || s.ablate.NoRounds,
-		Views:             [2]protocol.PeerView{clonePeerView(st.pviews[0]), clonePeerView(st.pviews[1])},
-		Policy:            clonePolicy(*s.starts[0].Policy),
+		RescueUsed:        st.rounds.rescueUsed || s.ablate.NoRounds,
+		Views:             st.plan.pviews,
+		Measured:          st.plan.cin.Measured,
+		Pair:              st.plan.cin.Pair,
+		Mode:              st.plan.cin.Mode,
+		Policy:            *s.starts[0].Policy,
 		AllowExtreme:      s.c.cfg.Budget.AllowExtreme,
 		MaxRounds:         int(s.to.MaxRounds),
 		HandshakeMs:       s.to.HandshakeTimeoutMs,
-		SandwichOK:        st.sandwich,
-		MemoryPromoted:    st.promoted && k == 1,
+		SandwichOK:        st.sand.negotiated,
+		MemoryPromoted:    st.plan.promoted && k == 1,
 		FireAt:            s.fireAtLocked(a, now),
-		Mappings:          [2][]MappingSample{slices.Clone(st.mappings[0]), slices.Clone(st.mappings[1])},
+		Mappings:          st.rounds.mappings,
 	}
-	return in
+	// The planner runs outside the lock and may write its input: nothing
+	// of it is shared with the session state.
+	return in.Clone()
 }
 
 // fireAtLocked is when the round planned now is expected to fire, on the
@@ -119,7 +103,7 @@ func (s *Session) roundInputLocked(k int, now time.Duration) RoundInput {
 // refresh plans round 1 again then).
 func (s *Session) fireAtLocked(a alignment, now time.Duration) time.Duration {
 	at := now + a.d - s.regAt
-	if st := &s.st; st.round == 0 {
+	if st := &s.st; st.rounds.round == 0 {
 		wait := max(a.rtt[0], a.rtt[1])
 		if st.summarized {
 			wait = max(st.summaryAt+wait-now, 0)
@@ -137,29 +121,29 @@ func (s *Session) addMappingLocked(r, k int, addr netip.AddrPort) {
 	if !addr.IsValid() || addr.Port() == 0 {
 		return
 	}
-	list := &s.st.mappings[r]
-	if slices.ContainsFunc(*list, func(m MappingSample) bool { return m.Addr == addr }) {
+	list := &s.st.rounds.mappings[r]
+	if slices.ContainsFunc(*list, func(m plan.MappingSample) bool { return m.Addr == addr }) {
 		return
 	}
 	if len(*list) >= maxMappings {
 		*list = slices.Delete(*list, 0, 1)
 	}
-	*list = append(*list, MappingSample{Addr: addr, At: s.st.fireAt[k] - s.regAt, Round: k})
+	*list = append(*list, plan.MappingSample{Addr: addr, At: s.st.rounds.fireAt[k] - s.regAt, Round: k})
 }
 
 // remainingLocked is punchDeadline − now; before the first go the whole
 // handshake budget is ahead.
 func (s *Session) remainingLocked(now time.Duration) time.Duration {
-	if s.st.round == 0 {
+	if s.st.rounds.round == 0 {
 		return ms(s.to.HandshakeTimeoutMs) + s.ttl.punchSlack
 	}
-	return s.st.punchDeadline - now
+	return s.st.rounds.punchDeadline - now
 }
 
 // budgetLeftLocked is how many packets side r may still be granted: the
 // session budget minus the grants, and the client key's quota.
 func (s *Session) budgetLeftLocked(r int, now time.Duration) int {
-	left := int(s.budget.MaxPackets) - s.st.granted[r]
+	left := int(s.budget.MaxPackets) - s.st.audit.granted[r]
 	if k := s.c.limiter.packetsLeft(s.at(now), r, s.keys[r]); k >= 0 {
 		left = min(left, k)
 	}
@@ -170,22 +154,15 @@ func (s *Session) budgetLeftLocked(r int, now time.Duration) int {
 // rounds started within the last 10 s (a sliding window).
 func (s *Session) recentDistinctLocked(now time.Duration) [2]int {
 	var out [2]int
-	for _, rr := range s.st.records {
+	for _, rr := range s.st.rounds.records {
 		if s.since(rr.StartedAt) < now-recentWindow {
 			continue
 		}
 		for r := range out {
-			out[r] += s.st.recentPorts[rr.Round][r]
+			out[r] += s.st.rounds.recentPorts[rr.Round][r]
 		}
 	}
 	return out
-}
-
-func cloneEvidence(e Evidence) Evidence {
-	for r := range e.SeenFrom {
-		e.SeenFrom[r] = slices.Clone(e.SeenFrom[r])
-	}
-	return e
 }
 
 // startRoundLocked writes the go frames of the prepared round to both sides
@@ -193,17 +170,17 @@ func cloneEvidence(e Evidence) Evidence {
 // the write, and arms the round deadline.
 func (s *Session) startRoundLocked(now time.Duration) effects {
 	st := &s.st
-	cur := &st.cur
+	cur := &st.rounds.cur
 	var fx effects
 	a := align([2]*rttEstimator{&st.rtt[0], &st.rtt[1]}, s.ablate.NoRTTAlign)
 	cur.align = a
 	cur.goAt = now
-	st.round = cur.n
-	st.fireAt[cur.n] = now + a.d
+	st.rounds.round = cur.n
+	st.rounds.fireAt[cur.n] = now + a.d
 	if cur.n == 1 {
 		st.state = StatePunching
-		st.firstGoAt = now
-		st.punchDeadline = now + ms(s.to.HandshakeTimeoutMs) + s.ttl.punchSlack
+		st.rounds.firstGoAt = now
+		st.rounds.punchDeadline = now + ms(s.to.HandshakeTimeoutMs) + s.ttl.punchSlack
 	}
 	push := s.goPushLocked()
 	for r, l := range st.links {
@@ -227,7 +204,7 @@ func (s *Session) startRoundLocked(now time.Duration) effects {
 		fx.merge(s.sendMarkedLocked(r, g, &l.markGo[cur.n]))
 	}
 	cur.deadline = now + a.d + cur.window + max(a.rtt[0], a.rtt[1]) + roundTailSlack
-	st.deadline = min(cur.deadline, st.punchDeadline)
+	st.deadline = min(cur.deadline, st.rounds.punchDeadline)
 	for r := range push {
 		for _, t := range push[r] {
 			if s.sendTargetsLocked(r, t, now) == nil && t.Source == protocol.TargetsDrift {
@@ -254,14 +231,14 @@ func (s *Session) goPushLocked() [2][]protocol.Assist {
 	st := &s.st
 	var push [2][]protocol.Assist
 	for r := range push {
-		for _, f := range st.pair.SharedFamilies {
-			if t := st.upstream[1-r][f]; len(t) > 0 && st.pair.SamePublicIP[f] {
+		for _, f := range st.adm.pair.SharedFamilies {
+			if t := st.adm.upstream[1-r][f]; len(t) > 0 && st.adm.pair.SamePublicIP[f] {
 				push[r] = append(push[r], protocol.Assist{Family: f, Targets: slices.Clone(t), Source: protocol.TargetsPortmap})
 			}
 		}
-		push[r] = append(append(push[r], st.portmap[r]...), st.pending[r]...)
+		push[r] = append(append(push[r], st.rounds.portmap[r]...), st.rounds.pending[r]...)
 	}
-	st.portmap, st.pending = [2][]protocol.Assist{}, [2][]protocol.Assist{}
+	st.rounds.portmap, st.rounds.pending = [2][]protocol.Assist{}, [2][]protocol.Assist{}
 	return push
 }
 
@@ -286,16 +263,16 @@ func (s *Session) onRoundResultLocked(r int, m *protocol.RoundResult, now time.D
 	}
 	k := int(m.Round)
 	switch {
-	case k > st.round:
+	case k > st.rounds.round:
 		fx.end(violation(r, "round"))
 		return fx
-	case k < st.round-1:
+	case k < st.rounds.round-1:
 		return fx
 	}
 	s.addEvidenceLocked(r, m)
-	current := k == st.round && !st.cur.evaluating && st.cur.results[r] == nil
+	current := k == st.rounds.round && !st.rounds.cur.evaluating && st.rounds.cur.results[r] == nil
 	if current {
-		st.cur.results[r] = m
+		st.rounds.cur.results[r] = m
 		if sent, ok := sentAt(&st.links[r].markGo[k]); ok {
 			st.rtt[r].add(now - sent - ms(m.ElapsedMs))
 		}
@@ -308,11 +285,11 @@ func (s *Session) onRoundResultLocked(r int, m *protocol.RoundResult, now time.D
 		fx.merge(s.confirmLocked(r, m.Path, now))
 		return fx
 	}
-	if st.ev.Fatal[0] == protocol.ReasonUDPBlocked && st.ev.Fatal[1] == protocol.ReasonUDPBlocked {
+	if st.rounds.ev.Fatal[0] == protocol.ReasonUDPBlocked && st.rounds.ev.Fatal[1] == protocol.ReasonUDPBlocked {
 		fx.end(&terminal{code: protocol.ReasonUDPBlocked})
 		return fx
 	}
-	if current && st.cur.results[1-r] != nil {
+	if current && st.rounds.cur.results[1-r] != nil {
 		fx.merge(s.endRoundLocked(now))
 	}
 	return fx
@@ -320,7 +297,7 @@ func (s *Session) onRoundResultLocked(r int, m *protocol.RoundResult, now time.D
 
 // addEvidenceLocked accumulates a round result into the cross-round evidence.
 func (s *Session) addEvidenceLocked(r int, m *protocol.RoundResult) {
-	ev := &s.st.ev
+	ev := &s.st.rounds.ev
 	var bindFailed uint16
 	for _, f := range m.Families {
 		ev.Hit[r] = ev.Hit[r] || f.Hit
@@ -339,7 +316,7 @@ func (s *Session) addEvidenceLocked(r int, m *protocol.RoundResult) {
 	for _, f := range m.Families {
 		if f.Remap != nil {
 			echo := *f.Remap
-			s.st.remaps[r][famIndex(f.Family)] = &echo
+			s.st.rounds.remaps[r][f.Family.Index()] = &echo
 		}
 	}
 	if m.Status == protocol.RoundFatal {
@@ -372,27 +349,36 @@ func sentOf(m *protocol.RoundResult) int {
 // row is a protocol violation.
 func (s *Session) auditLocked(r int, m *protocol.RoundResult) *terminal {
 	st := &s.st
-	granted, sent := st.cur.granted[r], sentOf(m)
-	paid := min(max(sent-granted, 0), st.credit[r])
-	st.credit[r] -= paid
-	sent -= paid
-	if granted <= 0 || float64(sent) <= float64(granted)*auditTolerance {
-		st.strikes[r] = 0
-		return nil
+	violated, fatal := st.audit.check(r, st.rounds.cur.granted[r], sentOf(m))
+	if violated {
+		st.ctr.BudgetViolation++
 	}
-	st.ctr.BudgetViolation++
-	st.halve[r] = true
-	st.strikes[r]++
-	if st.strikes[r] >= auditStrikes {
+	if fatal {
 		return violation(r, detailBudgetViolation)
 	}
 	return nil
 }
 
+// check audits side r's round: granted packets, sent reported. It reports
+// whether the side sent more than its grant allows (halving its later
+// grants) and whether that was the auditStrikes-th time in a row.
+func (a *audit) check(r, granted, sent int) (violated, fatal bool) {
+	paid := min(max(sent-granted, 0), a.credit[r])
+	a.credit[r] -= paid
+	sent -= paid
+	if granted <= 0 || float64(sent) <= float64(granted)*auditTolerance {
+		a.strikes[r] = 0
+		return false, false
+	}
+	a.halve[r] = true
+	a.strikes[r]++
+	return true, a.strikes[r] >= auditStrikes
+}
+
 // roundClass reads a round from both results.
-func roundClass(res [2]*protocol.RoundResult) RoundClass {
+func roundClass(res [2]*protocol.RoundResult) plan.RoundClass {
 	if res[0] == nil || res[1] == nil {
-		return RoundNoReport
+		return plan.RoundNoReport
 	}
 	var seen [2]bool
 	hitBoth := false
@@ -412,13 +398,13 @@ func roundClass(res [2]*protocol.RoundResult) RoundClass {
 	switch {
 	case hitBoth || seen[0] && seen[1]:
 		// Both directions carried packets: the confirmation was lost.
-		return RoundConfirmLost
+		return plan.RoundConfirmLost
 	case seen[0] != seen[1]:
-		return RoundOneWay
+		return plan.RoundOneWay
 	case blocked:
-		return RoundBlocked
+		return plan.RoundBlocked
 	}
-	return RoundNoContact
+	return plan.RoundNoContact
 }
 
 // familyNoContact reports whether both results of a round show family fam
@@ -456,11 +442,11 @@ func familyHeard(res [2]*protocol.RoundResult, fam protocol.Family) [2]bool {
 }
 
 // classNow is the class of the round under way as far as its results go.
-func (c *roundState) classNow() RoundClass { return roundClass(c.results) }
+func (c *roundState) classNow() plan.RoundClass { return roundClass(c.results) }
 
 // recordLocked describes the round under way, ended now with class.
-func (s *Session) recordLocked(class RoundClass, now time.Time) RoundRecord {
-	cur := &s.st.cur
+func (s *Session) recordLocked(class plan.RoundClass, now time.Time) RoundRecord {
+	cur := &s.st.rounds.cur
 	rec := RoundRecord{
 		Round:     cur.n,
 		Variant:   cur.variant,
@@ -484,15 +470,15 @@ func (s *Session) recordLocked(class RoundClass, now time.Time) RoundRecord {
 // the next round on the session goroutine.
 func (s *Session) endRoundLocked(now time.Duration) effects {
 	st := &s.st
-	cur := &st.cur
+	cur := &st.rounds.cur
 	var fx effects
 	cur.evaluating = true
 	class := cur.classNow()
-	st.records = append(st.records, s.recordLocked(class, s.at(now)))
-	st.prev = append(st.prev, s.outcomeLocked(class))
-	rec := st.records[len(st.records)-1]
+	st.rounds.records = append(st.rounds.records, s.recordLocked(class, s.at(now)))
+	st.rounds.prev = append(st.rounds.prev, s.outcomeLocked(class))
+	rec := st.rounds.records[len(st.rounds.records)-1]
 	s.c.emit(Event{Kind: EvRoundEnded, At: s.at(now), SessionID: s.id, Round: cur.n, Labels: s.labels,
-		Data: RoundEndedData{Class: class, Sent: rec.Sent, Hit: st.ev.Hit}})
+		Data: RoundEndedData{Class: class, Sent: rec.Sent, Hit: st.rounds.ev.Hit}})
 	if noAdmissibleTarget(cur.results) {
 		// Neither client may send to anything the round aimed at: later
 		// rounds aim at the same addresses.
@@ -507,9 +493,8 @@ func (s *Session) endRoundLocked(now time.Duration) effects {
 		}
 		return fx
 	}
-	st.planning = true
-	st.work.evalRound = true
-	st.deadline = st.punchDeadline
+	st.plan.begin(&st.work.evalRound)
+	st.deadline = st.rounds.punchDeadline
 	s.rearmLocked(now)
 	s.kick()
 	return fx
@@ -538,9 +523,9 @@ func noAdmissibleTarget(res [2]*protocol.RoundResult) bool {
 // each side made in them (mappedLocked), whether they saw any
 // contact and which side heard the other, and the round's
 // own seen_from and hits, not the cumulative evidence.
-func (s *Session) outcomeLocked(class RoundClass) RoundOutcome {
-	cur := &s.st.cur
-	out := RoundOutcome{Round: cur.n, Variant: cur.variant, Class: class, Rescue: cur.rescue, Budget: cur.class,
+func (s *Session) outcomeLocked(class plan.RoundClass) plan.RoundOutcome {
+	cur := &s.st.rounds.cur
+	out := plan.RoundOutcome{Round: cur.n, Variant: cur.variant, Class: class, Rescue: cur.rescue, Budget: cur.class,
 		Families: slices.Clone(cur.families)}
 	for i := range out.Families {
 		for r := range 2 {
@@ -573,7 +558,7 @@ func sandwichFamilies(cur *roundState) [2][]protocol.Family {
 	var out [2][]protocol.Family
 	for r := range out {
 		for _, fs := range cur.plans[r].Sides {
-			if cur.sandwich[r][famIndex(fs.Family)] {
+			if cur.sandwich[r][fs.Family.Index()] {
 				out[r] = append(out[r], fs.Family)
 			}
 		}
@@ -592,8 +577,8 @@ func sandwichFamilies(cur *roundState) [2][]protocol.Family {
 // records the round's Direct targets in the ledger, so it runs once per round.
 func (s *Session) mappedLocked(r int, fam protocol.Family) int {
 	st := &s.st
-	cur := &st.cur
-	fi := famIndex(fam)
+	cur := &st.rounds.cur
+	fi := fam.Index()
 	n := cur.pushed[r][fi]
 	var res *protocol.FamilyOutcome
 	if m := cur.results[r]; m != nil {
@@ -617,11 +602,11 @@ func (s *Session) mappedLocked(r int, fam protocol.Family) int {
 	if res != nil {
 		fs.Sockets = uint16(max(int(fs.Sockets)-int(res.BindFailed), 1))
 	}
-	if st.directSent[r][fi] == nil {
-		st.directSent[r][fi] = map[netip.AddrPort]int{}
+	if st.rounds.directSent[r][fi] == nil {
+		st.rounds.directSent[r][fi] = map[netip.AddrPort]int{}
 	}
-	sent := st.directSent[r][fi]
-	direct, spray := plan.SideMappings(fs, func(t netip.AddrPort) int { return sent[t] })
+	sent := st.rounds.directSent[r][fi]
+	direct, spray := engine.SideMappings(fs, func(t netip.AddrPort) int { return sent[t] })
 	if res != nil {
 		spray = min(spray, reportedSpray(fs, res))
 	}
@@ -665,7 +650,7 @@ func reportedSpray(fs protocol.FamilySide, res *protocol.FamilyOutcome) int {
 // planner: a lost control link, too little time left, the last round
 // (announced final, or max_rounds reached with no rescue to come), or too
 // little budget.
-func (s *Session) stopRulesLocked(class RoundClass, now time.Duration) *terminal {
+func (s *Session) stopRulesLocked(class plan.RoundClass, now time.Duration) *terminal {
 	st := &s.st
 	for r, g := range st.gone {
 		if g {
@@ -673,11 +658,11 @@ func (s *Session) stopRulesLocked(class RoundClass, now time.Duration) *terminal
 		}
 	}
 	a := align([2]*rttEstimator{&st.rtt[0], &st.rtt[1]}, s.ablate.NoRTTAlign)
-	rescueNext := class == RoundOneWay && !st.rescueUsed && !s.ablate.NoRounds
+	rescueNext := class == plan.RoundOneWay && !st.rounds.rescueUsed && !s.ablate.NoRounds
 	switch {
 	case s.remainingLocked(now) < minWindow+a.d,
-		st.cur.final,
-		st.nonRescue >= int(s.to.MaxRounds) && !rescueNext:
+		st.rounds.cur.final,
+		st.rounds.nonRescue >= int(s.to.MaxRounds) && !rescueNext:
 		return s.stopTermLocked("", "")
 	}
 	for r := range 2 {
@@ -689,15 +674,15 @@ func (s *Session) stopRulesLocked(class RoundClass, now time.Duration) *terminal
 }
 
 // stopTermLocked is the end of an unconfirmed punch: the planner's stop
-// reason and detail, or the attribution from both sides' evidence (plan.Attribute;
+// reason and detail, or the attribution from both sides' evidence (engine.Attribute;
 // hard_symmetric_random only when both sides are RND, or when natprobe
 // measured the pair as one only the two cheap rounds can open and they ran
 // — whether the planner ended the ladder or max_rounds did).
 func (s *Session) stopTermLocked(reason protocol.Reason, stopDetail string) *terminal {
 	st := &s.st
-	code, detail := plan.AttributeDetail(st.ev)
+	code, detail := engine.AttributeDetail(st.rounds.ev)
 	if reason == "" {
-		reason = plan.TerminalReason(st.ev, st.bothRND() || st.seqRndVerdict())
+		reason = engine.TerminalReason(st.rounds.ev, st.bothRND() || st.seqRndVerdict())
 	}
 	if reason != code {
 		detail = ""
@@ -710,20 +695,20 @@ func (s *Session) stopTermLocked(reason protocol.Reason, stopDetail string) *ter
 
 // seqRndVerdict reports whether the primary family is a seq_x_rnd pair
 // natprobe measured as one no rung after the two cheap ones can open, and
-// both of them ran (plan.SeqRndVerdict).
+// both of them ran (engine.SeqRndVerdict).
 func (st *sessionState) seqRndVerdict() bool {
-	return st.cls.PairClass == plan.PairSeqRnd && len(st.cls.Families) > 0 && st.nonRescue >= plan.CheapRounds &&
-		plan.SeqRndVerdict(st.cin.Measured, st.cls.Families[0])
+	return st.plan.cls.PairClass == engine.PairSeqRnd && len(st.plan.cls.Families) > 0 && st.rounds.nonRescue >= engine.CheapRounds &&
+		engine.SeqRndVerdict(st.plan.cin.Measured, st.plan.cls.Families[0])
 }
 
 // bothRND reports whether both sides of the primary family are RND.
 func (st *sessionState) bothRND() bool {
-	if len(st.cls.Families) == 0 {
+	if len(st.plan.cls.Families) == 0 {
 		return false
 	}
-	for _, v := range st.views {
-		fv, ok := familyView(v, st.cls.Families[0])
-		if !ok || plan.CategoryOf(fv.Traits) != plan.CatRND {
+	for _, v := range st.plan.views {
+		fv, ok := familyView(v, st.plan.cls.Families[0])
+		if !ok || engine.CategoryOf(fv.Traits) != engine.CatRND {
 			return false
 		}
 	}
@@ -735,61 +720,35 @@ func (st *sessionState) bothRND() bool {
 // is still waiting for it.
 func (s *Session) nextRound() {
 	drift := s.observeDrift()
-	var (
-		in  RoundInput
-		cin ClassifyInput
-		p   Planner
-		gen uint64
-		ok  bool
-	)
-	now := s.since(s.c.set.clock.Now())
-	func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
+	offLock(s, func(now time.Duration) (planTicket, roundJob, bool) {
 		st := &s.st
-		if st.state != StatePunching || !st.cur.evaluating || !st.planning {
-			return
+		if st.state != StatePunching || !st.rounds.cur.evaluating || !st.plan.planning {
+			return planTicket{}, roundJob{}, false
 		}
 		s.takeDriftLocked(drift)
-		in, cin, p, gen, ok = s.roundInputLocked(st.cur.n+1, now), st.cin, st.planner, st.gen, true
-	}()
-	if !ok {
-		return
-	}
-	d := s.decide(p, cin, in)
-	nowT := s.c.set.clock.Now()
-	var fx effects
-	func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		st := &s.st
-		k := st.cur.n + 1
-		if st.gen == gen && st.state == StatePunching && st.planning && k <= maxRound &&
-			s.beginRefreshLocked(k, gen, d, cin, in, s.since(nowT)) {
-			return // the round waits for its anchor refresh
+		k := st.rounds.cur.n + 1
+		return s.ticketLocked(k, false), roundJob{p: st.plan.planner, cin: st.plan.cin, in: s.roundInputLocked(k, now)}, true
+	}, s.decideJob, func(t planTicket, j roundJob, d decision, now time.Time) effects {
+		if t.k <= protocol.MaxRound && s.beginRefreshLocked(t, d, j.cin, j.in, s.since(now)) {
+			return effects{} // the round waits for its anchor refresh
 		}
-		fx = s.applyRoundLocked(gen, k, d, nowT)
-	}()
-	s.apply(fx)
+		return s.applyRoundLocked(t.k, d, now)
+	})
 }
 
 // applyRoundLocked starts round k with decision d, or ends the session as
-// d says, unless the session moved on since the round's planning began
-// (gen).
-func (s *Session) applyRoundLocked(gen uint64, k int, d decision, nowT time.Time) effects {
+// d says.
+func (s *Session) applyRoundLocked(k int, d decision, nowT time.Time) effects {
 	st := &s.st
 	var fx effects
-	if st.gen != gen || st.state != StatePunching || !st.planning || k != st.cur.n+1 {
-		return fx
-	}
-	st.planning = false
+	st.plan.end()
 	now := s.since(nowT)
 	switch {
 	case !s.takeDecisionLocked(d):
 		fx.end(&terminal{code: protocol.ReasonInternal, detail: "panic:planner"})
 	case d.dec.Stop != "":
 		s.planEndLocked(&fx, s.stopTermLocked(d.dec.Stop, d.dec.StopDetail), now)
-	case k > maxRound:
+	case k > protocol.MaxRound:
 		s.planEndLocked(&fx, s.stopTermLocked("", ""), now)
 	default:
 		if term := s.prepareRoundLocked(k, d.dec, now); term != nil {

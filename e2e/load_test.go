@@ -22,6 +22,7 @@ import (
 	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -138,7 +139,7 @@ func newScripted(nc net.Conn, role protocol.Role, pub, local netip.AddrPort) (*s
 }
 
 func (s *scripted) intercept(cw *controlwire.Conn, f controlwire.Frame) bool {
-	if f.Type != controlwire.TypePing {
+	if f.Type != wiretype.Ping {
 		return false
 	}
 	p, err := msgframe.Unmarshal[protocol.Ping](f)
@@ -146,7 +147,7 @@ func (s *scripted) intercept(cw *controlwire.Conn, f controlwire.Frame) bool {
 		return true
 	}
 	at := f.At
-	_ = cw.SendFunc(controlwire.TypePong, func(now time.Time) ([]byte, error) {
+	_ = cw.SendFunc(wiretype.Pong, func(now time.Time) ([]byte, error) {
 		fr, err := msgframe.Encode(protocol.PongFor(p, at, now))
 		return fr.Payload, err
 	})
@@ -154,7 +155,7 @@ func (s *scripted) intercept(cw *controlwire.Conn, f controlwire.Frame) bool {
 }
 
 // next reads the next frame of a type, skipping assists and others.
-func (s *scripted) next(ctx context.Context, typ controlwire.Type) (controlwire.Frame, error) {
+func (s *scripted) next(ctx context.Context, typ wiretype.Type) (controlwire.Frame, error) {
 	for {
 		f, err := s.conn.ReadFrame(ctx)
 		if err != nil {
@@ -163,7 +164,7 @@ func (s *scripted) next(ctx context.Context, typ controlwire.Type) (controlwire.
 		if f.Type == typ {
 			return f, nil
 		}
-		if f.Type == controlwire.TypeAbort {
+		if f.Type == wiretype.Abort {
 			return f, errors.New("e2e: scripted client aborted")
 		}
 	}
@@ -181,7 +182,7 @@ func (s *scripted) send(ctx context.Context, m protocol.Message) error {
 // ready) until it is closed.
 func (s *scripted) run(ctx context.Context, peer netip.AddrPort, park <-chan struct{}) error {
 	defer func() { _ = s.conn.Close() }()
-	f, err := s.next(ctx, controlwire.TypePunchStart)
+	f, err := s.next(ctx, wiretype.PunchStart)
 	if err != nil {
 		return err
 	}
@@ -194,7 +195,7 @@ func (s *scripted) run(ctx context.Context, peer netip.AddrPort, park <-chan str
 		PublicIP: s.pub.Addr(), Observed: s.pub, Samples: 3}
 	rep := protocol.ProbeReport{
 		SessionID: start.SessionID, Role: s.role,
-		Control:   protocol.ControlSpec{Version: controlwire.Version, Features: protocol.AcceptFeatures(start.Control.Features, protocol.SupportedFeatures())},
+		Control:   protocol.ControlSpec{Version: wiretype.Version, Features: protocol.AcceptFeatures(start.Control.Features, protocol.SupportedFeatures())},
 		Caps:      protocol.ClientCaps{Impl: "e2e-load", MaxSockets: 8, Families: []protocol.FamilyCaps{{Family: protocol.FamilyUDP4, LowTTL: true}}},
 		ElapsedMs: 5, Transport: protocol.Transport{Mode: "quic"},
 		Families: []protocol.FamilyReport{{Family: protocol.FamilyUDP4, Traits: tr, LocalAddrs: []netip.Addr{s.local.Addr()},
@@ -204,7 +205,7 @@ func (s *scripted) run(ctx context.Context, peer netip.AddrPort, park <-chan str
 	if err := s.send(ctx, &rep); err != nil {
 		return err
 	}
-	if f, err = s.next(ctx, controlwire.TypeProbeSummary); err != nil {
+	if f, err = s.next(ctx, wiretype.ProbeSummary); err != nil {
 		return err
 	}
 	sum, err := msgframe.Unmarshal[protocol.ProbeSummary](f)
@@ -223,7 +224,7 @@ func (s *scripted) run(ctx context.Context, peer netip.AddrPort, park <-chan str
 	if err := s.send(ctx, &ready); err != nil {
 		return err
 	}
-	if f, err = s.next(ctx, controlwire.TypePunchGo); err != nil {
+	if f, err = s.next(ctx, wiretype.PunchGo); err != nil {
 		return err
 	}
 	g, err := msgframe.Unmarshal[protocol.PunchGo](f)
@@ -437,9 +438,9 @@ func readyToGo(taps [2]*tap) (lastReady, goAt time.Time) {
 	for _, tp := range taps {
 		for _, ev := range tp.log() {
 			switch {
-			case ev.Dir == toServer && ev.Type == controlwire.TypePunchReady && ev.At.After(lastReady):
+			case ev.Dir == toServer && ev.Type == wiretype.PunchReady && ev.At.After(lastReady):
 				lastReady = ev.At
-			case ev.Dir == toClient && ev.Type == controlwire.TypePunchGo && (goAt.IsZero() || ev.At.Before(goAt)):
+			case ev.Dir == toClient && ev.Type == wiretype.PunchGo && (goAt.IsZero() || ev.At.Before(goAt)):
 				goAt = ev.At
 			}
 		}

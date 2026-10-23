@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -364,7 +365,7 @@ func udpBlocked(mustFatal bool) func(fc *faultCell) error {
 }
 
 // attributionCodes are the Reasons the coordinator attributes at a round's
-// end from both sides' evidence (plan.Attribute, plan.TerminalReason).
+// end from both sides' evidence (internal/plan Attribute and TerminalReason).
 var attributionCodes = []protocol.Reason{protocol.ReasonUDPBlocked, protocol.ReasonOneWayUDPOnly, protocol.ReasonPacketBudgetExceeded,
 	protocol.ReasonNotSynchronized, protocol.ReasonCandidateTimeout, protocol.ReasonHardSymmetricRandom}
 
@@ -493,7 +494,7 @@ func faultRows() []*faultRow {
 				return faultExpect{}, false
 			}},
 		{name: "malformed_frame", inject: func(fc *faultCell) {
-			_ = fc.r.taps[fc.target].inject([]byte{'x', 'x', controlwire.Version, byte(controlwire.TypePunchGo), 0, 0, 0, 0})
+			_ = fc.r.taps[fc.target].inject([]byte{'x', 'x', wiretype.Version, byte(wiretype.PunchGo), 0, 0, 0, 0})
 		}, expect: func(p phase) (faultExpect, bool) {
 			switch p {
 			case phResponderDone:
@@ -596,14 +597,11 @@ func expectNAT(p phase) (faultExpect, bool) {
 // tokens, which the library drops before AEAD).
 func (fc *faultCell) flood() {
 	attacker := fc.w.n.PublicHost(netip.IPv4Unspecified())
-	pc, err := attacker.Listen("udp4", netip.AddrPort{})
+	w, err := attacker.ListenUDP(context.Background(), "udp4", netip.AddrPort{}, "listen")
 	if err != nil {
 		return
 	}
-	defer func() { _ = pc.Close() }()
-	w := pc.(interface {
-		WriteToUDPAddrPort([]byte, netip.AddrPort) (int, error)
-	})
+	defer func() { _ = w.Close() }()
 	buf := make([]byte, 256)
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()
@@ -630,7 +628,7 @@ func (fc *faultCell) flood() {
 func (fc *faultCell) arm(r *run) {
 	switch {
 	case fc.ph == phStartWait || fc.ph == phProbing && fc.row.probeAtStart:
-		h := r.taps[observed].holdNext(toClient, controlwire.TypePunchStart, nil)
+		h := r.taps[observed].holdNext(toClient, wiretype.PunchStart, nil)
 		fc.h.spawn(func() {
 			select {
 			case <-h.Reached():
@@ -647,7 +645,7 @@ func (fc *faultCell) arm(r *run) {
 	default:
 		return
 	}
-	typ := map[phase]controlwire.Type{phSummaryWait: controlwire.TypeProbeReport, phGoWait: controlwire.TypePunchReady, phBetweenRounds: controlwire.TypeRoundResult}[fc.ph]
+	typ := map[phase]wiretype.Type{phSummaryWait: wiretype.ProbeReport, phGoWait: wiretype.PunchReady, phBetweenRounds: wiretype.RoundResult}[fc.ph]
 	var pred func(protocol.Message) bool
 	if fc.ph == phBetweenRounds {
 		pred = func(m protocol.Message) bool { rr, ok := m.(*protocol.RoundResult); return ok && rr.Round == 1 }
@@ -699,7 +697,7 @@ func silencePeers(r *run, sides [2]*side, mode silence, h *cellHelpers) {
 		if mode != silenceRound1 {
 			continue
 		}
-		lift := r.taps[i].when(toClient, controlwire.TypePunchGo, func(m protocol.Message) bool {
+		lift := r.taps[i].when(toClient, wiretype.PunchGo, func(m protocol.Message) bool {
 			g, ok := m.(*protocol.PunchGo)
 			return ok && g.Round == 2
 		})

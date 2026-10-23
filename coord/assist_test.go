@@ -8,8 +8,9 @@ import (
 	"testing"
 
 	"github.com/djylb/holepunch/coord/internal/simclient"
-	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/nat"
+	"github.com/djylb/holepunch/internal/testkit"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -33,7 +34,7 @@ func TestAssistRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.cl[0].SendFrame(ctx(t), controlwire.TypeAssist, raw); err != nil {
+	if err := p.cl[0].SendFrame(ctx(t), wiretype.Assist, raw); err != nil {
 		t.Fatal(err)
 	}
 	got := expect[protocol.Assist](t, p.cl[1])
@@ -45,7 +46,7 @@ func TestAssistRewrite(t *testing.T) {
 		Round: 1, Family: protocol.FamilyUDP4, Targets: []netip.AddrPort{pubR}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.cl[0].SendFrame(ctx(t), controlwire.TypeAssist, raw); err != nil {
+	if err := p.cl[0].SendFrame(ctx(t), wiretype.Assist, raw); err != nil {
 		t.Fatal(err)
 	}
 	send(t, p.cl[0], peerSeen(p, 0, 3, pubR)) // a future round
@@ -102,7 +103,7 @@ func TestAssistLimits(t *testing.T) {
 		p := r.pair(SessionOptions{})
 		p.punching()
 		_ = p.cl[1].Close()
-		eventually(t, "gone", func() bool {
+		testkit.WaitFor(t, "gone", func() bool {
 			p.s.mu.Lock()
 			defer p.s.mu.Unlock()
 			return p.s.st.gone[1]
@@ -121,7 +122,7 @@ func TestAssistLimits(t *testing.T) {
 		send(t, p.cl[1], peerSeen(p, 1, 1, pubI))
 		expect[protocol.Assist](t, p.cl[0])
 		p.s.mu.Lock()
-		ev := p.s.st.ev
+		ev := p.s.st.rounds.ev
 		p.s.mu.Unlock()
 		if len(ev.SeenFrom[1]) != 1 || ev.SeenFrom[1][0] != pubI || !ev.PeerSeenUs[0] {
 			t.Fatalf("evidence %+v", ev)
@@ -153,14 +154,14 @@ func TestInject(t *testing.T) {
 	}
 	// Nothing left of the session budget: nothing to push.
 	p.s.mu.Lock()
-	granted := p.s.st.granted[0]
-	p.s.st.granted[0] = int(p.s.budget.MaxPackets)
+	granted := p.s.st.audit.granted[0]
+	p.s.st.audit.granted[0] = int(p.s.budget.MaxPackets)
 	p.s.mu.Unlock()
 	if err := p.s.Inject(protocol.RoleInitiator, a); !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "packets") {
 		t.Fatalf("without budget: %v", err)
 	}
 	p.s.mu.Lock()
-	p.s.st.granted[0] = granted
+	p.s.st.audit.granted[0] = granted
 	p.s.mu.Unlock()
 	if err := p.s.Inject(protocol.RoleInitiator, a); err != nil {
 		t.Fatal(err)
@@ -191,7 +192,7 @@ func TestInjectBounds(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	p.punching()
 	p.s.mu.Lock()
-	p.s.st.pair.Unverified = nil // as with a registry: a window needs a verified family
+	p.s.st.adm.pair.Unverified = nil // as with a registry: a window needs a verified family
 	p.s.mu.Unlock()
 	bad := protocol.Assist{Family: protocol.FamilyUDP4, Targets: []netip.AddrPort{pubR}, Meta: map[string]string{"": "x"}}
 	if err := p.s.Inject(protocol.RoleInitiator, bad); !invalidArgument(err) {
@@ -236,8 +237,8 @@ func TestSandwichEvents(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	p.punching()
 	p.s.mu.Lock()
-	p.s.st.cur.sandwich[1][0] = true // the responder runs the sandwich probe in IPv4
-	p.s.st.pair.Unverified = nil     // as with a registry: a window needs a verified family
+	p.s.st.rounds.cur.sandwich[1][0] = true // the responder runs the sandwich probe in IPv4
+	p.s.st.adm.pair.Unverified = nil        // as with a registry: a window needs a verified family
 	p.s.mu.Unlock()
 	ip := pubR.Addr()
 	ev := func(role protocol.Role, round, phase uint8, port uint16) nat.SandwichEvent {
@@ -269,8 +270,8 @@ func TestSandwichPerFamily(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	p.punching()
 	p.s.mu.Lock()
-	p.s.st.cur.sandwich[1] = [2]bool{true, true}
-	p.s.st.pair.Unverified = nil
+	p.s.st.rounds.cur.sandwich[1] = [2]bool{true, true}
+	p.s.st.adm.pair.Unverified = nil
 	p.s.mu.Unlock()
 	v4, v6 := pubR.Addr(), netip.MustParseAddr("2001:db8::77")
 	for _, e := range []struct {
@@ -287,7 +288,7 @@ func TestSandwichPerFamily(t *testing.T) {
 		t.Fatalf("sandwich targets %+v", got)
 	}
 	p.s.mu.Lock()
-	h4, h6 := p.s.st.sandHalf[1][0], p.s.st.sandHalf[1][1]
+	h4, h6 := p.s.st.sand.half[1][0], p.s.st.sand.half[1][1]
 	p.s.mu.Unlock()
 	if !h4.sent || h4.before.Addr() != v4 || h4.after.Addr() != v4 || h6.before.Addr() != v6 || h6.after.Addr() != v6 {
 		t.Fatalf("halves v4 %+v v6 %+v", h4, h6)
@@ -329,10 +330,10 @@ func TestLatePortMapOnce(t *testing.T) {
 		s.latePortMapLocked(0, u4, protocol.PortMapReport{Method: protocol.PortMapUPnP,
 			External: netip.AddrPortFrom(pubI.Addr(), port), Internal: localI, LeaseSeconds: 60}, 0)
 	}
-	if q := s.st.portmap[1]; len(q) != 1 || q[0].Targets[0].Port() != 41000 {
+	if q := s.st.rounds.portmap[1]; len(q) != 1 || q[0].Targets[0].Port() != 41000 {
 		t.Fatalf("queued %+v", q)
 	}
-	if s.st.knownIP(0, u4, mustAP("192.0.2.200:1").Addr()) || !s.st.knownIP(0, u4, pubI.Addr()) {
+	if s.st.adm.knownIP(0, u4, mustAP("192.0.2.200:1").Addr()) || !s.st.adm.knownIP(0, u4, pubI.Addr()) {
 		t.Fatal("knownIP")
 	}
 }
@@ -344,22 +345,22 @@ func TestSandwichAdjacent(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	p.punching()
 	p.s.mu.Lock()
-	p.s.st.cur.sandwich[1][0] = true
-	p.s.st.pair.Unverified = nil
+	p.s.st.rounds.cur.sandwich[1][0] = true
+	p.s.st.adm.pair.Unverified = nil
 	p.s.mu.Unlock()
 	for phase, port := range map[uint8]uint16{nat.SandwichBefore: 500, nat.SandwichAfter: 501} {
 		p.s.onSandwich(nat.SandwichEvent{Role: protocol.RoleResponder, Round: 1, Phase: phase,
 			Observed: netip.AddrPortFrom(pubR.Addr(), port), At: r.clk.Now()})
 	}
 	r.clk.Advance(0)
-	eventually(t, "sandwich handled", func() bool {
+	testkit.WaitFor(t, "sandwich handled", func() bool {
 		p.s.mu.Lock()
 		defer p.s.mu.Unlock()
-		h := p.s.st.sandHalf[1][0]
-		return len(p.s.st.sandBox) == 0 && h.before.IsValid() && h.after.IsValid()
+		h := p.s.st.sand.half[1][0]
+		return len(p.s.st.sand.box) == 0 && h.before.IsValid() && h.after.IsValid()
 	})
 	p.s.mu.Lock()
-	sent, pushed := p.s.st.sandHalf[1][0].sent, p.s.st.ctr.PeerTargets
+	sent, pushed := p.s.st.sand.half[1][0].sent, p.s.st.ctr.PeerTargets
 	p.s.mu.Unlock()
 	if sent || pushed != 0 {
 		t.Fatalf("window pushed: sent %v, peer_targets %d", sent, pushed)
@@ -378,18 +379,17 @@ func TestDriftVerification(t *testing.T) {
 	defer s.mu.Unlock()
 	st := &s.st
 	u4 := protocol.FamilyUDP4
-	primary := nat.SocketID(u4, nat.IndexPrimary)
-	st.views[0] = protocol.PeerView{Families: []protocol.FamilyView{{Family: u4,
+	st.plan.views[0] = protocol.PeerView{Families: []protocol.FamilyView{{Family: u4,
 		Endpoints: []protocol.Endpoint{{Addr: pubI, Source: protocol.EndpointServer, Verified: true}}}}}
-	slot := func(a netip.AddrPort, cookie uint32) nat.Observation {
-		return nat.Observation{Socket: primary, Observer: 1, Observed: a, Changes: 1, Cookie: cookie}
+	slot := func(a netip.AddrPort, cookie uint32) nat.Drift {
+		return nat.Drift{Family: u4, Observer: 1, Observed: a, Cookie: cookie}
 	}
-	take := func(o nat.Observation) []netip.AddrPort {
+	take := func(o nat.Drift) []netip.AddrPort {
 		t.Helper()
-		st.pending[1] = nil
-		s.takeDriftLocked([2][]nat.Observation{{o}, nil})
+		st.rounds.pending[1] = nil
+		s.takeDriftLocked([2][]nat.Drift{{o}, nil})
 		var out []netip.AddrPort
-		for _, a := range st.pending[1] {
+		for _, a := range st.rounds.pending[1] {
 			if a.Source != protocol.TargetsDrift || a.Family != u4 {
 				t.Fatalf("queued %+v", a)
 			}
@@ -403,7 +403,7 @@ func TestDriftVerification(t *testing.T) {
 	steps := []struct {
 		name string
 		echo *protocol.Remap
-		o    nat.Observation
+		o    nat.Drift
 		want int
 	}{
 		{"in the summary", nil, slot(pubI, 5), 0},
@@ -416,12 +416,12 @@ func TestDriftVerification(t *testing.T) {
 		{"shared address space", &protocol.Remap{Observer: 1, Observed: cgn, Cookie: 3}, slot(cgn, 3), 0},
 	}
 	for _, c := range steps {
-		st.remaps[0][0] = c.echo
+		st.rounds.remaps[0][0] = c.echo
 		if got := take(c.o); len(got) != c.want || c.want == 1 && got[0] != c.o.Observed {
 			t.Fatalf("%s: pushed %v", c.name, got)
 		}
 	}
-	if !st.knownIP(0, u4, moved.Addr()) || st.knownIP(0, u4, cgn.Addr()) {
-		t.Fatalf("verified %v", st.verified[0][u4])
+	if !st.adm.knownIP(0, u4, moved.Addr()) || st.adm.knownIP(0, u4, cgn.Addr()) {
+		t.Fatalf("verified %v", st.adm.verified[0][u4])
 	}
 }

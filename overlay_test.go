@@ -190,7 +190,7 @@ func TestOverlayAdmissionAndKind(t *testing.T) {
 		w := testWorker(t, rt, protocol.ProbeSummary{Peer: view, Pair: protocol.PairFacts{SharedFamilies: []protocol.Family{protocol.FamilyUDP4},
 			SharedOverlay: map[protocol.Family]bool{protocol.FamilyUDP4: c.shared}}})
 		ok, per := w.admit(rt, ovl, protocol.StageDirect)
-		if ok != c.admit || (ok && per != lanPacketsPerRound) {
+		if ok != c.admit || (ok && per != protocol.LANRepeats) {
 			t.Errorf("%s: admit %v, %d packets", c.name, ok, per)
 		}
 		if ok, _ := w.admit(rt, ovl, protocol.StagePredict); ok {
@@ -213,10 +213,7 @@ func TestOverlayAdmissionAndKind(t *testing.T) {
 func testWorker(t *testing.T, rt *runtime, sum protocol.ProbeSummary) *worker {
 	t.Helper()
 	fs := rt.fam(protocol.FamilyUDP4)
-	s, err := rt.socks.open(context.Background(), protocol.FamilyUDP4, netip.AddrPort{}, PurposeProbe, 0, primaryRecvBuffer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openPrimary(t, rt)
 	fs.primary = s
 	fs.worker = newWorker(rt, fs, &sum)
 	return fs.worker

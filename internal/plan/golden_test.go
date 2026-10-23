@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	api "github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
 )
 
@@ -56,7 +57,7 @@ func TestGoldenDecisionTable(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			cl := p.Classify(classifyInput(c.a, c.b))
 			gc := goldenCase{Name: c.name, PairClass: cl.PairClass, SideA: cl.SideA}
-			var prev []RoundOutcome
+			var prev []api.RoundOutcome
 			ledger := mappingLedger{}
 			for round := 1; round <= 6; round++ {
 				in := roundInput(cl, c.a, c.b, round, prev)
@@ -73,7 +74,7 @@ func TestGoldenDecisionTable(t *testing.T) {
 				if dec.Stop != "" {
 					break
 				}
-				prev = append(prev, ledger.outcome(round, dec, RCNoContact))
+				prev = append(prev, ledger.outcome(round, dec, api.RoundNoContact))
 				if dec.Final {
 					break
 				}

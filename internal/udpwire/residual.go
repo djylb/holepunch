@@ -2,11 +2,12 @@ package udpwire
 
 import (
 	"net"
-	"net/netip"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/djylb/holepunch/internal/netaddr"
 )
 
 // DropResidual wraps pc, a handed-over socket given to a non-QUIC upper layer
@@ -89,7 +90,7 @@ func (r *residualConn) residual(pkt []byte, from net.Addr) bool {
 		return false
 	}
 	if peers := r.codec.peers.Load(); peers != nil {
-		if src, ok := addrPortOf(from); !ok || !slices.Contains(*peers, src) {
+		if src, ok := netaddr.FromNetAddr(from); !ok || !slices.Contains(*peers, src) {
 			return false
 		}
 	}
@@ -97,32 +98,4 @@ func (r *residualConn) residual(pkt []byte, from net.Addr) bool {
 	defer r.mu.Unlock()
 	_, ok := r.codec.decrypt(pkt, PeerOuterSize, r.scratch[:])
 	return ok
-}
-
-// addrPortOf converts a datagram source address to canonical form. UDP
-// sockets return *net.UDPAddr and some simulated networks an address with an
-// AddrPort method; both convert without allocating, others go through their
-// string form.
-func addrPortOf(a net.Addr) (netip.AddrPort, bool) {
-	var ap netip.AddrPort
-	switch v := a.(type) {
-	case nil:
-		return ap, false
-	case *net.UDPAddr:
-		ap = v.AddrPort()
-	case interface{ AddrPort() netip.AddrPort }:
-		ap = v.AddrPort()
-	default:
-		var err error
-		if ap, err = netip.ParseAddrPort(a.String()); err != nil {
-			return ap, false
-		}
-	}
-	return canonical(ap), ap.IsValid()
-}
-
-// canonical unmaps an IPv4-mapped address and drops the zone, so that the
-// same endpoint compares equal however a socket reported it.
-func canonical(ap netip.AddrPort) netip.AddrPort {
-	return netip.AddrPortFrom(ap.Addr().Unmap().WithZone(""), ap.Port())
 }

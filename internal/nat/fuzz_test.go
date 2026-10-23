@@ -83,7 +83,7 @@ func FuzzClassify(f *testing.F) {
 			t.Fatalf("bad pool %+v", tr)
 		}
 		eps := tb.Endpoints()
-		if len(tb.rows) > maxRows || len(eps) > maxEndpoints {
+		if len(tb.rows) > maxRows || len(eps) > protocol.MaxEndpoints {
 			t.Fatal("bounds")
 		}
 		_ = DisplayName(tr)

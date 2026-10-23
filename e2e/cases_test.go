@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -523,7 +523,7 @@ func cells() []*cell {
 	add(&cell{name: "rebind/PRC-FC", group: "rebind", class: classDegraded, base: classMust, build: single(profPRC, profFC),
 		session: func(s *sessionSpec, w *world, sides [2]*side) {
 			s.prepare = func(r *run) {
-				ready := r.taps[1].when(toServer, controlwire.TypePunchReady, nil)
+				ready := r.taps[1].when(toServer, wiretype.PunchReady, nil)
 				w.helpers.Add(1)
 				go func() {
 					defer w.helpers.Done()

@@ -27,5 +27,8 @@
 //
 // The client side (client, quicforward, cmd/holepunch, cmd/holepunch-diag)
 // never links the server side (broker, server, coord, natprobe); proto is
-// shared by both and depends on the standard library and internal/life only.
+// shared by both and depends on the standard library and internal/life
+// only. The module imports only public packages of the library:
+// internal/life is the module's own goroutine, recover and read-interrupt
+// boundary.
 package standalone
