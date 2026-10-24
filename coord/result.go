@@ -71,18 +71,18 @@ type WarmStart string
 
 // Warm starts.
 const (
-	// WarmOff: the side started cold — not offered, its early report never
-	// came, or its final report came before the session was planned.
+	// WarmOff means the side started cold: not offered, its early report
+	// never came, or its final report came before the session was planned.
 	WarmOff WarmStart = ""
-	// WarmHit: the session was planned on the side's early report and the
+	// WarmHit means the session was planned on the side's early report and the
 	// remembered traits, and its final report, if it came before the
 	// session confirmed, did not overturn them.
 	WarmHit WarmStart = "hit"
-	// WarmCold: the early report was not enough (no remembered mapping, a
+	// WarmCold means the early report was not enough (no remembered mapping, a
 	// new public IP, an observation that contradicted the memory): the
 	// session waited for the final report.
 	WarmCold WarmStart = "cold"
-	// WarmContradicted: the session was planned on the early report, and
+	// WarmContradicted means the session was planned on the early report, and
 	// the final report overturned the remembered traits; the rounds after
 	// it were planned on the final report.
 	WarmContradicted WarmStart = "contradicted"

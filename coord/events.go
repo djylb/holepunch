@@ -80,12 +80,12 @@ type GoData struct {
 	Budget  protocol.BudgetClass
 	Granted [2]int
 	Rescue  bool
-	// Sandwich are, by role, the families whose sandwich probe runs this
-	// round.
-	Sandwich [2][]protocol.Family
 	// Eager reports a round 1 started right after the summaries, without
 	// waiting for the readies (nothing to prepare on either side).
 	Eager bool
+	// Sandwich are, by role, the families whose sandwich probe runs this
+	// round.
+	Sandwich [2][]protocol.Family
 }
 
 // RoundEndedData is the data of EvRoundEnded.

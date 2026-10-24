@@ -95,7 +95,7 @@ func TestWarmStates(t *testing.T) {
 	rep := simclient.Report(*q.starts[0], 5, "quic", fam(0, simclient.OpenTraits))
 	rep.Early = true
 	send(t, q.cl[0], rep)
-	if res := cold.wait(q.s); res.Reason != protocol.ReasonProtocolViolation {
+	if res := cold.wait(q.s); res.Reason != protocol.ReasonProtocolViolation || res.Warm != [2]WarmStart{WarmOff, WarmOff} {
 		t.Fatalf("an early report not asked for: %+v", res)
 	}
 }

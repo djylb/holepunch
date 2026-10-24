@@ -97,21 +97,21 @@ func PongFor(p Ping, readAt, now time.Time) Pong {
 // ProbeReport carries the client's probe results. It is not sent when probing
 // failed for every family (punch_result{ok:false} instead).
 type ProbeReport struct {
-	SessionID string         `json:"session_id"`
-	Role      Role           `json:"role"`    // consistency check only
-	Control   ControlSpec    `json:"control"` // version + accepted features
-	Caps      ClientCaps     `json:"caps"`
-	ElapsedMs uint32         `json:"elapsed_ms"` // punch_start received → this frame written (an RTT sample)
-	Families  []FamilyReport `json:"families"`   // 1..2
+	SessionID string      `json:"session_id"`
+	Role      Role        `json:"role"`    // consistency check only
+	Control   ControlSpec `json:"control"` // version + accepted features
+	Caps      ClientCaps  `json:"caps"`
+	ElapsedMs uint32      `json:"elapsed_ms"` // punch_start received → this frame written (an RTT sample)
+	// Early marks the report a warm session sends before probing ends
+	// (ProbeSpec.Warm): the rows answered so far, no traits and no port
+	// mapping. The final report follows, and replaces it.
+	Early     bool           `json:"early,omitempty"`
+	Families  []FamilyReport `json:"families"` // 1..2
 	Clock     ClockSample    `json:"clock"`
 	Transport Transport      `json:"transport"`
 	// Mode is the mode this client accepts: background only when
 	// punch_start offered it and the caller asked for it.
 	Mode SessionMode `json:"mode,omitempty"`
-	// Early marks the report a warm session sends before probing ends
-	// (ProbeSpec.Warm): the rows answered so far, no traits and no port
-	// mapping. The final report follows, and replaces it.
-	Early bool `json:"early,omitempty"`
 }
 
 // ---- 3 probe_summary (S→C, one per side, receiver's view) ----

@@ -99,7 +99,7 @@ func TestProtocolTable(t *testing.T) {
 		{MsgPunchStart, "punch_start", "server", 16 << 10, typeOf[PunchStart](),
 			[]string{"session_id", "role", "token", "wire", "control", "probe", "timeouts", "policy?", "mode?"}},
 		{MsgProbeReport, "probe_report", "client", 32 << 10, typeOf[ProbeReport](),
-			[]string{"session_id", "role", "control", "caps", "elapsed_ms", "families", "clock", "transport", "mode?", "early?"}},
+			[]string{"session_id", "role", "control", "caps", "elapsed_ms", "early?", "families", "clock", "transport", "mode?"}},
 		{MsgProbeSummary, "probe_summary", "server", 48 << 10, typeOf[ProbeSummary](),
 			[]string{"session_id", "self", "peer", "pair", "transport", "timeouts", "plan"}},
 		{MsgPunchReady, "punch_ready", "client", 1 << 10, typeOf[PunchReady](),
