@@ -29,12 +29,17 @@ var saAlign = func() int {
 	return int(unsafe.Sizeof(uintptr(0)))
 }()
 
-// rtmHeaderLen is the length of a route message's header.
-func rtmHeaderLen([]byte) int {
+// rtmHeaderLen is the length of msg's header, the kernel's; 0 when msg is
+// shorter.
+func rtmHeaderLen(msg []byte) int {
+	n := syscall.SizeofRtMsghdr
 	if freebsdCompat32 {
-		return freebsdHeader64
+		n = freebsdHeader64
 	}
-	return syscall.SizeofRtMsghdr
+	if len(msg) < n {
+		return 0
+	}
+	return n
 }
 
 // rtmVersionOK reports a route message version this parser reads.

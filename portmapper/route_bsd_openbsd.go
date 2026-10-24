@@ -13,12 +13,15 @@ var saAlign = int(unsafe.Sizeof(uintptr(0)))
 // rtmVersionOK reports a route message version this parser reads.
 func rtmVersionOK(v byte) bool { return v == syscall.RTM_VERSION }
 
-// rtmHeaderLen is the length of a route message's header, which OpenBSD
-// writes in the header itself (rtm_hdrlen).
+// rtmHdrlenOff is the offset of rtm_hdrlen: OpenBSD writes the header's
+// length in the header itself.
+var rtmHdrlenOff = int(unsafe.Offsetof(syscall.RtMsghdr{}.Hdrlen))
+
+// rtmHeaderLen is the length msg's header gives; 0 when msg is too short
+// to give it.
 func rtmHeaderLen(msg []byte) int {
-	off := int(unsafe.Offsetof(syscall.RtMsghdr{}.Hdrlen))
-	if len(msg) < off+2 {
+	if len(msg) < rtmHdrlenOff+2 {
 		return 0
 	}
-	return int(binary.NativeEndian.Uint16(msg[off:]))
+	return int(binary.NativeEndian.Uint16(msg[rtmHdrlenOff:]))
 }

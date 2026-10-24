@@ -60,7 +60,7 @@ func Find(opts ...Option) error {
 		}
 		if time.Now().After(deadline) {
 			var b strings.Builder
-			fmt.Fprintf(&b, "goroutines: %d still running:", len(left))
+			_, _ = fmt.Fprintf(&b, "goroutines: %d still running:", len(left))
 			for _, g := range left {
 				b.WriteString("\n\n")
 				b.WriteString(g.stack)
@@ -88,7 +88,7 @@ func VerifyTestMain(m *testing.M, opts ...Option) {
 	code := m.Run()
 	if code == 0 {
 		if err := Find(opts...); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(os.Stderr, err) // nowhere to report a failed write
 			code = 1
 		}
 	}

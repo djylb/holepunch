@@ -2,6 +2,12 @@
 
 package portmapper
 
-// setHeaderLen records a test message's header length where the kernel
-// does: nowhere but in SizeofRtMsghdr.
-func setHeaderLen([]byte) {}
+import "syscall"
+
+// setHeaderLen checks that a test message holds the fixed header, which
+// records its length nowhere.
+func setHeaderLen(msg []byte) {
+	if len(msg) < syscall.SizeofRtMsghdr {
+		panic("route message shorter than its header")
+	}
+}

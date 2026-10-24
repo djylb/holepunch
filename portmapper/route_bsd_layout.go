@@ -17,8 +17,13 @@ var saAlign = func() int {
 	return 4
 }()
 
-// rtmHeaderLen is the length of a route message's header.
-func rtmHeaderLen([]byte) int { return syscall.SizeofRtMsghdr }
+// rtmHeaderLen is the length of msg's header, fixed; 0 when msg is shorter.
+func rtmHeaderLen(msg []byte) int {
+	if len(msg) < syscall.SizeofRtMsghdr {
+		return 0
+	}
+	return syscall.SizeofRtMsghdr
+}
 
 // rtmVersionOK reports a route message version this parser reads.
 func rtmVersionOK(v byte) bool { return v == syscall.RTM_VERSION }

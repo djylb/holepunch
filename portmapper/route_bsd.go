@@ -17,9 +17,9 @@ const darwinIfScope = 0x1000000
 
 // Offsets of the routing message header (syscall.RtMsghdr, the kernel's
 // rt_msghdr): the fields are read from the bytes, never through a pointer
-// conversion of them, which need not be aligned. The header's length, the
-// message version and the alignment of the sockaddrs after the header
-// (saAlign) are each system's (route_bsd_*.go).
+// conversion of them, which need not be aligned. The header's length
+// (rtmHeaderLen), the message version and the alignment of the sockaddrs
+// after the header (saAlign) are each system's (route_bsd_*.go).
 var (
 	rtmFlagsOff = int(unsafe.Offsetof(syscall.RtMsghdr{}.Flags))
 	rtmAddrsOff = int(unsafe.Offsetof(syscall.RtMsghdr{}.Addrs))
@@ -38,6 +38,10 @@ type bsdRoute struct {
 // systemGateway reads the IPv4 default route from the kernel routing table
 // (sysctl NET_RT_DUMP).
 func systemGateway() (netip.Addr, error) {
+	// RouteRIB is deprecated in favour of golang.org/x/net/route, which the
+	// module does not depend on; it is frozen, and the standard library's
+	// only sysctl by MIB.
+	//goland:noinspection GoDeprecation
 	rib, err := syscall.RouteRIB(syscall.NET_RT_DUMP, syscall.AF_INET)
 	if err != nil {
 		return netip.Addr{}, err
