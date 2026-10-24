@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/internal/ablation"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/nattest"
 )
 
@@ -232,5 +231,5 @@ func TestMatrix(t *testing.T) {
 			})
 		}
 	})
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }

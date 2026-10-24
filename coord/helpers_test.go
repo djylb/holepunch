@@ -11,12 +11,12 @@ import (
 
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
-	"go.uber.org/goleak"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // Addresses of the scripted clients (documentation ranges, global scope).
 var (

@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"go.uber.org/goleak"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
 // TestMain refuses an invalid suite configuration and checks that no
@@ -15,5 +15,5 @@ func TestMain(m *testing.M) {
 		_, _ = fmt.Fprintln(os.Stderr, "e2e:", err)
 		os.Exit(2)
 	}
-	goleak.VerifyTestMain(m)
+	goroutines.VerifyTestMain(m)
 }

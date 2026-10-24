@@ -6,13 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/internal/ablation"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goroutines.VerifyTestMain(m)
 }
 
 // specSwitches is the list of control-link switches, in order; allSwitches

@@ -9,9 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
 func TestDelayedDeliveryRealClock(t *testing.T) {
@@ -80,7 +79,7 @@ func TestFakeClockIsEventDriven(t *testing.T) {
 // TestFakeClockStartsNoGoroutine: a network on a fake clock runs entirely on
 // the goroutines of the test.
 func TestFakeClockStartsNoGoroutine(t *testing.T) {
-	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	defer goroutines.VerifyNone(t, goroutines.IgnoreCurrent())
 	clk := clock.NewFake(t, time.Time{})
 	n := NewNetwork(WithClock(clk), WithCoreLink(LinkConfig{Delay: time.Millisecond}))
 	if n.sched.group != nil {

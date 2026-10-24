@@ -11,16 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/stun"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // A small discrete-event world: one client host behind a configurable NAT,
 // a natprobe-like server (three ports on 198.51.100.1, an optional alt IP

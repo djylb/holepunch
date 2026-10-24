@@ -5,12 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/protocol"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // Socket ids of the udp4 tests.
 var (

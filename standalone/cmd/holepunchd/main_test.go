@@ -5,14 +5,13 @@ import (
 	"slices"
 	"testing"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/coord"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/stun"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 func TestParse(t *testing.T) {
 	o, err := parse([]string{"-probe-ip", "10.0.0.5=203.0.113.5", "-probe-alt-ip", "203.0.113.6", "-auth-token", "t"})

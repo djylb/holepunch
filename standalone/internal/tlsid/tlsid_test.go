@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/nattest"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 func TestNewAndPin(t *testing.T) {
 	cert, pin, err := New("example.test", time.Hour)

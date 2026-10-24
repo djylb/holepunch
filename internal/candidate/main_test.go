@@ -4,11 +4,11 @@ import (
 	"net/netip"
 	"testing"
 
-	"go.uber.org/goleak"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goroutines.VerifyTestMain(m)
 }
 
 func ap(s string) netip.AddrPort { return netip.MustParseAddrPort(s) }

@@ -11,14 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/testkit"
 )
 
 func TestCloseSemantics(t *testing.T) {
-	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	defer goroutines.VerifyNone(t, goroutines.IgnoreCurrent())
 	n := NewNetwork(WithCoreLink(LinkConfig{Delay: time.Hour}))
 	_, o := observer(t, n, 1000)
 	nat := n.NAT(PortRestricted())

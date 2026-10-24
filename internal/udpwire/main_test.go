@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/testkit"
-	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goroutines.VerifyTestMain(m)
 }
 
 // testToken and testRoute are the KDF vector inputs (0x00..0x1f, 0x20..0x2f).

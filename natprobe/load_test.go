@@ -10,8 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/internal/testkit"
@@ -69,7 +68,7 @@ func TestLoadManySessions(t *testing.T) {
 	// Goroutines are checked against those running now, not their number: one
 	// of an earlier test that ends meanwhile would lower the count, and a
 	// worker below is still exiting when Wait returns.
-	base := goleak.IgnoreCurrent()
+	base := goroutines.IgnoreCurrent()
 	var before runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
@@ -123,7 +122,7 @@ func TestLoadManySessions(t *testing.T) {
 	if perSession > 4<<10 {
 		t.Fatalf("%d B per session > 4 KiB", perSession)
 	}
-	if err := goleak.Find(base); err != nil {
+	if err := goroutines.Find(base); err != nil {
 		t.Fatal(err)
 	}
 	runtime.KeepAlive(reg)

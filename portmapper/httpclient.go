@@ -59,10 +59,15 @@ type limitedBody struct {
 func (b *limitedBody) Read(p []byte) (int, error) {
 	if b.left <= 0 {
 		var one [1]byte
-		if n, err := b.ReadCloser.Read(one[:]); n == 0 && err != nil {
-			return 0, err
+		for {
+			n, err := b.ReadCloser.Read(one[:])
+			switch {
+			case n > 0:
+				return 0, errBodyTooLarge
+			case err != nil:
+				return 0, err // the body ended exactly at the limit
+			}
 		}
-		return 0, errBodyTooLarge
 	}
 	if int64(len(p)) > b.left {
 		p = p[:b.left]

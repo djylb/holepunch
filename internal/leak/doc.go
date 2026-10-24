@@ -1,6 +1,6 @@
-// Package leak provides the resource accounting that goleak does not cover:
-// sockets opened through a holepunch Network and file descriptors of the
-// process.
+// Package leak provides the resource accounting that package goroutines
+// does not cover: sockets opened through a holepunch Network and file
+// descriptors of the process.
 //
 // TrackingNetwork wraps any implementation of the Network method set — the
 // same set as holepunch.Network, declared here with std types only so that

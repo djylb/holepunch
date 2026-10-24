@@ -12,12 +12,12 @@ import (
 
 	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
-	"go.uber.org/goleak"
 )
 
 // errUserPanic is the value user code panics with in the user-code faults.
@@ -291,5 +291,5 @@ func TestFaultUserCode(t *testing.T) {
 			})
 		}
 	})
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }

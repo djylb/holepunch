@@ -11,17 +11,17 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
-	"go.uber.org/goleak"
 
 	"github.com/djylb/holepunch"
 	"github.com/djylb/holepunch/coord"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/quicpath"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // alpn is the application protocol of the tests.
 const alpn = "quicpath-test"

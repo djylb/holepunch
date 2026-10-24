@@ -7,12 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/standalone/internal/tlsid"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 func parse(t *testing.T, args ...string) *Flags {
 	t.Helper()

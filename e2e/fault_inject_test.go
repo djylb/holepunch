@@ -12,9 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/internal/faultinject"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
@@ -323,5 +322,5 @@ func TestFaultInject(t *testing.T) {
 			}
 		})
 	}
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }

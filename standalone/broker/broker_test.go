@@ -8,15 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/coord"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone/internal/life"
 	"github.com/djylb/holepunch/standalone/proto"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // signal is a broker.Signal that records what the broker tells the host.
 type signal struct {

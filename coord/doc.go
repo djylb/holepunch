@@ -192,5 +192,5 @@
 // events (8), warnings (8) and the timeline.
 //
 // coord depends on protocol, natprobe, clock and internal packages; it never
-// links the client root package, the port mapper or golang.org/x/net.
+// links the client root package or the port mapper.
 package coord

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
 // The default-timeout comparison. The suite shortens the protocol timeouts —
@@ -131,7 +131,7 @@ func TestDefaultTimeouts(t *testing.T) {
 	} else {
 		t.Log(report)
 	}
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }
 
 // maxReportedProblems bounds the problems the report lists per run set.

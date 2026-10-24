@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // TestOSNetwork: ListenTCP and DialTCP reach each other on loopback.
 func TestOSNetwork(t *testing.T) {
@@ -47,7 +48,8 @@ func TestOSNetwork(t *testing.T) {
 }
 
 // TestDependencies guards the module's dependency rules: the module imports
-// only public packages of the library, the client side never links the
+// only public packages of the library — its tests also the library's
+// goroutine leak check, which links into no program — the client side never links the
 // server side, proto stays on the standard library and internal/life, and
 // the broker and server never link the client runtime.
 func TestDependencies(t *testing.T) {
@@ -84,9 +86,21 @@ func TestDependencies(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		pkg, imports, _ := strings.Cut(line, " ")
 		for _, imp := range strings.Fields(imports) {
+			if imp == mod+"/internal/goroutines" {
+				continue // its tests only: checked below
+			}
 			if strings.HasPrefix(imp, mod+"/") && !strings.HasPrefix(imp, mod+"/standalone") && strings.Contains(imp+"/", "/internal/") {
 				t.Errorf("%s imports the library's %s", pkg, imp)
 			}
+		}
+	}
+	out, err = exec.CommandContext(t.Context(), "go", "list", "-f", "{{.ImportPath}} {{join .Imports \" \"}}", "./...").Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if pkg, imports, _ := strings.Cut(line, " "); slices.Contains(strings.Fields(imports), mod+"/internal/goroutines") {
+			t.Errorf("%s imports the goroutine leak check outside its tests", pkg)
 		}
 	}
 	forbid := func(pkg string, bad ...string) {

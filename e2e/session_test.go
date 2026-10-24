@@ -254,7 +254,7 @@ func (r *run) closeSessions() error {
 const winnerCheckWait = time.Second
 
 // handoverQuietWindow is how long after Punch returned the handover
-// check looks for library calls on the winning socket; goleak, at the end of
+// check looks for library calls on the winning socket; the goroutine check, at the end of
 // every suite, catches a goroutine that would touch it later.
 const handoverQuietWindow = 100 * time.Millisecond
 

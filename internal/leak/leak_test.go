@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goroutines.VerifyTestMain(m)
 }
 
 // udpNetwork opens real loopback UDP sockets.

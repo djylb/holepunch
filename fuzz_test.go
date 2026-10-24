@@ -69,7 +69,9 @@ func FuzzIntercept(f *testing.F) {
 }
 
 // The client runtime links neither the server side nor a port-mapping
-// implementation.
+// implementation, and the module, tests included, links nothing but the
+// standard library and its own packages — never the quicpath or
+// standalone modules.
 func TestDependencies(t *testing.T) {
 	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", ".").Output()
 	if err != nil {
@@ -77,10 +79,21 @@ func TestDependencies(t *testing.T) {
 	}
 	for _, dep := range strings.Fields(string(out)) {
 		switch {
-		case strings.Contains(dep, "goupnp"), strings.Contains(dep, "jackpal"),
-			strings.HasSuffix(dep, "holepunch/coord"), strings.HasSuffix(dep, "holepunch/natprobe"),
+		case strings.HasSuffix(dep, "holepunch/coord"), strings.HasSuffix(dep, "holepunch/natprobe"),
 			strings.HasSuffix(dep, "holepunch/portmapper"), strings.HasSuffix(dep, "holepunch/nattest"):
 			t.Errorf("root package links %s", dep)
+		}
+	}
+	out, err = exec.CommandContext(t.Context(), "go", "list", "-deps", "-test", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", "./...").Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	const mod = "github.com/djylb/holepunch"
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		dep, _, _ := strings.Cut(line, " ") // a test variant: "pkg [pkg.test]"
+		ours := dep == mod || strings.HasPrefix(dep, mod+"/") || dep == mod+"_test" || dep == mod+".test"
+		if !ours || strings.HasPrefix(dep, mod+"/quicpath") || strings.HasPrefix(dep, mod+"/standalone") {
+			t.Errorf("the module links %s", dep)
 		}
 	}
 }

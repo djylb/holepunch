@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/leak"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
-	"go.uber.org/goleak"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 var loopback = netip.MustParseAddr("127.0.0.1")
 
@@ -199,12 +199,12 @@ func policy(lease uint32, methods ...protocol.PortMapMethod) protocol.PortMappin
 }
 
 // goroutineBase records the goroutines running now; noLeak checks that only
-// those are left (goleak retries while goroutines wind down).
-func goroutineBase() goleak.Option { return goleak.IgnoreCurrent() }
+// those are left (Find retries while goroutines wind down).
+func goroutineBase() goroutines.Option { return goroutines.IgnoreCurrent() }
 
-func noLeak(t *testing.T, base goleak.Option) {
+func noLeak(t *testing.T, base goroutines.Option) {
 	t.Helper()
-	if err := goleak.Find(base); err != nil {
+	if err := goroutines.Find(base); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -8,9 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/internal/ablation"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/stun"
 )
@@ -268,7 +267,7 @@ func TestClassifierOpener(t *testing.T) {
 			t.Errorf("classifier_report.md: %v", err)
 		}
 	}
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }
 
 // shapeOpener checks the flow opener per socket: every flow opened

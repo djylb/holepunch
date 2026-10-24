@@ -9,9 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/internal/udpwire"
@@ -22,7 +21,7 @@ import (
 // goroutines running at the start, not their number: one of an earlier test
 // that ends meanwhile would lower the count.
 func TestRegistryNoGoroutine(t *testing.T) {
-	base := goleak.IgnoreCurrent()
+	base := goroutines.IgnoreCurrent()
 	clk := clock.NewFake(t, time.Time{})
 	reg := NewRegistry(RegistryConfig{Clock: clk})
 	for i := range 10000 {
@@ -35,7 +34,7 @@ func TestRegistryNoGoroutine(t *testing.T) {
 	if reg.Len() != 10000 {
 		t.Fatalf("len %d", reg.Len())
 	}
-	if err := goleak.Find(base); err != nil {
+	if err := goroutines.Find(base); err != nil {
 		t.Fatal(err)
 	}
 	clk.Advance(2 * time.Second)
@@ -43,7 +42,7 @@ func TestRegistryNoGoroutine(t *testing.T) {
 	if removed != 10000 || reg.Len() != 0 {
 		t.Fatalf("removed %d len %d", removed, reg.Len())
 	}
-	if err := goleak.Find(base); err != nil {
+	if err := goroutines.Find(base); err != nil {
 		t.Fatal(err)
 	}
 }

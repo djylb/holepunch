@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/wiretype"
-	"go.uber.org/goleak"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // memConn is a net.Conn whose reads come from a fixed byte stream (optionally
 // in small chunks) and whose writes are discarded. Deadlines are accepted and

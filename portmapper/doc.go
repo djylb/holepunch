@@ -28,7 +28,7 @@
 //
 // The gateway lookup reads the operating system's routing table — Linux
 // /proc/net/route, the darwin and BSD routing table through sysctl
-// (golang.org/x/net/route), Windows GetIpForwardTable — unless Config.Gateway
+// (NET_RT_DUMP, parsed here), Windows GetIpForwardTable — unless Config.Gateway
 // replaces it. It runs at most once at a time per Mapper and its result is
 // cached; a gateway that answers nothing is looked up again by the next Map.
 // A lookup that fails — Android may refuse /proc/net/route to ordinary apps

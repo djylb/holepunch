@@ -5,7 +5,6 @@ go 1.26.0
 require (
 	github.com/djylb/holepunch v0.0.0
 	github.com/quic-go/quic-go v0.63.0
-	go.uber.org/goleak v1.3.0
 )
 
 require (

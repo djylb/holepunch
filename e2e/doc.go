@@ -100,8 +100,8 @@
 // contention does not distort the time KPIs; under the race detector every
 // time bound is multiplied by three. Each run builds its own simulated
 // Internet and coordinator and closes them before it returns; the top-level
-// tests run one after the other, so goleak checks the whole process after
-// every suite and in TestMain. Helper goroutines of a construct (the
+// tests run one after the other, so the goroutine check covers the whole
+// process after every suite and in TestMain. Helper goroutines of a construct (the
 // neighbours that load a NAT) end with their run and the world waits for
 // them. TestFaultInject runs its points one at a time: the registry of
 // injection points is process-wide.

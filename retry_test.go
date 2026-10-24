@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestNextAttempt(t *testing.T) {
 		{"relay only long run", herr(protocol.ReasonUDPBlocked, "", 0), 23, ActionRelayOnly, 12 * time.Hour, 24 * time.Hour},
 		{"relay only longer", herr(protocol.ReasonUDPBlocked, "", 0), 30, ActionRelayOnly, 12 * time.Hour, 24 * time.Hour},
 		{"background long run", herr(protocol.ReasonHardSymmetricRandom, "", 0), 30, ActionBackground, 15 * time.Minute, 30 * time.Minute},
-		{"huge attempt", herr(protocol.ReasonProbeTimeout, "", 0), 1 << 40, ActionRetry, 150 * time.Second, 5 * time.Minute},
+		{"huge attempt", herr(protocol.ReasonProbeTimeout, "", 0), math.MaxInt, ActionRetry, 150 * time.Second, 5 * time.Minute},
 		{"deadline", &Error{Reason: protocol.ReasonCanceled, Err: context.DeadlineExceeded}, 1, ActionRetry, 500 * time.Millisecond, time.Second},
 		{"plain deadline", context.DeadlineExceeded, 1, ActionRetry, 500 * time.Millisecond, time.Second},
 		{"unknown reason", herr("future_reason", "", 0), 1, ActionRetry, 500 * time.Millisecond, time.Second},

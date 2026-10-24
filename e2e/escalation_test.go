@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -114,7 +113,7 @@ func TestBackgroundEscalation(t *testing.T) {
 	} else {
 		t.Log(report)
 	}
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }
 
 // escalate runs the sequences of one pair.

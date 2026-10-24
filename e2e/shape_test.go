@@ -7,9 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/internal/ablation"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -87,7 +86,7 @@ func TestShapeAcrossSessions(t *testing.T) {
 			})
 		}
 	})
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }
 
 // sprayAlpha is the chance that two sessions' independent random ports

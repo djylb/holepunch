@@ -35,7 +35,7 @@ jobs:
         with:
           go-version: stable
           cache-dependency-path: |
-            go.sum
+            go.mod
             standalone/go.sum
             quicpath/go.sum
       - name: gofmt
@@ -98,7 +98,7 @@ jobs:
         with:
           go-version: stable
           cache-dependency-path: |
-            go.sum
+            go.mod
             standalone/go.sum
             quicpath/go.sum
       # The load tests (-tags load, Unix only) are run by hand; vet keeps
@@ -129,7 +129,7 @@ jobs:
         with:
           go-version: stable
           cache-dependency-path: |
-            go.sum
+            go.mod
             standalone/go.sum
             quicpath/go.sum
       - name: target

@@ -10,8 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone/broker"
@@ -22,7 +21,7 @@ import (
 	"github.com/djylb/holepunch/standalone/server"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 const echoMode = "udp_echo"
 

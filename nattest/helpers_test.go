@@ -9,13 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goroutines.VerifyTestMain(m)
 }
 
 // newNet creates a network that is closed at the end of the test; a failed

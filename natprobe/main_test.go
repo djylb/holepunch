@@ -8,8 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/internal/testkit"
@@ -17,7 +16,7 @@ import (
 	"github.com/djylb/holepunch/protocol"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 func tok(b byte) protocol.Token {
 	var t protocol.Token

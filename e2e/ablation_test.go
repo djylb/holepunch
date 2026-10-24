@@ -8,9 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/internal/ablation"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -364,7 +363,7 @@ func TestAblation(t *testing.T) {
 	for _, f := range failed {
 		t.Error(f)
 	}
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }
 
 // memoriesPerSequence is the length of a memory sequence.

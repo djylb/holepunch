@@ -13,11 +13,9 @@ import (
 	"time"
 )
 
-// SSDP (UPnP device architecture, section 1.3). Discovery is implemented here
-// so that it returns on the first answer, is bounded by the attempt's context
-// and uses a socket from Config.Network; goupnp's discovery opens its own
-// sockets, always waits for its whole search window and logs through the
-// standard logger.
+// SSDP (UPnP device architecture, section 1.3). Discovery returns on the
+// first answer, is bounded by the attempt's context and uses a socket from
+// Config.Network.
 
 var ssdpMulticastAddr = netip.AddrPortFrom(netip.AddrFrom4([4]byte{239, 255, 255, 250}), ssdpPort)
 

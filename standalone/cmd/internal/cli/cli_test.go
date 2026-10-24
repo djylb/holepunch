@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"go.uber.org/goleak"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 func TestStringList(t *testing.T) {
 	var l StringList

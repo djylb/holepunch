@@ -11,8 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/standalone/broker"
 	"github.com/djylb/holepunch/standalone/client"
@@ -23,7 +22,7 @@ import (
 	"github.com/djylb/holepunch/standalone/server"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // hostRun serves "office" through hostC with h; the test's cleanup stops
 // it.

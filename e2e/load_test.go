@@ -15,11 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/coord"
 	"github.com/djylb/holepunch/internal/ablation"
 	"github.com/djylb/holepunch/internal/controlwire"
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/wiretype"
@@ -429,7 +428,7 @@ func TestLoadControlPlane(t *testing.T) {
 	if err := net0.Close(); err != nil {
 		t.Errorf("network close: %v", err)
 	}
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }
 
 // readyToGo returns when the coordinator read the second punch_ready and
@@ -568,5 +567,5 @@ func TestLoadClients(t *testing.T) {
 	if err := w.close(); err != nil {
 		t.Error(err)
 	}
-	goleak.VerifyNone(t)
+	goroutines.VerifyNone(t)
 }

@@ -8,10 +8,10 @@ import (
 	"syscall"
 	"testing"
 
-	"go.uber.org/goleak"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // wrapped is err as package net returns it from a socket call.
 func wrapped(err error) error {

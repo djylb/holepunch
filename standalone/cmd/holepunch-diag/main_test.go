@@ -7,15 +7,14 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
+	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/standalone/client"
 	"github.com/djylb/holepunch/standalone/internal/testkit"
 	"github.com/djylb/holepunch/standalone/internal/testworld"
 )
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
 
 // TestProbeEcho runs both sides of the diagnostic over a punched session.
 func TestProbeEcho(t *testing.T) {

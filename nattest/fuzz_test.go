@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/holepunch/internal/goroutines"
 )
 
 // FuzzNATSim drives random outbound, inbound, time and reboot sequences
@@ -26,7 +25,7 @@ func FuzzNATSim(f *testing.F) {
 		if len(data) < 5 {
 			return
 		}
-		defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+		defer goroutines.VerifyNone(t, goroutines.IgnoreCurrent())
 		clk := clock.NewFake(t, time.Time{})
 		n := NewNetwork(WithClock(clk), WithEventLog(64), WithSeed(int64(len(data))))
 		cfg := NATConfig{

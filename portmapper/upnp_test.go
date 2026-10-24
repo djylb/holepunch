@@ -67,12 +67,16 @@ func TestUPnPServicesStayOnDeviceHost(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, desc) }))
 		loc, _ := url.Parse(srv.URL + "/rootDesc.xml")
 		hc := newHTTPClient()
-		root, err := fetchRootDevice(context.Background(), hc, loc)
+		d, err := fetchDescription(context.Background(), hc, loc)
 		srv.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := len(upnpServices(root, loc, hc)); got != tc.want {
+		services, err := wanServices(d, loc, hc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(services); got != tc.want {
 			t.Errorf("URLBase %q controlURL %q: %d services, want %d", tc.base, tc.control, got, tc.want)
 		}
 	}
@@ -131,11 +135,11 @@ func TestFetchRootDeviceRejectsOversizedAndRedirects(t *testing.T) {
 	defer srv.Close()
 	hc := newHTTPClient()
 	loc, _ := url.Parse(srv.URL + "/rootDesc.xml")
-	if _, err := fetchRootDevice(context.Background(), hc, loc); !errors.Is(err, errBodyTooLarge) {
+	if _, err := fetchDescription(context.Background(), hc, loc); !errors.Is(err, errBodyTooLarge) {
 		t.Fatalf("oversized description: err = %v", err)
 	}
 	loc, _ = url.Parse(srv.URL + "/redirect")
-	if _, err := fetchRootDevice(context.Background(), hc, loc); err == nil || !strings.Contains(err.Error(), "302") {
+	if _, err := fetchDescription(context.Background(), hc, loc); err == nil || !strings.Contains(err.Error(), "302") {
 		t.Fatalf("redirect: err = %v, want the 302 itself", err)
 	}
 }
