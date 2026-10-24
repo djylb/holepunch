@@ -169,7 +169,7 @@ func TestDialStopsWhenSocketClosed(t *testing.T) {
 	defer timer.Stop()
 	start := time.Now()
 	_, err := quicpath.Dial(context.Background(), p.sess[0], p.tlsConfig(t, 0, p.ids[0]), nil)
-	if !errors.Is(err, quic.ErrTransportClosed) || time.Since(start) > 2*time.Second {
+	if !errors.Is(err, quicpath.ErrClosed) || time.Since(start) > 2*time.Second {
 		t.Fatalf("Dial: %v after %v", err, time.Since(start))
 	}
 }

@@ -178,8 +178,8 @@ func (e *Endpoint) Paths() []holepunch.Path {
 
 // Dial connects QUIC to the peer on path i (Paths); this side must be the
 // initiator (ErrRole). It waits at most the session's TransportTimeout, in
-// at most three attempts, and stops at once when the socket is closed or
-// the peer fails the TLS handshake.
+// at most three attempts, and stops at once when the socket is closed — an
+// error wrapping ErrClosed — or the peer fails the TLS handshake.
 func (e *Endpoint) Dial(ctx context.Context, i int) (*Conn, error) {
 	if e.role != protocol.RoleInitiator {
 		return nil, fmt.Errorf("%w: the %s accepts", ErrRole, e.role)
@@ -202,6 +202,9 @@ func (e *Endpoint) Dial(ctx context.Context, i int) (*Conn, error) {
 		if attempt >= maxDialAttempts || ctx.Err() != nil || final(err) || !pause(ctx, dialRetryDelay) {
 			break
 		}
+	}
+	if errors.Is(last, net.ErrClosed) {
+		return nil, fmt.Errorf("%w: dial %v: %w", ErrClosed, p.RemoteAddr, last)
 	}
 	return nil, fmt.Errorf("quicpath: dial %v: %w", p.RemoteAddr, last)
 }
