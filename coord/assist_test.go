@@ -50,6 +50,8 @@ func TestAssistRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	send(t, p.cl[0], peerSeen(p, 0, 3, pubR)) // a future round
+	// The links are read apart: the confirmation must not overtake them.
+	p.waitCounters(func(c Counters) bool { return c.AssistRejected == 3 })
 	p.confirm(1, 1)
 	p.state(StateConfirming)
 	send(t, p.cl[0], peerSeen(p, 0, 1, pubR))
