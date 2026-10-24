@@ -12,23 +12,19 @@
 // new session. A stream starts with a small request naming the target and the
 // host's answer, then carries the bytes both ways with half-closes.
 //
-// Both sides use an Identity: a self-signed certificate whose pin travels to
-// the peer as the session's TransportData through the coordinator, whose
-// control streams are authenticated TLS. Each side verifies the other's
-// certificate against that pin on every handshake, and no TLS session is
-// ever resumed, so the QUIC connection is mutually authenticated without any
-// certificate authority.
-//
-// The QUIC layer takes the raw winning socket (Session.Holepunch()) and no
-// residual filter: quic-go drops holepunch's late handshake packets by their
-// first byte, and a wrapper would cost it the socket's batch and ECN paths. The
-// sockets' deadlines are cleared before QUIC takes them, defensively.
+// The QUIC layer is quicpath, which runs QUIC on the session's punched
+// socket. Both sides use a quicpath Identity: a self-signed certificate whose
+// pin travels to the peer as the session's TransportData through the
+// coordinator, whose control streams are authenticated TLS. Each side
+// verifies the other's certificate against that pin on every handshake, and
+// no TLS session is ever resumed, so the QUIC connection is mutually
+// authenticated without any certificate authority.
 //
 // # Bounds
 //
 //   - The host waits at most the session's TransportTimeout for the dialer's
-//     QUIC connection; then it closes the listener, the QUIC transport and
-//     the session's socket.
+//     QUIC connection, from the punched peer address only; then it closes
+//     the listener, the QUIC transport and the session's socket.
 //   - The dialer makes at most three attempts within the same bound and stops
 //     at once when the socket is closed.
 //   - The host reports the transport's outcome to the server

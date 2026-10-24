@@ -141,9 +141,13 @@ func (rt *runtime) finish(win *candidate.Action, cause error) (*Session, error) 
 			d := rt.diagnostics(win, f, failPhase)
 			diag = &d
 		}
-		return nil, rt.newError(f, failPhase, diag)
+		e := rt.newError(f, failPhase, diag)
+		rt.logFailure(e)
+		return nil, e
 	}
-	return rt.session(win, ho, rt.diagnostics(win, nil, failPhase)), nil
+	sess := rt.session(win, ho, rt.diagnostics(win, nil, failPhase))
+	rt.logDone(sess)
+	return sess, nil
 }
 
 // session builds the Session of a successful handover: the paths' distinct

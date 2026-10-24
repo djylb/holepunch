@@ -21,7 +21,34 @@
 //     evidence; coord.Config.TraitsMemory takes it or an implementation of
 //     the caller's, a persistent one for example.
 //   - ResolveSTUN: third-party STUN servers (stun.DefaultServers) for
-//     ProbeSpec.STUN.
+//     ProbeSpec.STUN; a STUNList resolves them again from time to time in
+//     a long-running server.
+//   - ServerAddrs: the addresses a client may reach the server at, for
+//     Server.ProbeSpecAt — the address of the client's control connection
+//     first, then configured ones, DNS names' and the host's global
+//     interface addresses. SpecSource joins a Server, a STUNList and a
+//     ServerAddrs into the ProbeSpec of every session (coord.ProbeFrom) or
+//     of one client (coord.AttachOptions.Probe).
+//
+// # Long-running servers
+//
+// The addresses behind names, and a host's own, change while a server runs.
+// A STUNList and a ServerAddrs read them again in the background, and a
+// SpecSource reads both afresh for every session:
+//
+//	stunList := natprobe.NewSTUNList(natprobe.STUNListConfig{Servers: stun.DefaultServers()})
+//	addrs := natprobe.NewServerAddrs(natprobe.ServerAddrsConfig{Names: []string{"punch.example.net"}})
+//	go stunList.Run(ctx)
+//	go addrs.Run(ctx)
+//	src := natprobe.SpecSource{Server: probe, STUN: stunList, Addrs: addrs}
+//	co, err := coord.New(coord.Config{Registry: reg, Probe: coord.ProbeFrom(src)})
+//	// per client, where its control connection is accepted:
+//	spec := src.SpecFor(conn)
+//	err = sess.Attach(role, conn, coord.AttachOptions{Probe: &spec})
+//
+// An ObserverGroup marked Optional (an IPv6 group on hosts that may lack
+// IPv6) is skipped when it cannot be bound, so one configuration serves
+// every host.
 //
 // # Wire invariants
 //

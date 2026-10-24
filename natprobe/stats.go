@@ -20,6 +20,7 @@ type ServerStats struct {
 	SourceRefused                uint64 // replies the system would not send from the probed address, sent from its routed one instead
 	CloseTimeouts                uint64
 	DeadListeners                int  // listeners stopped by a reader-loop panic
+	SkippedGroups                int  // optional groups Start left out: their sockets could not be bound
 	WildcardMultiIP              bool // a wildcard group that cannot reply from the probed address, on a host with ≥ 2 global addresses of its family
 }
 

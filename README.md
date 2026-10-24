@@ -66,6 +66,7 @@ go get github.com/djylb/holepunch
 | `github.com/djylb/holepunch/hostaddr`       | the host's addresses classified as loopback, LAN, public or overlay   |
 | `github.com/djylb/holepunch/clock`          | the time source, with a Fake clock for deterministic tests            |
 | `github.com/djylb/holepunch/nattest`        | in-process NAT and network simulator for tests                        |
+| `github.com/djylb/holepunch/quicpath`       | separate module: QUIC over the punched paths, with pinned peers       |
 | `github.com/djylb/holepunch/standalone/...` | separate module: a complete server and clients built on the library   |
 
 `stun`, `udpsock`, `hostaddr` and `clock` depend on the standard library only
@@ -92,22 +93,62 @@ if err != nil {
 }
 defer sess.Close()
 
-pc := sess.PacketConn()               // the punched UDP socket, now yours
+pc := sess.PacketConn()               // the punched UDP socket
 peer := sess.Result().Path.RemoteAddr // the peer's address on it
 _, err = pc.WriteTo([]byte("hello"), net.UDPAddrFromAddrPort(peer))
 ```
+
+When `Punch` returns, the library is done with the socket: it never reads or
+writes it again, and its deadlines and TTL are back to normal, so read and
+write it freely. The `Session` still owns it until `Close`, which releases
+the socket's port mapping (if any) and closes it; `sess.Detach()` instead
+hands the sockets and the mapping releases over, after which `Close` does
+nothing and closing them is up to you.
 
 A TLS connection is accepted as it is, its handshake completed first if it
 has not run yet. A control connection protected by another outer layer (an
 encrypted bridge, a QUIC stream) needs
 `Options.ControlSecurity: protocol.ControlSecurityDeclared`. An upper layer
 other than QUIC reads through `sess.FilterResidual(pc)`, which drops the
-peer's last handshake packets; QUIC needs nothing.
+peer's last handshake packets; QUIC needs nothing, and the `quicpath`
+module runs it over the session's paths with the peer's certificate pinned.
 
 With `Options.MaxPaths` above 1 the session can hand over more than one
 confirmed path, for example one per address family: `sess.Result().Paths()`
 lists them with their socket, kind of network and keepalive advice, and
 `sess.PacketConns()` returns each socket once.
+
+`Options.Logger` (a `*slog.Logger`) logs each session's milestones — the
+start, phase transitions, rounds, the confirmation and handover — and its
+failure with reason, detail and advice; tokens and routes never appear.
+
+### The control channel
+
+The control channel is any reliable, ordered stream that you have
+authenticated and that has `net.Conn` deadline semantics (a deadline in the
+past makes a blocked `Read` or `Write` return a timeout at once). TLS over TCP
+is the common case; a stream of a multiplexed connection the application
+already runs (a QUIC stream, a stream of its own multiplexer over TLS) works
+too, with `ControlSecurityDeclared`. Each session needs a stream of its own.
+
+The coordinator need not be a separate server. An application server that
+already holds both clients' connections runs `coord` in process and attaches
+one stream per client; a client can even host the coordinator itself and
+talk to its own `Punch` over `net.Pipe`:
+
+```go
+clientEnd, coordEnd := net.Pipe()
+err := sess.Attach(protocol.RoleInitiator, coordEnd,
+	coord.AttachOptions{Security: protocol.ControlSecurityDeclared})
+// handle err
+local, err := holepunch.Punch(ctx, clientEnd,
+	holepunch.Options{ControlSecurity: protocol.ControlSecurityDeclared})
+```
+
+The server decides each session: the policy, the timeouts and the observers
+come in its `punch_start`. `Options.Policy` can only tighten the server's
+policy (`protocol.Tighten`), and every timeout is clamped to the protocol's
+range (`protocol.Timeouts.Normalize`).
 
 ### Server
 
@@ -146,10 +187,21 @@ as well.
 
 STUN servers are optional. `stun.DefaultServers` lists public ones on
 several continents, mainland China included; `ResolveSTUN` turns names into
-the addresses the protocol carries (resolve again every few hours in a
-long-running server, as `holepunchd` does). A long-running server can hand
-every session the current list through `coord.Config.Probe` instead of
-`DefaultProbe`.
+the addresses the protocol carries. A long-running server keeps them fresh
+with a `natprobe.STUNList` and hands every session the current list through
+`coord.Config.Probe`:
+
+```go
+stunList := natprobe.NewSTUNList(natprobe.STUNListConfig{Servers: stun.DefaultServers()})
+_ = stunList.Refresh(ctx) // the first resolution, before serving
+go stunList.Run(ctx)      // again every 6 h
+src := natprobe.SpecSource{Server: probe, STUN: stunList}
+co, err := coord.New(coord.Config{Registry: reg, Probe: coord.ProbeFrom(src)})
+```
+
+A group marked `ObserverGroup.Optional` is skipped when its sockets cannot be
+bound (an IPv6 group on a host without IPv6), so one configuration serves
+every host; `ServerStats.SkippedGroups` counts the skipped ones.
 
 ### Server addresses known per session
 
@@ -171,6 +223,20 @@ spec := probe.ProbeSpecAt(currentPublicIP, addrTheClientConnectedTo)
 err = sess.Attach(protocol.RoleResponder, connB, coord.AttachOptions{Probe: &spec})
 ```
 
+`natprobe.ServerAddrs` collects those addresses: configured public ones, a
+DNS name's (looked up again every few minutes) and, with `HostPublic`, the
+host's global interface addresses. `SpecSource.SpecFor(conn)` puts the
+address the client's control connection reached first:
+
+```go
+addrs := natprobe.NewServerAddrs(natprobe.ServerAddrsConfig{Names: []string{"punch.example.net"}, HostPublic: true})
+go addrs.Run(ctx)
+src := natprobe.SpecSource{Server: probe, STUN: stunList, Addrs: addrs}
+// for each client:
+spec := src.SpecFor(conn)
+err = sess.Attach(role, conn, coord.AttachOptions{Probe: &spec})
+```
+
 A socket bound to the wildcard address replies from the address each probe
 was sent to (Linux, macOS, FreeBSD, OpenBSD, Windows), so a host whose
 address changes, or that has several, needs no rebinding. Whether an
@@ -190,6 +256,16 @@ cap. `coord.Config.Targets: coord.TargetsVerifiedOnly`
 (`holepunchd -verified-targets-only`) refuses such self-reported addresses. Letting the server see these clients at
 their public address (a hairpin with source NAT, or no LAN route to the
 server's public IP) avoids the restriction altogether.
+
+### Without an observer
+
+`coord.Config.NoObserver` runs the coordinator without natprobe. Nothing about
+the clients is then verified, so by design the sessions only aim Direct
+stages at the public addresses the clients report themselves (from their STUN
+servers and port mappings; at most 16, 8 packets each per round): no port
+prediction and no birthday rounds, which a client could otherwise point at a
+third party's address. Pairs that need prediction (symmetric NATs) need the
+observer.
 
 The package examples run the whole flow on a simulated Internet
 (`go test -run Example .`), and the `standalone` module is a complete
@@ -225,28 +301,49 @@ way, for example one shared by several servers.
 
 ### Handling failures
 
-A failed session returns a `*holepunch.Error`. Its `Advice` and the class of
-its `Reason` say what to do next:
+A failed session returns a `*holepunch.Error`. Its `Advice`, its `Reason`
+and `RetryAfter` say what to do next; `holepunch.NextAttempt` turns them into
+a retry policy with jittered exponential backoff:
 
 ```go
-if herr, ok := errors.AsType[*holepunch.Error](err); ok {
-	switch {
-	case herr.Advice == protocol.AdviceRelayOnly:
-		// no direct path is expected for this pair: keep the relay
-	case herr.Advice == protocol.AdviceBackgroundViable:
-		// keep relaying and punch again in a Background session:
-		// coord.SessionOptions.Mode on the server, Options.AcceptBackground here
-	case herr.Reason.Class() == protocol.ClassTransient:
-		// try again, after herr.RetryAfter when it is set
-	default:
-		// fatal (configuration, network) or NAT-hard: retrying now ends the same way
-	}
+next := holepunch.NextAttempt(err, failures) // failures: consecutive, this one included
+switch next.Action {
+case holepunch.ActionRetry:
+	// try again in the same mode after next.Delay (never before RetryAfter)
+case holepunch.ActionBackground:
+	// keep relaying and punch again after next.Delay in a Background session:
+	// coord.SessionOptions.Mode on the server, Options.AcceptBackground here
+case holepunch.ActionRelayOnly:
+	// no direct path is expected for this pair: keep the relay for next.Delay (hours)
+case holepunch.ActionGiveUp:
+	// canceled by you, or a configuration or version error: retrying ends the same way
 }
 ```
 
-`herr.Diagnostics` holds the full account of the session (the NAT traits of
+The server sees the same failure in `coord.Result.Retry`.
+
+The error's `Diagnostics` holds the full account of the session (the NAT traits of
 both sides, the rounds run, packet counters) for logs and support; it is nil
 when the session failed before the server started it.
+
+### Reconnecting and new paths
+
+A session ends once its paths are handed over; the library keeps no
+connection to the peer afterwards. Keeping a link alive is the upper layer's
+job, following each path's `Keepalive` advice:
+
+- Ask for spare paths up front with `Options.MaxPaths` (one per family or
+  kind of network), so that losing one path leaves another to move to.
+- When every path is gone, keep the traffic on the relay and run a new
+  session over a new control stream (a new stream of the same multiplexed
+  connection will do). Nobody waits for it, so offer it as a
+  Background session (`coord.SessionOptions.Mode`, `Options.AcceptBackground`),
+  which lets a hard pair take its time; move the traffic once it succeeds.
+- The same works to upgrade a relayed link that never punched, paced by
+  `NextAttempt`.
+
+Every session is independent: new sockets, new port mappings, its own
+`Session` to close or `Detach`.
 
 ## Tools
 

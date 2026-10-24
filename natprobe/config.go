@@ -61,6 +61,12 @@ type ObserverGroup struct {
 	// that serves change-IP replies. It needs a specific Bind and has one
 	// address.
 	Alt bool
+	// Optional lets Server.Start go on without this group when one of its
+	// sockets cannot be bound — an IPv6 group on a host without IPv6, an
+	// address that is not configured yet: the group is closed and left out
+	// of the specs, logged, and counted in ServerStats.SkippedGroups. At
+	// least one non-alt group must start.
+	Optional bool
 }
 
 // Scope is the kind of address an observer group is reached at
@@ -77,7 +83,7 @@ const (
 // ServerConfig configures a Server.
 type ServerConfig struct {
 	Registry           *Registry       // required; shared, not owned
-	Groups             []ObserverGroup // at least one non-alt group; ≤ 32 addresses (slots) in all, ≤ 16 observers and ≤ 1 alt group per family
+	Groups             []ObserverGroup // at least one non-alt group (that starts: ObserverGroup.Optional); ≤ 32 addresses (slots) in all, ≤ 16 observers and ≤ 1 alt group per family
 	BasePort           int             // listeners on BasePort..BasePort+PortCount-1; 0 = ports chosen by the kernel
 	PortCount          int             // default 3, 2..8
 	NoExtraReply       bool            // disables extra replies; the ack says so
@@ -93,7 +99,7 @@ type ServerConfig struct {
 	//holepunch:callback
 	Listen func(network string, laddr netip.AddrPort) (net.PacketConn, error)
 
-	Logger *slog.Logger // optional: recovered panics (at most one a second, never with a stack), stopped listeners, wildcard_multi_ip
+	Logger *slog.Logger // optional: recovered panics (at most one a second, never with a stack), stopped listeners, skipped optional groups, wildcard_multi_ip
 }
 
 // normalize applies the defaults to a copy of cfg and validates it.

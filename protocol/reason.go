@@ -58,8 +58,9 @@ func Reasons() []Reason {
 func (r Reason) Known() bool { return r.Class() != ClassNone }
 
 // ReasonClass groups reasons for retry decisions: none (unknown reason) |
-// fatal | transient | nat_hard | canceled. It is the only retry hint holepunch
-// gives; a caller builds its own retry schedule on top of it.
+// fatal | transient | nat_hard | canceled. With the summary's Advice it is
+// what a retry decision rests on; holepunch.NextAttempt is a policy built on
+// both.
 type ReasonClass uint8
 
 // Reason classes.

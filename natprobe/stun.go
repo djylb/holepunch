@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"time"
 
@@ -33,23 +34,17 @@ type LookupFunc func(ctx context.Context, network, host string) ([]netip.Addr, e
 // cannot be parsed or resolved is left out, and its error is joined into
 // err, so that a partial result comes with the reason for what is missing.
 //
-// Resolve again from time to time (hours) in a long-running server: the
-// addresses behind a name change.
+// The addresses behind a name change: a long-running server keeps the list
+// fresh with a STUNList, which resolves again from time to time.
 func ResolveSTUN(ctx context.Context, lookup LookupFunc, servers []string) ([]netip.AddrPort, error) {
-	if lookup == nil {
-		lookup = systemLookup
-	}
 	type resolved struct {
-		i      int
 		v4, v6 netip.AddrPort
 		err    error
 	}
 	res := make([]resolved, len(servers))
-	// Lookups report on a channel with room for all of them: one that
-	// outlives the join below writes nothing the caller reads.
-	done := make(chan resolved, len(servers))
-	g := life.New(ctx)
-	spawned := 0
+	ports := make([]uint16, len(servers))
+	var names []string
+	var named []int // names[k] is servers[named[k]]
 	for i, server := range servers {
 		host, portText, err := net.SplitHostPort(server)
 		var port uint64
@@ -63,32 +58,82 @@ func ResolveSTUN(ctx context.Context, lookup LookupFunc, servers []string) ([]ne
 			res[i].err = fmt.Errorf("natprobe: STUN server %q: %v", server, err)
 			continue
 		}
+		ports[i] = uint16(port)
 		if ip, perr := netip.ParseAddr(host); perr == nil {
-			res[i].v4, res[i].v6 = stunPick([]netip.Addr{ip}, uint16(port))
+			res[i].v4, res[i].v6 = stunPick([]netip.Addr{ip}, ports[i])
 			if !res[i].v4.IsValid() && !res[i].v6.IsValid() {
 				res[i].err = fmt.Errorf("natprobe: STUN server %q: not a global unicast address", server)
 			}
 			continue
 		}
-		res[i].err = fmt.Errorf("natprobe: STUN server %q: lookup did not finish", server)
-		spawned++
-		g.Go("natprobe.resolve_stun", func(ctx context.Context) {
+		names = append(names, host)
+		named = append(named, i)
+	}
+	addrs, errs := lookupHosts(ctx, lookup, names)
+	for k, i := range named {
+		r := &res[i]
+		lerr := errs[k]
+		if lerr == nil {
+			r.v4, r.v6 = stunPick(addrs[k], ports[i])
+			if !r.v4.IsValid() && !r.v6.IsValid() {
+				lerr = errors.New("no usable address")
+			}
+		}
+		if lerr != nil {
+			r.err = fmt.Errorf("natprobe: STUN server %q: %w", servers[i], lerr)
+		}
+	}
+	var v4, v6 []netip.AddrPort
+	var all []error
+	for _, r := range res {
+		if r.err != nil {
+			all = append(all, r.err)
+		}
+		if r.v4.IsValid() && len(v4) < maxSTUNPerFamily && !slices.Contains(v4, r.v4) {
+			v4 = append(v4, r.v4)
+		}
+		if r.v6.IsValid() && len(v6) < maxSTUNPerFamily && !slices.Contains(v6, r.v6) {
+			v6 = append(v6, r.v6)
+		}
+	}
+	return append(v4, v6...), errors.Join(all...)
+}
+
+// errLookupUnfinished is the error of a lookup that did not report back
+// before lookupHosts gave up on it.
+var errLookupUnfinished = errors.New("lookup did not finish")
+
+// lookupHosts looks hosts up in parallel with lookup (nil: the system
+// resolver) for network "ip", each within 3 s and ctx; lookup runs inside a
+// recover boundary. addrs[i] and errs[i] are hosts[i]'s. It returns within
+// about 4 s even when a lookup ignores its context, which then counts as
+// errLookupUnfinished.
+func lookupHosts(ctx context.Context, lookup LookupFunc, hosts []string) (addrs [][]netip.Addr, errs []error) {
+	if lookup == nil {
+		lookup = systemLookup
+	}
+	addrs = make([][]netip.Addr, len(hosts))
+	errs = make([]error, len(hosts))
+	if len(hosts) == 0 {
+		return addrs, errs
+	}
+	type result struct {
+		i     int
+		addrs []netip.Addr
+		err   error
+	}
+	// Lookups report on a channel with room for all of them: one that
+	// outlives the join below writes nothing the caller reads.
+	done := make(chan result, len(hosts))
+	g := life.New(ctx)
+	for i, host := range hosts {
+		errs[i] = errLookupUnfinished
+		g.Go("natprobe.lookup", func(ctx context.Context) {
 			lctx, cancel := context.WithTimeout(ctx, stunLookupTimeout)
 			defer cancel()
-			var addrs []netip.Addr
-			var lerr error
-			if perr := life.Safe("natprobe.resolve_stun", func() { addrs, lerr = lookup(lctx, "ip", host) }); perr != nil {
-				lerr = perr
-			}
-			r := resolved{i: i}
-			if lerr == nil {
-				r.v4, r.v6 = stunPick(addrs, uint16(port))
-				if !r.v4.IsValid() && !r.v6.IsValid() {
-					lerr = errors.New("no usable address")
-				}
-			}
-			if lerr != nil {
-				r.err = fmt.Errorf("natprobe: STUN server %q: %w", server, lerr)
+			r := result{i: i}
+			if perr := life.Safe("natprobe.lookup", func() { r.addrs, r.err = lookup(lctx, "ip", host) }); perr != nil {
+				r.addrs, r.err = nil, perr
 			}
 			done <- r
 		})
@@ -97,34 +142,21 @@ func ResolveSTUN(ctx context.Context, lookup LookupFunc, servers []string) ([]ne
 	// wait for one that ignores its context. Close cancels what is left.
 	backstop := time.NewTimer(stunLookupTimeout + stunLookupTimeout/4)
 	defer backstop.Stop()
+	store := func(r result) { addrs[r.i], errs[r.i] = r.addrs, r.err }
 collect:
-	for range spawned {
+	for range hosts {
 		select {
 		case r := <-done:
-			res[r.i] = r
+			store(r)
 		case <-backstop.C:
 			break collect
 		}
 	}
 	_ = g.Close(stunLookupTimeout / 4)
 	for len(done) > 0 {
-		r := <-done
-		res[r.i] = r
+		store(<-done)
 	}
-	var v4, v6 []netip.AddrPort
-	var errs []error
-	for _, r := range res {
-		if r.err != nil {
-			errs = append(errs, r.err)
-		}
-		if r.v4.IsValid() && len(v4) < maxSTUNPerFamily && !contains(v4, r.v4) {
-			v4 = append(v4, r.v4)
-		}
-		if r.v6.IsValid() && len(v6) < maxSTUNPerFamily && !contains(v6, r.v6) {
-			v6 = append(v6, r.v6)
-		}
-	}
-	return append(v4, v6...), errors.Join(errs...)
+	return addrs, errs
 }
 
 // stunPick returns the first global IPv4 and IPv6 address of addrs at port
@@ -143,13 +175,4 @@ func stunPick(addrs []netip.Addr, port uint16) (v4, v6 netip.AddrPort) {
 		}
 	}
 	return v4, v6
-}
-
-func contains(list []netip.AddrPort, a netip.AddrPort) bool {
-	for _, x := range list {
-		if x == a {
-			return true
-		}
-	}
-	return false
 }

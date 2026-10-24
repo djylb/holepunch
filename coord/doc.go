@@ -18,6 +18,11 @@
 //	err = sess.Attach(protocol.RoleResponder, connB, coord.AttachOptions{})
 //	res, err := sess.Wait(ctx) // or Config.OnResult for every session
 //
+// A long-running server reads the probe spec afresh for every session
+// instead — Config.Probe: ProbeFrom(natprobe.SpecSource{...}), with STUN
+// servers and server addresses that natprobe keeps up to date — and gives
+// a client's own addresses in AttachOptions.Probe.
+//
 // Once Attach returns nil the connection belongs to the session, which
 // closes it when the session ends. A failed session's Result.Retry says
 // whether to try again and in which mode; a client that should keep

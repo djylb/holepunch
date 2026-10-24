@@ -11,12 +11,10 @@ import (
 	"net/netip"
 	"os"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/djylb/holepunch/coord"
 	"github.com/djylb/holepunch/natprobe"
-	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/standalone"
 	"github.com/djylb/holepunch/standalone/broker"
 	"github.com/djylb/holepunch/standalone/cmd/internal/cli"
@@ -29,13 +27,6 @@ import (
 func main() {
 	os.Exit(cli.Status(os.Stderr, "holepunchd", run(os.Args[1:])))
 }
-
-// How often the STUN servers' names are resolved again: stunRefresh, or
-// stunRetry while the last resolution left none.
-const (
-	stunRefresh = 6 * time.Hour
-	stunRetry   = time.Minute
-)
 
 // stunOff is the -stun value that turns STUN off.
 const stunOff = "none"
@@ -151,20 +142,17 @@ func run(args []string) error {
 	}
 	ctx, stop := cli.SignalContext()
 	defer stop()
-	servers := &stunList{servers: o.stun, log: log}
-	if len(o.stun) > 0 {
-		servers.resolve(ctx)
-		g := life.New(ctx)
-		defer func() { _ = g.Close(0) }()
-		g.Go("holepunchd.stun", servers.refresh)
-	}
 	// Every session gets natprobe's live observers and the STUN servers
 	// as last resolved.
-	probeSpec := func(protocol.Role, *coord.SessionOptions) (protocol.ProbeSpec, error) {
-		spec := probe.ProbeSpec()
-		spec.STUN = servers.get()
-		return spec, nil
+	var servers *natprobe.STUNList
+	if len(o.stun) > 0 {
+		servers = natprobe.NewSTUNList(natprobe.STUNListConfig{Servers: o.stun, Logger: log})
+		_ = servers.Refresh(ctx) // what it could not resolve is logged; Run tries again
+		g := life.New(ctx)
+		defer func() { _ = g.Close(0) }()
+		g.Go("holepunchd.stun", servers.Run)
 	}
+	probeSpec := coord.ProbeFrom(natprobe.SpecSource{Server: probe, STUN: servers})
 
 	b, err := broker.New(broker.Config{Coord: coordConfig(o, reg, probeSpec, log)})
 	if err != nil {
@@ -298,51 +286,4 @@ func eventData(d any) string {
 		return "panic: " + p.Value
 	}
 	return fmt.Sprintf("%+v", d)
-}
-
-// stunList holds the STUN servers' addresses as last resolved.
-type stunList struct {
-	servers []string
-	log     *slog.Logger
-	cur     atomic.Pointer[[]netip.AddrPort]
-}
-
-// get returns the current addresses; nil before the first resolution.
-func (s *stunList) get() []netip.AddrPort {
-	if p := s.cur.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
-// resolve looks the servers up again. A resolution that finds none keeps
-// the addresses found before.
-func (s *stunList) resolve(ctx context.Context) {
-	addrs, err := natprobe.ResolveSTUN(ctx, nil, s.servers)
-	if err != nil {
-		s.log.Warn("stun servers left out", "err", strings.ReplaceAll(err.Error(), "\n", "; "))
-	}
-	if len(addrs) > 0 || s.cur.Load() == nil {
-		s.cur.Store(&addrs)
-	}
-	s.log.Info("stun servers", "addrs", s.get())
-}
-
-// refresh resolves the servers again every stunRefresh (stunRetry while
-// there are none) until ctx ends.
-func (s *stunList) refresh(ctx context.Context) {
-	for {
-		wait := stunRefresh
-		if len(s.get()) == 0 {
-			wait = stunRetry
-		}
-		t := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return
-		case <-t.C:
-		}
-		s.resolve(ctx)
-	}
 }

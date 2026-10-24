@@ -165,6 +165,40 @@ func TestSessionClose(t *testing.T) {
 	}
 }
 
+// Session.Detach hands the sockets and releases over; Close then touches
+// neither, and a second Detach gets nothing.
+func TestSessionDetach(t *testing.T) {
+	_, h := simHost(t)
+	c, err := h.ListenPacket(context.Background(), "udp4", netip.AddrPort{}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	s := &Session{conns: []net.PacketConn{c}, releases: []func() error{func() error { n++; return nil }}}
+	d := s.Detach()
+	if len(d.Conns) != 1 || d.Conns[0] != c || len(d.Releases) != 1 {
+		t.Fatalf("detached %+v", d)
+	}
+	if err := s.Close(); err != nil || n != 0 {
+		t.Fatalf("Close after Detach: %v, %d releases", err, n)
+	}
+	if _, err := c.WriteTo([]byte{1}, net.UDPAddrFromAddrPort(netipAP("192.0.2.1", 9))); err != nil {
+		t.Fatalf("Close closed a detached conn: %v", err)
+	}
+	if d2 := s.Detach(); d2.Conns != nil || d2.Releases != nil {
+		t.Fatalf("second Detach %+v", d2)
+	}
+	if err := d.Releases[0](); err != nil || n != 1 {
+		t.Fatal(err)
+	}
+	_ = c.Close()
+	closed := &Session{conns: []net.PacketConn{c}}
+	_ = closed.Close()
+	if d := closed.Detach(); d.Conns != nil {
+		t.Fatalf("Detach after Close %+v", d)
+	}
+}
+
 // uncomparableConn is a conn whose dynamic type == cannot compare.
 type uncomparableConn struct {
 	_ [0]func() // makes the type uncomparable

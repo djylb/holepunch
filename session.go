@@ -13,12 +13,16 @@ import (
 	"github.com/djylb/holepunch/protocol"
 )
 
-// Session is a successful hole punch: the caller owns the sockets of the
+// Session is a successful hole punch and the owner of the sockets of its
 // confirmed paths — the primary path's and, with Options.MaxPaths above 1,
-// those of the extra paths. When Punch
-// returns it, the library has stopped reading and writing these sockets for
-// good, cleared their deadlines and restored their TTL; it never touches
-// them again. The methods are safe for concurrent use.
+// those of the extra paths — and of their port mappings. When Punch returns
+// it, the library is done with these sockets: it has stopped reading and
+// writing them for good, cleared their deadlines and restored their TTL,
+// and never touches them again. The caller reads and writes them freely
+// (PacketConns); the Session only closes them, and releases their port
+// mappings, on Close. Detach ends that ownership instead: the caller then
+// closes the sockets and releases the mappings itself. The methods are safe
+// for concurrent use.
 type Session struct {
 	result   Result
 	diag     Diagnostics
@@ -26,7 +30,7 @@ type Session struct {
 	codec    *udpwire.Codec   // the session codec, every confirmed remote bound: recognises residual packets
 	releases []func() error   // the handed-over sockets' port-mapping releases
 
-	closeOnce sync.Once
+	closeOnce sync.Once // Close and Detach: the first one ends the Session's ownership
 	closeErr  error
 }
 
@@ -78,11 +82,37 @@ type FilteredConn interface {
 	Dropped() uint64
 }
 
+// Detached is what Session.Detach hands over: the caller's from then on.
+type Detached struct {
+	// Conns are the sockets of the session's paths, each once, the primary
+	// path's first (Session.PacketConns).
+	Conns []net.PacketConn
+	// Releases release the port mappings of these sockets
+	// (Path.PortMapping), in no particular order: call every one before
+	// closing any of Conns, or a mapping stays on the router until its
+	// lifetime runs out. Each is
+	// idempotent, recovers a panic of the port mapper and returns within
+	// 2 s.
+	Releases []func() error
+}
+
+// Detach ends the Session's ownership of the sockets and port mappings
+// and returns them: Close then does nothing, and the caller closes the
+// sockets and releases the mappings itself — for an upper layer that takes
+// over their whole lifetime. Detach after Close or a first Detach returns
+// an empty Detached.
+func (s *Session) Detach() Detached {
+	var d Detached
+	s.closeOnce.Do(func() { d = Detached{Conns: slices.Clone(s.conns), Releases: slices.Clone(s.releases)} })
+	return d
+}
+
 // Close releases the port mappings of the handed-over sockets, if any, and
-// then closes every socket of the session's paths, each once. It is
-// idempotent and safe for concurrent use: every caller gets the first error
-// (net.ErrClosed is not an error). It returns within the port mapper's
-// release bound (2 s per mapping, released one after the other).
+// then closes every socket of the session's paths, each once; after Detach
+// it does nothing and returns nil. It is idempotent and safe for concurrent
+// use: every caller gets the first error (net.ErrClosed is not an error). It
+// returns within the port mapper's release bound (2 s per mapping, released
+// one after the other).
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		var errs []error
@@ -177,14 +207,14 @@ func (p Path) clone() Path {
 // alive. A caller that must not run over a tunnel checks Kind, or excludes
 // overlay paths up front (Options.ExcludeOverlay).
 type Path struct {
-	Conn        net.PacketConn // the path's socket, owned by the Session
+	Conn        net.PacketConn // the path's socket, closed by Session.Close (unless detached)
 	Family      protocol.Family
 	Kind        protocol.PathKind         // public, lan, overlay or portmap
 	LocalAddr   netip.AddrPort            // concrete local address; wildcards replaced by the interface address
 	RemoteAddr  netip.AddrPort            // the confirmed peer address
 	RTT         time.Duration             // the smallest UDP round trip measured on the path; 0 without a sample
 	Keepalive   KeepaliveAdvice           // keepalive advice for the upper layer on this path
-	PortMapping *protocol.PortMappingInfo // the port mapping of the path's socket, released by Session.Close; nil without
+	PortMapping *protocol.PortMappingInfo // the port mapping of the path's socket, released by Session.Close (unless detached); nil without
 }
 
 // Timing breaks a session's duration down by phase.

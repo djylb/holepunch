@@ -72,6 +72,8 @@ type progressState struct {
 // rate allows, and a local copy for Options.OnProgress, enriched with
 // family, session phase, round and candidate remote. Telemetry only: nothing
 // in the session depends on it being delivered.
+//
+//holepunch:callback
 func (rt *runtime) progress(ev progressEvent) {
 	now := rt.clk.Now()
 	rt.prog.mu.Lock()
@@ -98,6 +100,7 @@ func (rt *runtime) progress(ev progressEvent) {
 	} else if accepted {
 		rt.cnt.progressDropped.Add(1)
 	}
+	rt.logProgress(ev)
 	if rt.sink == nil {
 		return
 	}

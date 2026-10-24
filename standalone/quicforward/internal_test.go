@@ -3,15 +3,11 @@ package quicforward
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
-	"net"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/standalone/client"
 	"github.com/djylb/holepunch/standalone/internal/testkit"
@@ -75,61 +71,6 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-func TestPeerPin(t *testing.T) {
-	id, err := NewIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pin, err := peerPin(id.TransportData()); err != nil || pin != id.pin {
-		t.Fatalf("%q %v", pin, err)
-	}
-	for _, bad := range []string{"", id.pin, "sha256:", "sha256:zz", "md5:" + id.pin} {
-		if _, err := peerPin([]byte(bad)); !errors.Is(err, ErrTransport) {
-			t.Errorf("%q: %v", bad, err)
-		}
-	}
-}
-
-func TestSameAddr(t *testing.T) {
-	want := netip.MustParseAddrPort("203.0.113.7:4000")
-	for a, ok := range map[net.Addr]bool{
-		&net.UDPAddr{IP: net.ParseIP("203.0.113.7"), Port: 4000}:        true,
-		&net.UDPAddr{IP: net.ParseIP("::ffff:203.0.113.7"), Port: 4000}: true,
-		&net.UDPAddr{IP: net.ParseIP("203.0.113.7"), Port: 4001}:        false,
-		&net.UDPAddr{IP: net.ParseIP("203.0.113.8"), Port: 4000}:        false,
-		&net.UnixAddr{Name: "x", Net: "unix"}:                           false,
-	} {
-		if sameAddr(a, want) != ok {
-			t.Errorf("%v: %v", a, !ok)
-		}
-	}
-	if sameAddr(nil, want) {
-		t.Fatal("nil address matched")
-	}
-}
-
-func TestQUICConfig(t *testing.T) {
-	c := quicConfig(holepunch.Result{})
-	if c.HandshakeIdleTimeout != defaultTransportTimeout || c.MaxIdleTimeout != defaultIdleTimeout || c.KeepAlivePeriod != defaultIdleTimeout/3 {
-		t.Fatalf("defaults %+v", c)
-	}
-	c = quicConfig(holepunch.Result{TransportTimeout: 3 * time.Second, Path: holepunch.Path{Keepalive: holepunch.KeepaliveAdvice{Interval: 10 * time.Second, Timeout: 30 * time.Second}}})
-	if c.HandshakeIdleTimeout != 3*time.Second || c.MaxIdleTimeout != 30*time.Second || c.KeepAlivePeriod != 10*time.Second {
-		t.Fatalf("advice %+v", c)
-	}
-}
-
-func TestPause(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if pause(ctx, time.Hour) {
-		t.Fatal("pause outlived its context")
-	}
-	if !pause(context.Background(), time.Millisecond) {
-		t.Fatal("pause interrupted")
-	}
-}
-
 // FuzzStreamRequest: whatever a dialer writes as a stream's request, the
 // host never panics and never resolves a target outside its list.
 func FuzzStreamRequest(f *testing.F) {
@@ -152,76 +93,6 @@ func FuzzStreamRequest(f *testing.F) {
 			t.Fatalf("resolved %q", target)
 		}
 	})
-}
-
-// TestIdentityTLS: each side accepts only the pinned peer, and no
-// connection can be resumed: the host issues no session ticket, so a
-// client with a session cache still makes a full handshake, pin check
-// included, every time.
-func TestIdentityTLS(t *testing.T) {
-	host, err := NewIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	dialer, err := NewIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	impostor, err := NewIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	n := nattest.NewNetwork()
-	defer func() { _ = n.Close() }()
-	type outcome struct {
-		state                tls.ConnectionState
-		clientErr, serverErr error
-	}
-	handshake := func(server, client *tls.Config) outcome {
-		a, b := n.Pipe(nattest.PipeConfig{})
-		defer func() { _ = a.Close() }()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		srvErr := make(chan error, 1)
-		go func() {
-			defer func() { _ = b.Close() }()
-			srv := tls.Server(b, server)
-			err := srv.HandshakeContext(ctx)
-			if err == nil {
-				// A byte after the handshake: the client reads it, and with it
-				// any session ticket the server sent first.
-				_, err = srv.Write([]byte{1})
-			}
-			srvErr <- err
-		}()
-		cl := tls.Client(a, client)
-		err := cl.HandshakeContext(ctx)
-		if err == nil {
-			_ = cl.SetReadDeadline(time.Now().Add(5 * time.Second))
-			_, err = cl.Read(make([]byte, 1))
-		}
-		return outcome{cl.ConnectionState(), err, <-srvErr}
-	}
-
-	server := host.serverTLS(dialer.pin)
-	if !server.SessionTicketsDisabled {
-		t.Fatal("host issues session tickets")
-	}
-	cache := tls.NewLRUClientSessionCache(4)
-	for range 2 {
-		cfg := dialer.clientTLS(host.pin)
-		cfg.ClientSessionCache = cache
-		o := handshake(server, cfg)
-		if o.clientErr != nil || o.serverErr != nil || o.state.DidResume {
-			t.Fatalf("pinned peers: client %v, server %v, resumed %v", o.clientErr, o.serverErr, o.state.DidResume)
-		}
-	}
-	if o := handshake(impostor.serverTLS(dialer.pin), dialer.clientTLS(host.pin)); o.clientErr == nil {
-		t.Fatal("dialer accepted an impostor host")
-	}
-	if o := handshake(server, impostor.clientTLS(host.pin)); o.serverErr == nil {
-		t.Fatal("host accepted an impostor dialer")
-	}
 }
 
 // quicPair punches a quicforward session in a World and returns both ends

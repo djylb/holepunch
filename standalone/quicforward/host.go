@@ -12,6 +12,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/djylb/holepunch/quicpath"
 	"github.com/djylb/holepunch/standalone"
 	"github.com/djylb/holepunch/standalone/client"
 	"github.com/djylb/holepunch/standalone/internal/life"
@@ -133,7 +134,13 @@ func ServeSession(ctx context.Context, sess *client.Session, id *Identity, cfg H
 	for {
 		st, err := conn.qc.AcceptStream(g.Context())
 		if err != nil {
-			if g.Context().Err() != nil || peerClosed(err) {
+			if g.Context().Err() != nil {
+				return nil
+			}
+			// Only the connection's end fails AcceptStream; quic-go closes
+			// the streams just before the pipe reports it.
+			<-conn.pipe.Done()
+			if errors.Is(conn.pipe.Err(), quicpath.ErrPeerClosed) {
 				return nil
 			}
 			return err
@@ -155,12 +162,6 @@ func reportTransport(log *slog.Logger, sess *client.Session, ok bool, detail str
 	if err := sess.ReportTransport(ok, detail); err != nil {
 		log.Debug("transport report failed", "session", sess.ID(), "ok", ok, "err", err)
 	}
-}
-
-// peerClosed reports the dialer's orderly close of the QUIC connection.
-func peerClosed(err error) bool {
-	var ae *quic.ApplicationError
-	return errors.As(err, &ae) && ae.Remote && ae.ErrorCode == codeClosed
 }
 
 // serveStream answers one stream: it reads the request, connects the

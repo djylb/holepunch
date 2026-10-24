@@ -58,6 +58,7 @@ type phaseTracker struct {
 	families map[protocol.Family]Phase
 	timeline []Transition
 	last     string
+	onMove   func(from, to Phase, event string) // optional: every session transition, called without the lock; set before use
 }
 
 func newPhaseTracker() *phaseTracker {
@@ -79,27 +80,47 @@ func (t *phaseTracker) lastEvent() string {
 }
 
 // advance moves the session forward to `to` and reports whether it moved.
+//
+//holepunch:callback
 func (t *phaseTracker) advance(to Phase, event string, at time.Time) bool {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.moveLocked(scopeSession, &t.session, to, event, at)
+	from := t.session
+	moved := t.moveLocked(scopeSession, &t.session, to, event, at)
+	t.mu.Unlock()
+	if moved {
+		t.moved(from, to, event)
+	}
+	return moved
 }
 
 // advanceFamily moves family f forward to `to` and the session with it.
 // Terminal phases are session-only.
+//
+//holepunch:callback
 func (t *phaseTracker) advanceFamily(f protocol.Family, to Phase, event string, at time.Time) bool {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	cur, ok := t.families[f]
 	if !ok {
 		cur = protocol.PhaseCreated
 	}
+	from := t.session
 	moved := t.moveLocked(string(f), &cur, to, event, at)
 	t.families[f] = cur
-	if moved {
-		t.moveLocked(scopeSession, &t.session, to, event, at)
+	sessionMoved := moved && t.moveLocked(scopeSession, &t.session, to, event, at)
+	t.mu.Unlock()
+	if sessionMoved {
+		t.moved(from, to, event)
 	}
 	return moved
+}
+
+// moved reports a session transition to onMove, outside the lock.
+//
+//holepunch:callback
+func (t *phaseTracker) moved(from, to Phase, event string) {
+	if t.onMove != nil {
+		t.onMove(from, to, event)
+	}
 }
 
 // note records an event without a phase change (it still becomes the last

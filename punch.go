@@ -3,6 +3,7 @@ package holepunch
 import (
 	"context"
 	"crypto/tls"
+	"log/slog"
 	"net"
 	"net/netip"
 	"sync"
@@ -98,6 +99,16 @@ type Options struct {
 	// allow and found, waiting at most about 150 ms more before the
 	// handover for them. 0 means 1; at most protocol.MaxPaths.
 	MaxPaths int
+	// Logger, optional, receives the session's milestones: punch_start at
+	// Info, every phase transition at Debug, the progress events (the
+	// summary, each round's go and end, the confirmation and the handover
+	// at Info, the others at Debug) and how the session ended — the path at
+	// Info, the failure with its reason, phase, detail and advice at Warn.
+	// It never logs the token, the route or transport data. Its handler
+	// runs inline on library goroutines and must not block; a panic in it
+	// is recovered and counted. nil logs nothing. OnProgress is independent
+	// of it.
+	Logger *slog.Logger
 	// AcceptBackground accepts a Background session when the server offers
 	// one (coord.SessionOptions.Mode): the caller already relays its
 	// traffic and nobody waits for this one, so a pair of hard NATs may run
@@ -363,6 +374,9 @@ func newRuntime(ctx context.Context, o Options) *runtime {
 		rt.fams[i] = &famState{fam: f}
 	}
 	rt.ctl = newControl(rt)
+	if o.Logger != nil {
+		rt.phases.onMove = rt.logPhase
+	}
 	if o.OnProgress != nil {
 		rt.sink = newProgressSink(rt, o.OnProgress)
 	}
@@ -439,6 +453,7 @@ func (rt *runtime) acceptStart(s startMsg) error {
 	}
 	rt.readHosts()
 	rt.ctl.accept(m.SessionID)
+	rt.logStart(m)
 	deadline := rt.waits.total
 	rt.deadline = rt.clk.AfterFunc(max(s.at.Add(deadline).Sub(rt.clk.Now()), 0), func() {
 		_ = life.Safe("session_deadline", func() { rt.g.Fail(fail(protocol.ReasonControlTimeout, "session_deadline", nil)) })

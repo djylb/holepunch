@@ -41,6 +41,8 @@ type Server struct {
 	listeners []*listener
 	readers   []*readerStats
 	altPools  [2]*pool // by family index
+	live      []bool   // by config group: started (an optional group may not)
+	skipped   int      // optional groups not started
 
 	wildcard      atomic.Bool
 	deadListeners atomic.Int64
@@ -63,10 +65,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 
 // Start binds every listener and every extra and alt pool socket
 // synchronously, so that a port conflict is returned here, where a caller's
-// start-up check needs it, starts the readers and returns. A configured group that
-// cannot be bound is an error: there is no silent fallback. On failure
-// everything opened is closed by the same path as Close, and the server stays
-// closed.
+// start-up check needs it, starts the readers and returns. A configured group
+// that cannot be bound is an error, unless it is Optional: that group is
+// closed, logged and counted (ServerStats.SkippedGroups), and the others
+// start, at least one non-alt group among them. On failure everything opened
+// is closed by the same path as Close, and the server stays closed.
 func (s *Server) Start() (err error) {
 	if s == nil {
 		return errors.New("natprobe: nil server")
@@ -86,7 +89,7 @@ func (s *Server) Start() (err error) {
 	s.g = g
 	s.mu.Unlock()
 
-	ls, alt, err := s.bind(g)
+	ls, alt, live, err := s.bind(g)
 	if err != nil {
 		_ = s.Close()
 		return err
@@ -100,7 +103,12 @@ func (s *Server) Start() (err error) {
 		s.mu.Unlock()
 		return fmt.Errorf("natprobe: server closed: %w", net.ErrClosed)
 	}
-	s.state, s.listeners, s.altPools, s.readers = stateStarted, ls, alt, readers
+	s.state, s.listeners, s.altPools, s.readers, s.live = stateStarted, ls, alt, readers, live
+	for _, ok := range live {
+		if !ok {
+			s.skipped++
+		}
+	}
 	s.mu.Unlock()
 
 	for i, l := range ls {
@@ -187,7 +195,7 @@ func (s *Server) observersAt(f protocol.Family, at []netip.Addr) []protocol.Obse
 	slots := map[uint8][]netip.Addr{} // config group -> its slots' addresses
 	var used []netip.Addr
 	for gi, g := range s.cfg.Groups {
-		if protocol.FamilyOf(g.Bind) == f {
+		if protocol.FamilyOf(g.Bind) == f && s.live[gi] {
 			slots[uint8(gi)] = slices.Clone(g.Advertise)
 			used = append(used, g.Advertise...)
 		}
@@ -198,7 +206,7 @@ func (s *Server) observersAt(f protocol.Family, at []netip.Addr) []protocol.Obse
 			continue
 		}
 		for gi, g := range s.cfg.Groups {
-			if l := slots[uint8(gi)]; protocol.FamilyOf(g.Bind) == f && !g.Alt && len(l) < g.Slots {
+			if l := slots[uint8(gi)]; protocol.FamilyOf(g.Bind) == f && s.live[gi] && !g.Alt && len(l) < g.Slots {
 				slots[uint8(gi)] = append(l, a)
 				used = append(used, a)
 				break
@@ -307,9 +315,9 @@ func (s *Server) Stats() ServerStats {
 		return ServerStats{}
 	}
 	s.mu.Lock()
-	readers := s.readers
+	readers, skipped := s.readers, s.skipped
 	s.mu.Unlock()
-	var st ServerStats
+	st := ServerStats{SkippedGroups: skipped}
 	for _, r := range readers {
 		r.addTo(&st)
 	}

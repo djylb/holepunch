@@ -1,7 +1,9 @@
 package natprobe
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"slices"
@@ -12,6 +14,9 @@ import (
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/udpsock"
 )
+
+// errServerClosed is the error of a bind that Close interrupted.
+var errServerClosed = fmt.Errorf("natprobe: server closed: %w", net.ErrClosed)
 
 // extraReadBuffer is the receive buffer of the extra-reply sockets, which are
 // never read: the kernel need not keep much for them.
@@ -77,78 +82,107 @@ func (p *pool) pick() (packetConn, msgConn, uint16) {
 
 // bind opens the listeners and the pools of every group and hands each
 // socket to g, so that a failure half way, or Close, closes what was opened.
-func (s *Server) bind(g *life.Group) ([]*listener, [2]*pool, error) {
-	var ls []*listener
-	var alt [2]*pool
-	og := 0
+// An optional group that cannot be bound is closed and skipped: live[gi]
+// tells which groups started. It fails when no non-alt group started.
+func (s *Server) bind(g *life.Group) (ls []*listener, alt [2]*pool, live []bool, err error) {
+	live = make([]bool, len(s.cfg.Groups))
+	var skipped []error
+	main, og := false, 0
 	for gi, grp := range s.cfg.Groups {
-		fam := protocol.FamilyOf(grp.Bind)
-		wildcard := grp.Bind.IsUnspecified()
-		n := s.cfg.PortCount
-		var flags uint8
-		if grp.Alt {
-			n, flags = 1, slotAlt
-		}
-		switch grp.Scope {
-		case ScopeAuto: // each announced address's own (handle.Announce)
-		case ScopePrivate:
-			flags |= slotPrivate
-		case ScopePublic:
-			flags |= slotPublic
-		}
-		var group []*listener
-		for pi := range n {
-			port := 0
-			if s.cfg.BasePort > 0 {
-				port = s.cfg.BasePort + pi
+		group, p, opened, gerr := s.bindGroup(g, gi, og, grp)
+		og += grp.Slots
+		if gerr != nil {
+			if !grp.Optional || errors.Is(gerr, errServerClosed) {
+				return nil, alt, nil, gerr
 			}
-			id := uint8(og*portsPerGroup + pi)
-			pc, lp, err := s.open(g, fmt.Sprintf("natprobe/listener[%d]", id), string(fam), netip.AddrPortFrom(grp.Bind, uint16(port)), 0)
-			if err != nil {
-				return nil, alt, err
-			}
-			if lp == 0 {
-				if port == 0 {
-					// The kernel chose a port the conn does not tell: the
-					// observer could not be advertised.
-					return nil, alt, fmt.Errorf("natprobe: listen %s %v: unknown local port", fam, grp.Bind)
-				}
-				lp = uint16(port)
-			}
-			l := &listener{id: id, og: uint8(og), slots: uint8(grp.Slots), pi: uint8(pi), group: uint8(gi), fam: fam,
-				alt: grp.Alt, flags: flags, raw: pc, conn: adaptConn(pc), port: lp, advs: grp.Advertise}
-			if wildcard {
-				l.msg = dstConn(pc)
-			}
-			group = append(group, l)
-		}
-		p := &pool{}
-		for k := range s.cfg.ExtraSockets {
-			pc, port, err := s.open(g, fmt.Sprintf("natprobe/extra[%d/%d]", gi, k), string(fam), netip.AddrPortFrom(grp.Bind, 0), extraReadBuffer)
-			if err != nil {
-				return nil, alt, err
-			}
-			if port != 0 {
-				p.conns = append(p.conns, adaptConn(pc))
-				p.ports = append(p.ports, port)
-				if m, ok := pc.(msgConn); ok && wildcard {
-					p.msgs = append(p.msgs, m)
+			for _, pc := range opened {
+				if g.Disown(pc) {
+					_ = life.Safe("natprobe/close-skipped", func() { _ = pc.Close() })
 				}
 			}
+			skipped = append(skipped, gerr)
+			s.log(slog.LevelWarn, "natprobe: optional group skipped", "group", gi, "bind", grp.Bind.String(), "err", gerr.Error())
+			continue
 		}
-		if len(p.msgs) != len(p.conns) {
-			p.msgs = nil
-		}
-		for _, l := range group {
-			l.pool = p
-		}
+		live[gi] = true
+		main = main || !grp.Alt
 		if grp.Alt {
-			alt[fam.Index()] = p
+			alt[protocol.FamilyOf(grp.Bind).Index()] = p
 		}
 		ls = append(ls, group...)
-		og += grp.Slots
 	}
-	return ls, alt, nil
+	if !main {
+		return nil, alt, nil, fmt.Errorf("natprobe: no non-alt group started: %w", errors.Join(skipped...))
+	}
+	return ls, alt, live, nil
+}
+
+// bindGroup opens the listeners and the extra-reply pool of group gi, whose
+// first observer group is og. It returns every socket it opened, on failure
+// too.
+func (s *Server) bindGroup(g *life.Group, gi, og int, grp ObserverGroup) (group []*listener, p *pool, opened []net.PacketConn, err error) {
+	fam := protocol.FamilyOf(grp.Bind)
+	wildcard := grp.Bind.IsUnspecified()
+	n := s.cfg.PortCount
+	var flags uint8
+	if grp.Alt {
+		n, flags = 1, slotAlt
+	}
+	switch grp.Scope {
+	case ScopeAuto: // each announced address's own (handle.Announce)
+	case ScopePrivate:
+		flags |= slotPrivate
+	case ScopePublic:
+		flags |= slotPublic
+	}
+	for pi := range n {
+		port := 0
+		if s.cfg.BasePort > 0 {
+			port = s.cfg.BasePort + pi
+		}
+		id := uint8(og*portsPerGroup + pi)
+		pc, lp, err := s.open(g, fmt.Sprintf("natprobe/listener[%d]", id), string(fam), netip.AddrPortFrom(grp.Bind, uint16(port)), 0)
+		if err != nil {
+			return nil, nil, opened, err
+		}
+		opened = append(opened, pc)
+		if lp == 0 {
+			if port == 0 {
+				// The kernel chose a port the conn does not tell: the
+				// observer could not be advertised.
+				return nil, nil, opened, fmt.Errorf("natprobe: listen %s %v: unknown local port", fam, grp.Bind)
+			}
+			lp = uint16(port)
+		}
+		l := &listener{id: id, og: uint8(og), slots: uint8(grp.Slots), pi: uint8(pi), group: uint8(gi), fam: fam,
+			alt: grp.Alt, flags: flags, raw: pc, conn: adaptConn(pc), port: lp, advs: grp.Advertise}
+		if wildcard {
+			l.msg = dstConn(pc)
+		}
+		group = append(group, l)
+	}
+	p = &pool{}
+	for k := range s.cfg.ExtraSockets {
+		pc, port, err := s.open(g, fmt.Sprintf("natprobe/extra[%d/%d]", gi, k), string(fam), netip.AddrPortFrom(grp.Bind, 0), extraReadBuffer)
+		if err != nil {
+			return nil, nil, opened, err
+		}
+		opened = append(opened, pc)
+		if port != 0 {
+			p.conns = append(p.conns, adaptConn(pc))
+			p.ports = append(p.ports, port)
+			if m, ok := pc.(msgConn); ok && wildcard {
+				p.msgs = append(p.msgs, m)
+			}
+		}
+	}
+	if len(p.msgs) != len(p.conns) {
+		p.msgs = nil
+	}
+	for _, l := range group {
+		l.pool = p
+	}
+	return group, p, opened, nil
 }
 
 // dstConn switches on the destination reports of a wildcard socket and
@@ -171,8 +205,8 @@ func dstConn(pc net.PacketConn) msgConn {
 // buffer when readBuffer > 0 and returns it with its local port (0 when
 // unknown). An injected Listen and every method of the conn it returns are
 // the caller's code: they run inside recover boundaries, and a panic is a
-// bind failure that Start reports, with the socket already owned by g so
-// that Start's failure path closes it.
+// bind failure that Start reports. A socket that fails after g took it is
+// closed here, since an optional group's failure does not close g.
 func (s *Server) open(g *life.Group, name, network string, laddr netip.AddrPort, readBuffer int) (pc net.PacketConn, port uint16, err error) {
 	listen := s.cfg.Listen
 	if listen == nil {
@@ -188,7 +222,7 @@ func (s *Server) open(g *life.Group, name, network string, laddr netip.AddrPort,
 		return nil, 0, fmt.Errorf("natprobe: listen %s %v: nil conn", network, laddr)
 	}
 	if !g.Own(name, pc) {
-		return nil, 0, fmt.Errorf("natprobe: server closed: %w", net.ErrClosed)
+		return nil, 0, errServerClosed
 	}
 	if perr := life.Safe("natprobe/listen", func() {
 		if rb, ok := pc.(interface{ SetReadBuffer(int) error }); ok && readBuffer > 0 {
@@ -196,6 +230,9 @@ func (s *Server) open(g *life.Group, name, network string, laddr netip.AddrPort,
 		}
 		port = netaddr.AddrPortOf(pc.LocalAddr()).Port()
 	}); perr != nil {
+		if g.Disown(pc) {
+			_ = life.Safe("natprobe/close-failed", func() { _ = pc.Close() })
+		}
 		return nil, 0, fmt.Errorf("natprobe: listen %s %v: %w", network, laddr, perr)
 	}
 	return pc, port, nil

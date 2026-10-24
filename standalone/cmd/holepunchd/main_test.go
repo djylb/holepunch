@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"log/slog"
-	"net/netip"
 	"slices"
 	"testing"
 
@@ -73,22 +71,6 @@ func TestSTUNFlag(t *testing.T) {
 		if !slices.Equal(o.stun, c.want) {
 			t.Fatalf("%v: stun %v, want %v", c.args, o.stun, c.want)
 		}
-	}
-
-	// A resolution that finds nothing keeps what an earlier one found.
-	l := &stunList{servers: []string{"192.0.2.1:3478", "[2001:db8::1]:3478"}, log: discard()}
-	if l.get() != nil {
-		t.Fatal("addresses before the first resolution")
-	}
-	l.resolve(context.Background())
-	want := []netip.AddrPort{netip.MustParseAddrPort("192.0.2.1:3478"), netip.MustParseAddrPort("[2001:db8::1]:3478")}
-	if !slices.Equal(l.get(), want) {
-		t.Fatalf("resolved %v", l.get())
-	}
-	l.servers = []string{"192.168.1.1:3478"}
-	l.resolve(context.Background())
-	if !slices.Equal(l.get(), want) {
-		t.Fatalf("after an empty resolution %v", l.get())
 	}
 }
 

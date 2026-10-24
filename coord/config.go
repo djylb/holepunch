@@ -23,6 +23,16 @@ type Rate struct{ PerSec, Burst int }
 // NewSession.
 type ProbeFunc func(role protocol.Role, opts *SessionOptions) (protocol.ProbeSpec, error)
 
+// ProbeFrom returns the ProbeFunc of a long-running server: every session
+// gets src.Spec() — the natprobe.Server's live observers at the current
+// natprobe.ServerAddrs, with the current natprobe.STUNList — read afresh
+// for each session. A client's own control connection is known only at
+// Attach: give AttachOptions.Probe src.SpecFor(conn) there to put the
+// address it connected to first.
+func ProbeFrom(src natprobe.SpecSource) ProbeFunc {
+	return func(protocol.Role, *SessionOptions) (protocol.ProbeSpec, error) { return src.Spec(), nil }
+}
+
 // TargetPolicy says which peer addresses the clients may aim at
 // (Config.Targets).
 type TargetPolicy uint8

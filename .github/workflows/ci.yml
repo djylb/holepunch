@@ -37,6 +37,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             standalone/go.sum
+            quicpath/go.sum
       - name: gofmt
         run: |
           out=$(gofmt -l .)
@@ -48,10 +49,14 @@ jobs:
           cd standalone
           go vet ./...
           go vet -tags holepunch_faultinject ./...
+          cd ../quicpath
+          go vet ./...
       - name: lintcheck
         run: |
           go run ./tools/lintcheck ./...
           cd standalone
+          go run github.com/djylb/holepunch/tools/lintcheck ./...
+          cd ../quicpath
           go run github.com/djylb/holepunch/tools/lintcheck ./...
       - name: race detector
         id: race
@@ -73,10 +78,15 @@ jobs:
         run: |
           go test ${{ steps.race.outputs.flag }} -count=1 ./...
           go test ${{ steps.race.outputs.flag }} -count=1 -tags holepunch_faultinject ./...
+      - name: quicpath test
+        working-directory: quicpath
+        run: go test ${{ steps.race.outputs.flag }} -count=1 ./...
       - name: build without the workspace
         run: |
           GOWORK=off go build ./...
           cd standalone
+          GOWORK=off go build ./...
+          cd ../quicpath
           GOWORK=off go build ./...
 
   e2e:
@@ -90,6 +100,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             standalone/go.sum
+            quicpath/go.sum
       # The load tests (-tags load, Unix only) are run by hand; vet keeps
       # them compiling.
       - name: vet load
@@ -120,6 +131,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             standalone/go.sum
+            quicpath/go.sum
       - name: target
         run: |
           {
@@ -135,8 +147,12 @@ jobs:
           cd standalone
           go vet ./...
           go vet -tags holepunch_faultinject ./...
+          cd ../quicpath
+          go vet ./...
       - name: build
         run: |
           go build ./...
           cd standalone
+          go build ./...
+          cd ../quicpath
           go build ./...

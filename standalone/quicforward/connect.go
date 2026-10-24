@@ -90,7 +90,7 @@ type forwarding struct {
 	conn *Conn
 }
 
-func (f *forwarding) alive() bool { return f.conn.qc.Context().Err() == nil }
+func (f *forwarding) alive() bool { return f.conn.alive() }
 
 func (f *forwarding) close() {
 	_ = f.conn.Close()
