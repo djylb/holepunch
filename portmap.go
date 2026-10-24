@@ -65,6 +65,13 @@ func (m *portMapping) takeReport() *protocol.PortMapReport {
 	return &r
 }
 
+// failed reports that the attempt ended without a mapping.
+func (m *portMapping) failed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.done && !m.ok
+}
+
 // releaseCloser adapts a mapping's release function to io.Closer for the
 // session group; it is idempotent on its own, whatever the mapper does.
 type releaseCloser struct {

@@ -13,14 +13,17 @@ import (
 
 // TraitsKey identifies one NAT across sessions: a stable identity the
 // caller provides (ClientKey: a client id or a hash of its key, for example;
-// empty keys by public IP only), the Family, and the PublicIP — a new public
-// IP may well be another NAT.
+// empty keys by public IP only), the Family, the PublicIP — a new public IP
+// may well be another NAT — and the LocalIP of the client's primary socket,
+// which tells apart the hosts behind one public IP.
 type TraitsKey = nat.TraitsKey
 
 // TraitsMemory is the cross-session traits memory. The coordinator calls
 // Apply(k, current) when it merges a client's probe_report with natprobe's
-// records, and Observe(k, final, succeeded) when a session ends, with the
-// session's direct measurements. A nil TraitsMemory turns the memory off.
+// records, Recall(k) when it merges an early report of a warm start
+// (coord.Config.Warm), and Observe(k, final, succeeded) when a session ends,
+// with the session's direct measurements. A nil TraitsMemory turns the
+// memory off.
 // Callers may provide their own implementation, for example a persistent
 // one; it must be safe for concurrent use and must not block.
 //
@@ -153,6 +156,8 @@ func (m *traitsMemory) shard(k TraitsKey) *memShard {
 	_, _ = h.WriteString(string(k.Family))
 	b := k.PublicIP.As16()
 	_, _ = h.Write(b[:])
+	b = k.LocalIP.As16()
+	_, _ = h.Write(b[:])
 	return &m.shards[h.Sum64()%uint64(len(m.shards))]
 }
 
@@ -229,6 +234,35 @@ func (m *traitsMemory) Apply(k TraitsKey, cur protocol.Traits) protocol.Traits {
 		cur.Hairpin = snap.hairpin
 	}
 	return cur
+}
+
+// Recall implements TraitsMemory from the conclusions learned within the
+// TTL: the mapping (with port preservation), filtering, hairpin and
+// sequential step and velocity, as traits of k.
+func (m *traitsMemory) Recall(k TraitsKey) (protocol.Traits, bool) {
+	if !k.PublicIP.IsValid() {
+		return protocol.Traits{}, false
+	}
+	now := m.elapsed()
+	sh := m.shard(k)
+	sh.mu.Lock()
+	mm, snap := sh.getLocked(k, now, m.ttl)
+	sh.mu.Unlock()
+	if mm == nil || snap.mapping == protocol.MapUnknown {
+		return protocol.Traits{}, false
+	}
+	tr := protocol.Traits{Family: k.Family, PublicIP: k.PublicIP, Mapping: snap.mapping, MappingConf: protocol.ConfHigh,
+		Filtering: snap.filtering, Hairpin: snap.hairpin}
+	if snap.filtering != protocol.FiltUnknown {
+		tr.FilteringConf = protocol.ConfMedium
+	}
+	switch {
+	case snap.step != 0:
+		tr.PortAlloc, tr.PortAllocConf, tr.PortStep, tr.PortVelocity = protocol.AllocSequential, protocol.ConfMedium, snap.step, snap.velocity
+	case snap.preserving:
+		tr.PortAlloc, tr.PortAllocConf = protocol.AllocPreserving, protocol.ConfMedium
+	}
+	return tr, true
 }
 
 // Observe implements TraitsMemory: an inconsistent observation counts a

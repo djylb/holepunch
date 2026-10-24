@@ -289,7 +289,7 @@ func (ps *pairScript) run(ctx context.Context, ends [2]net.Conn) error {
 			return fmt.Errorf("%s failed probing: %s", roles[i], pr.Reason)
 		}
 		reports[i] = *rep
-		res, err := s.h.Merge(roles[i], *rep, nil, "", false)
+		res, err := s.h.Merge(roles[i], *rep, nat.MergeOptions{})
 		if err != nil {
 			return err
 		}

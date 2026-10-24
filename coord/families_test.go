@@ -135,7 +135,7 @@ func TestUpstreamPortMap(t *testing.T) {
 	ext := mustAP("100.64.5.6:41000")
 	t.Run("same public IP", func(t *testing.T) {
 		r := newRig(t)
-		p := r.pair(SessionOptions{})
+		p := r.pair(readyGated())
 		fi := sharedNAT(0, mustAP("192.168.1.10:40000"))
 		fi.PortMap = &protocol.PortMapReport{Method: protocol.PortMapUPnP, External: ext, Internal: fi.Local, LeaseSeconds: 60}
 		p.report(0, fi)
@@ -173,7 +173,7 @@ func TestUpstreamPortMap(t *testing.T) {
 	})
 	t.Run("different public IPs", func(t *testing.T) {
 		r := newRig(t)
-		p := r.pair(SessionOptions{})
+		p := r.pair(readyGated())
 		fi := fam(0, simclient.OpenTraits)
 		fi.PortMap = &protocol.PortMapReport{Method: protocol.PortMapUPnP, External: ext, Internal: localI, LeaseSeconds: 60}
 		p.report(0, fi)
@@ -200,7 +200,7 @@ func TestUpstreamPortMap(t *testing.T) {
 	})
 	t.Run("late mapping, same public IP", func(t *testing.T) {
 		r := newRig(t)
-		p := r.pair(SessionOptions{})
+		p := r.pair(readyGated())
 		p.report(0, sharedNAT(0, mustAP("192.168.1.10:40000")))
 		p.report(1, sharedNAT(1, mustAP("192.168.2.20:50000")))
 		var sums [2]*protocol.ProbeSummary

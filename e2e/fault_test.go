@@ -15,6 +15,7 @@ import (
 
 	"go.uber.org/goleak"
 
+	"github.com/djylb/holepunch/internal/ablation"
 	"github.com/djylb/holepunch/internal/wiretype"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
@@ -737,7 +738,9 @@ func runFault(t *testing.T, row *faultRow, ph phase, exp faultExpect, seed int64
 	for i := range 2 {
 		fc.sides[i] = fc.w.behind([]nattest.NATConfig{cfgs[i]})
 	}
-	spec := sessionSpec{}
+	// The columns are the phases of the ready-gated flow: an eager go
+	// leaves no preparing or go_wait for a fault to strike in.
+	spec := sessionSpec{ablation: ablation.Set{NoEagerGo: true}}
 	spec.ctlBuffer[fc.target] = row.pipe
 	spec.onProgress[observed] = fc.progressTrigger()
 	if ph == phResponderDone {

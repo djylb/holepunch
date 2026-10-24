@@ -119,6 +119,11 @@ func (m panicTraits) Observe(natprobe.TraitsKey, protocol.Traits, bool) {
 	panic(errUserPanic)
 }
 
+func (m panicTraits) Recall(natprobe.TraitsKey) (protocol.Traits, bool) {
+	m.n.Add(1)
+	panic(errUserPanic)
+}
+
 func userFaults() []userFault {
 	return []userFault{
 		{name: "client_on_progress", count: clientPanics, client: func(_ [2]*side, spec *sessionSpec, n *atomic.Int32) {

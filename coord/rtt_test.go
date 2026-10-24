@@ -119,7 +119,7 @@ func TestGoAlignmentAsymmetric(t *testing.T) {
 // phase; all on the session's single timer.
 func TestPingSchedule(t *testing.T) {
 	r := newRig(t)
-	s := r.session(SessionOptions{})
+	s := r.session(readyGated())
 	p := &pair{r: r, s: s}
 	p.cl[0] = r.attach(s, protocol.RoleInitiator)
 	p.starts[0] = expect[protocol.PunchStart](t, p.cl[0])

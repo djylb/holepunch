@@ -192,7 +192,7 @@ func TestRefreshNoRefresh(t *testing.T) {
 // the span cut, never grown, MaxPackets following.
 func TestRefreshRound1Go(t *testing.T) {
 	r := newRig(t)
-	p := r.pair(SessionOptions{})
+	p := r.pair(readyGated())
 	sums := p.summaries()
 	predict := protocol.Stage{Kind: protocol.StagePredict, IP: pubR.Addr(), Anchor: 40000, Steps: []int16{1}, Span: 16, Pair: true}
 	p.s.mu.Lock()

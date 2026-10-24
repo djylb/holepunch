@@ -78,6 +78,10 @@ func (s *runState) onAck(in inbound, at time.Time, el time.Duration) {
 	rtt := max(el-r.at, 0)
 	s.table.Record(tg.key, in.t.Observed, el, rtt, in.t.Cookie)
 	s.noteRTT(rtt, in.h.TS, at)
+	if f := s.p.spec.OnFirstAck; f != nil && !s.firstAck && s.mainAcked() > 0 {
+		s.firstAck = true
+		f()
+	}
 	// QUOTA_EXHAUSTED answers the request this probe made: on a WANT_ALT ack
 	// it is the alt quota, which says nothing about the extras the top-up
 	// asks for (natprobe sets FC for the WANT_* flag it served).

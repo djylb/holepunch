@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -22,6 +23,38 @@ func TestApplyTraitsUpdate(t *testing.T) {
 	if got.Mapping != m || got.MappingConf != c || got.Filtering != f || got.FilteringConf != c || got.PortStep != step ||
 		got.PortVelocity != vel || got.Hairpin != hp || !got.CrossIP {
 		t.Fatalf("traits %+v", got)
+	}
+	high := protocol.ConfHigh
+	got = applyTraitsUpdate(protocol.Traits{Mapping: m}, protocol.TraitsUpdate{MappingConf: &high, Source: protocol.TraitsSourcePeer})
+	if got.MappingConf != high || got.CrossIP {
+		t.Fatalf("a confidence change is no cross-IP evidence: %+v", got)
+	}
+	obs := mustAP("203.0.113.5:40000")
+	eim := protocol.Traits{Mapping: protocol.MapEIM, MappingConf: protocol.ConfMedium, Observed: obs}
+	public := func(a netip.AddrPort) protocol.PathInfo {
+		return protocol.PathInfo{Remote: a, Kind: protocol.PathPublic}
+	}
+	if got := peerConfirmed(eim, public(obs)); got.MappingConf != protocol.ConfHigh || !got.CrossIP {
+		t.Fatalf("seen at the observed mapping: %+v", got)
+	}
+	if got := peerConfirmed(eim, public(mustAP("203.0.113.5:40001"))); got != eim {
+		t.Fatalf("seen at another port: %+v", got)
+	}
+	if got := peerConfirmed(eim, protocol.PathInfo{Remote: obs, Kind: protocol.PathOverlay}); got != eim {
+		t.Fatalf("an overlay path: %+v", got)
+	}
+	adm := eim
+	adm.Mapping = protocol.MapADM
+	if got := peerConfirmed(adm, public(obs)); got != adm {
+		t.Fatalf("an ADM: %+v", got)
+	}
+	if !overturns(eim, adm) || overturns(eim, eim) || overturns(adm, adm) {
+		t.Fatal("overturns")
+	}
+	multi := eim
+	multi.MultiExit = true
+	if !overturns(eim, multi) {
+		t.Fatal("several exits")
 	}
 	got = applyTraitsUpdate(protocol.Traits{}, protocol.TraitsUpdate{Hairpin: &hp, Source: protocol.TraitsSourceHairpin})
 	if got.CrossIP {

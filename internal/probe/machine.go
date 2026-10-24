@@ -28,6 +28,7 @@ const (
 )
 
 type runState struct {
+	firstAck bool // Spec.OnFirstAck was called
 	p        *Prober
 	codec    *udpwire.Codec
 	table    *nat.ObsTable

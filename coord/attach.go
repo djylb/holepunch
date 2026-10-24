@@ -64,6 +64,7 @@ func (s *Session) attachProbe(r int, p *protocol.ProbeSpec) (*protocol.ProbeSpec
 	if s.ablate.SinglePortProbe {
 		spec = singlePortSpec(spec)
 	}
+	spec.Warm = s.starts[r].Probe.Warm // the coordinator's decision, never the caller's
 	start := s.starts[r].Clone()
 	start.Probe = spec
 	if _, err := msgframe.Encode(start); err != nil {

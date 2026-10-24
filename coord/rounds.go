@@ -217,9 +217,47 @@ func (s *Session) startRoundLocked(now time.Duration) effects {
 	s.rearmLocked(now)
 	s.c.emit(Event{Kind: EvGo, At: s.at(now), SessionID: s.id, Round: cur.n, Labels: s.labels, Data: GoData{
 		Delay: a.delay, RTT: a.rtt, Variant: cur.name, Budget: cur.class, Granted: cur.granted,
-		Rescue: cur.rescue, Sandwich: sandwichFamilies(cur),
+		Rescue: cur.rescue, Sandwich: sandwichFamilies(cur), Eager: cur.n == 1 && !(st.ready[0] && st.ready[1]),
 	}})
 	return fx
+}
+
+// eagerGoLocked reports whether round 1 may start right after the
+// summaries: neither side prepares anything for it — each binds only its
+// primary socket before firing, opens no fresh sockets, runs no hairpin
+// test (the pair leaves through one public IP) and has no port mapping
+// still to report — so the readies would only cost a round trip.
+// They are still taken when they come (onReadyLocked): an RTT sample, and
+// a late port mapping queued for the next go.
+func (s *Session) eagerGoLocked() bool {
+	st := &s.st
+	if s.ablate.NoEagerGo {
+		return false
+	}
+	for r := range st.links {
+		for _, side := range st.rounds.cur.plans[r].Sides {
+			if side.SocketsBeforeFiring() > 1 || side.FreshSockets() > 0 || st.adm.pair.SamePublicIP[side.Family] ||
+				portMapPending(s.reportLocked(r), side.Family) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// portMapPending reports whether a client may still report a port mapping
+// of family f in punch_ready: it has port mapping enabled and its probe
+// report carried neither a mapping nor the attempt's failure for f.
+func portMapPending(rep *protocol.ProbeReport, f protocol.Family) bool {
+	if rep == nil || len(rep.Caps.PortMap) == 0 {
+		return false
+	}
+	for _, fr := range rep.Families {
+		if fr.Family == f {
+			return fr.PortMap == nil && !fr.PortMapFailed
+		}
+	}
+	return true
 }
 
 // goPushLocked collects the peer_targets that follow the go to each side,

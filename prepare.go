@@ -25,7 +25,7 @@ const (
 func (rt *runtime) prepare(sum stamped[protocol.ProbeSummary]) error {
 	s, clamped := sum.msg.Normalize()
 	rt.summary, rt.summaryAt = s, sum.at
-	rt.timing.summaryWait = sum.at.Sub(rt.startAt) - rt.timing.probe
+	rt.timing.summaryWait = max(sum.at.Sub(rt.startAt)-rt.timing.probe, 0) // a warm summary may come before the final report
 	rt.timeouts = s.Timeouts.Within(rt.start.Timeouts)
 	rt.computeWaits()
 	rt.transport = s.Transport
@@ -74,7 +74,7 @@ func (rt *runtime) prepare(sum stamped[protocol.ProbeSummary]) error {
 			continue
 		}
 		rejected := rt.countRejected(w, side)
-		socks, _ := rt.socks.roundSockets(rt.g.Context(), w.primary, socketsBeforeFiring(side), roundPurpose(side))
+		socks, _ := rt.socks.roundSockets(rt.g.Context(), w.primary, side.SocketsBeforeFiring(), roundPurpose(side))
 		fr := protocol.FamilyReady{Family: side.Family, Sockets: uint16(len(socks)), Clamped: clamped, Rejected: uint16(min(rejected, 0xFFFF))}
 		if w.fs.mapping != nil {
 			fr.PortMap = w.fs.mapping.takeReport()

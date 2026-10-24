@@ -302,7 +302,7 @@ func TestSandwichPerFamily(t *testing.T) {
 // is verified.
 func TestLatePortMap(t *testing.T) {
 	r := newRig(t)
-	p := r.pair(SessionOptions{})
+	p := r.pair(readyGated())
 	sums := p.summaries()
 	ready := simclient.Ready(sums[0], protocol.RoleInitiator, 1)
 	ready.Families[0].PortMap = &protocol.PortMapReport{Method: protocol.PortMapUPnP,

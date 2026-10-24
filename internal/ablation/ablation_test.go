@@ -16,13 +16,13 @@ func TestMain(m *testing.M) {
 }
 
 // specSwitches is the list of control-link switches, in order; allSwitches
-// adds the transport switch outside it.
+// adds the transport and latency switches outside it.
 var (
 	specSwitches = []string{
 		"SinglePortProbe", "NoRTTAlign", "NoRoleAssign", "NoAssistRelay", "NoSandwich",
 		"NoRefresh", "NoRounds", "NoMemory", "NoEarlyAbort", "NoPrediction",
 	}
-	allSwitches = append(append([]string(nil), specSwitches...), "NoOpener")
+	allSwitches = append(append([]string(nil), specSwitches...), "NoOpener", "NoEagerGo")
 )
 
 func TestSetMatchesSpec(t *testing.T) {
@@ -81,7 +81,7 @@ func TestString(t *testing.T) {
 		}
 	}
 	every := ablation.Plain()
-	every.NoOpener = false
+	every.NoOpener, every.NoEagerGo = false, false
 	if got, want := every.String(), strings.Join(specSwitches, "+"); got != want {
 		t.Errorf("String = %q, want %q", got, want)
 	}

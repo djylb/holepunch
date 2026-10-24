@@ -395,3 +395,34 @@ func TestMemoryClockPanicHoldsNoLock(t *testing.T) {
 		t.Fatal("a shard lock stayed held after the Clock panicked")
 	}
 }
+
+// TestRecall: Recall returns the remembered conclusions as traits, nothing
+// for an unknown key, and nothing once the mapping expired.
+func TestRecall(t *testing.T) {
+	clk := clock.NewFake(t, time.Time{})
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
+	k := mkey("203.0.113.5")
+	if _, ok := mem.Recall(k); ok {
+		t.Fatal("recalled from an empty memory")
+	}
+	final := eimMedium()
+	final.MappingConf, final.CrossIP, final.Filtering, final.Hairpin = protocol.ConfHigh, true, protocol.FiltEIF, protocol.TriFalse
+	mem.Observe(k, final, true)
+	tr, ok := mem.Recall(k)
+	if !ok || tr.Mapping != protocol.MapEIM || tr.MappingConf != protocol.ConfHigh || tr.PortAlloc != protocol.AllocPreserving ||
+		tr.Filtering != protocol.FiltEIF || tr.Hairpin != protocol.TriFalse || tr.PublicIP != k.PublicIP {
+		t.Fatalf("recalled %+v %v", tr, ok)
+	}
+	if _, ok := mem.Recall(mkey("203.0.113.6")); ok {
+		t.Fatal("recalled another public IP")
+	}
+	behind := k
+	behind.LocalIP = netip.MustParseAddr("192.168.8.126") // another host behind the same public IP
+	if _, ok := mem.Recall(behind); ok {
+		t.Fatal("recalled another host behind the public IP")
+	}
+	clk.Advance(25 * time.Hour)
+	if _, ok := mem.Recall(k); ok {
+		t.Fatal("recalled an expired mapping")
+	}
+}

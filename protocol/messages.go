@@ -108,6 +108,10 @@ type ProbeReport struct {
 	// Mode is the mode this client accepts: background only when
 	// punch_start offered it and the caller asked for it.
 	Mode SessionMode `json:"mode,omitempty"`
+	// Early marks the report a warm session sends before probing ends
+	// (ProbeSpec.Warm): the rows answered so far, no traits and no port
+	// mapping. The final report follows, and replaces it.
+	Early bool `json:"early,omitempty"`
 }
 
 // ---- 3 probe_summary (S→C, one per side, receiver's view) ----

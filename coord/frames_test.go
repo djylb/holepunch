@@ -235,7 +235,7 @@ func TestMessageViolations(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := newRig(t)
-			p := r.pair(SessionOptions{})
+			p := r.pair(readyGated())
 			c.do(t, p)
 			res := r.wait(p.s)
 			if res.Reason != protocol.ReasonProtocolViolation || res.FailedRole != protocol.RoleInitiator ||

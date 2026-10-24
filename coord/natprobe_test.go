@@ -169,6 +169,10 @@ func (l *traitsLog) Observe(_ natprobe.TraitsKey, final protocol.Traits, _ bool)
 	l.mu.Unlock()
 }
 
+func (l *traitsLog) Recall(natprobe.TraitsKey) (protocol.Traits, bool) {
+	return protocol.Traits{}, false
+}
+
 // TestNatprobeEndToEnd: with a real natprobe on a simulated Internet, the
 // summaries carry the verified (cookie-echoed) endpoints, the default
 // planner aims only at them, sandwich probes become a window, a drifted

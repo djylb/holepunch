@@ -975,3 +975,32 @@ func TestDeliverSTUNFromServersOnly(t *testing.T) {
 		t.Fatalf("inbox holds %d", len(s.p.inbox))
 	}
 }
+
+// TestFirstAckAndStop: OnFirstAck is called once, when the first main
+// observer answers; a Prober stopped before Run returns at once with
+// nothing sent.
+func TestFirstAckAndStop(t *testing.T) {
+	s := newSim(t, defaultOpts())
+	calls := 0
+	s.p.spec.OnFirstAck = func() {
+		calls++
+		answered := false
+		for _, row := range s.p.table.Snapshot().Sockets[0].Rows {
+			answered = answered || row.Cookie != 0
+		}
+		if !answered {
+			t.Error("no answered row when OnFirstAck runs")
+		}
+	}
+	if r := s.stepRun(); r.Failure != "" || calls != 1 {
+		t.Fatalf("failure %q, OnFirstAck called %d times", r.Failure, calls)
+	}
+
+	stopped := newSim(t, defaultOpts())
+	stopped.p.Stop()
+	stopped.p.Stop()
+	r := stopped.p.Run(context.Background())
+	if r.Sent.Primary != 0 || r.Failure != protocol.ReasonProbeTimeout {
+		t.Fatalf("a stopped prober: failure %q, sent %+v", r.Failure, r.Sent)
+	}
+}

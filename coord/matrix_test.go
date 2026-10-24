@@ -42,7 +42,9 @@ func releaseIdle(t *testing.T, c *simclient.Client) (net.Conn, error) {
 // matrixPair builds a session in state st with the initiator on a faultconn.
 func (r *rig) matrixPair(st State) (*pair, *faultconn.Conn) {
 	r.t.Helper()
-	p := &pair{r: r, s: r.session(SessionOptions{ClientKeys: [2]string{"vis", "prov"}})}
+	opts := readyGated()
+	opts.ClientKeys = [2]string{"vis", "prov"}
+	p := &pair{r: r, s: r.session(opts)}
 	var fc *faultconn.Conn
 	p.cl[0], fc = r.attachFault(p.s, protocol.RoleInitiator)
 	p.starts[0] = expect[protocol.PunchStart](r.t, p.cl[0])

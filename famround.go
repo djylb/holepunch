@@ -241,15 +241,6 @@ const (
 // Background session, the one a failure spike halts.
 func (fr *familyRound) background() bool { return fr.run.plan.Budget == protocol.BudgetBackground }
 
-// socketsBeforeFiring is how many of a side's sockets the round binds
-// before firing: all of them, or only the primary when they are paced.
-func socketsBeforeFiring(side protocol.FamilySide) int {
-	if side.OpenPerSec > 0 {
-		return 1
-	}
-	return int(max(side.Sockets, 1))
-}
-
 // pacedSocket returns the paced socket of slot, binding it on first use on
 // the primary's IP; nil once the peer heard us, after a halt, or when the
 // bind failed — counted in bind_failed, and a run of haltBindRun failures

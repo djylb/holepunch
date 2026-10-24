@@ -330,15 +330,28 @@ when the session failed before the server started it.
 
 A session ends once its paths are handed over; the library keeps no
 connection to the peer afterwards. Keeping a link alive is the upper layer's
-job, following each path's `Keepalive` advice:
+job, following each path's `Keepalive` advice. A multiplexing layer that
+runs one connection over several pipes — the relay and the punched paths —
+keeps its streams alive when a pipe dies; holepunch's part is to hand it new
+paths quickly:
 
 - Ask for spare paths up front with `Options.MaxPaths` (one per family or
   kind of network), so that losing one path leaves another to move to.
-- When every path is gone, keep the traffic on the relay and run a new
-  session over a new control stream (a new stream of the same multiplexed
-  connection will do). Nobody waits for it, so offer it as a
+- Keep the relay attached, at a lower priority than the direct paths, and
+  start a new session as soon as a direct pipe looks dead, not once it is
+  declared dead. Run it over a new control stream (a new stream of the same
+  multiplexed connection will do). Nobody waits for it, so offer it as a
   Background session (`coord.SessionOptions.Mode`, `Options.AcceptBackground`),
-  which lets a hard pair take its time; move the traffic once it succeeds.
+  which lets a hard pair take its time; add the new path once it succeeds.
+- Such a session starts warm (unless `coord.Config.NoWarm`) for a client whose
+  endpoint-independent NAT the server remembers — by its
+  `SessionOptions.ClientKeys` entry, public IP and local address, so hosts
+  behind one public IP need no identity of their own: it is planned on the
+  client's first probe answers instead of waiting for probing to end, so
+  the first punch packet leaves that much earlier; any other client waits
+  for probing as before.
+- On a network change — `hostaddr.Watch` reports one — drop the paths of
+  the interfaces that went away and start a new session at once.
 - The same works to upgrade a relayed link that never punched, paced by
   `NextAttempt`.
 
@@ -363,6 +376,9 @@ addrs, err := hostaddr.List()
 for _, a := range addrs {
 	fmt.Println(a.Addr(), a.Interface, a.Kind) // lan, public, overlay or loopback
 }
+
+// A network change: the usable addresses differ from the last read.
+go hostaddr.Watch(ctx, 0, func(now []hostaddr.Addr) { /* find new paths */ })
 ```
 
 ## Standalone server and clients

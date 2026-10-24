@@ -128,6 +128,9 @@ func (NoMemory) Apply(_ natprobe.TraitsKey, current protocol.Traits) protocol.Tr
 // Observe does nothing.
 func (NoMemory) Observe(natprobe.TraitsKey, protocol.Traits, bool) {}
 
+// Recall remembers nothing.
+func (NoMemory) Recall(natprobe.TraitsKey) (protocol.Traits, bool) { return protocol.Traits{}, false }
+
 // StrategyMemoryConfig configures NewStrategyMemory. Zero fields take the
 // defaults; negative gains and penalties count as zero.
 type StrategyMemoryConfig struct {

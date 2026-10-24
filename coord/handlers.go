@@ -18,48 +18,102 @@ func violation(r int, detail string) *terminal {
 
 // onReportLocked handles a probe_report: accepted once per side in binding
 // (the first side may probe before the second attaches) and probing, ignored
-// once confirming, a violation otherwise. The report gives an RTT sample
-// (since punch_start went out, less elapsed_ms). When both are in, the
-// session goroutine plans the session.
+// once confirming, a violation otherwise. A warm side (ProbeSpec.Warm) may
+// send an early report first, once, and its final report then also later,
+// while summarized or punching, when the session was planned on the early
+// one: it refines the plan (refine). A report gives an RTT sample (since
+// punch_start went out, less elapsed_ms). When each side has a report the
+// session can be planned on — the final one, or an early one not found
+// cold — the session goroutine plans the session.
 func (s *Session) onReportLocked(r int, m *protocol.ProbeReport, now time.Duration) effects {
 	st := &s.st
 	var fx effects
+	late := false
 	switch st.state {
 	case StateBinding, StateProbing:
-		if st.reports[r] != nil {
-			fx.end(violation(r, detailDuplicate))
+	case StateSummarized, StatePunching:
+		if m.Early || st.early[r] == nil || st.reports[r] != nil {
+			fx.end(violation(r, detailUnexpected))
 			return fx
 		}
+		late = true
 	case StateConfirming:
 		return fx
 	default:
 		fx.end(violation(r, detailUnexpected))
 		return fx
 	}
+	switch {
+	case m.Early && !s.starts[r].Probe.Warm:
+		fx.end(violation(r, detailUnexpected))
+		return fx
+	case m.Early && (st.early[r] != nil || st.reports[r] != nil), !m.Early && st.reports[r] != nil:
+		fx.end(violation(r, detailDuplicate))
+		return fx
+	}
 	l := st.links[r]
 	if sent, ok := sentAt(&l.markStart); ok {
 		st.rtt[r].add(now - sent - ms(m.ElapsedMs))
 	}
-	st.reports[r] = m
-	st.sand.echoed[r] = s.starts[r].Control.Has(protocol.FeatureSandwich) && m.Control.Has(protocol.FeatureSandwich)
-	s.c.emit(Event{Kind: EvReported, At: s.at(now), SessionID: s.id, Role: roleOf(r), Labels: s.labels})
-	if st.reports[1-r] == nil {
-		l.ping.schedule(waitReport, now)
+	first := st.early[r] == nil && st.reports[r] == nil
+	if m.Early {
+		st.early[r] = m
+	} else {
+		st.reports[r] = m
+	}
+	if late || st.plan.warm[r] == WarmHit {
+		st.work.refine[r] = true
+		return fx
+	}
+	if first {
+		st.sand.echoed[r] = s.starts[r].Control.Has(protocol.FeatureSandwich) && m.Control.Has(protocol.FeatureSandwich)
+		s.c.emit(Event{Kind: EvReported, At: s.at(now), SessionID: s.id, Role: roleOf(r), Labels: s.labels})
+	}
+	if !s.plannableLocked(1 - r) {
+		if first {
+			l.ping.schedule(waitReport, now)
+		}
 		s.rearmLocked(now)
 		return fx
 	}
 	s.cancelPingsLocked(waitReport)
-	if st.state == StateProbing {
-		st.plan.begin(&st.work.plan)
-	}
+	s.beginPlanLocked()
 	s.rearmLocked(now)
 	return fx
 }
 
+// plannableLocked reports whether side r has a report the session can be
+// planned on: its final report, or an early one the merge did not find
+// cold.
+func (s *Session) plannableLocked(r int) bool {
+	st := &s.st
+	return st.reports[r] != nil || st.early[r] != nil && st.plan.warm[r] != WarmCold
+}
+
+// reportLocked is side r's latest report: the final one, else the early
+// one, else nil.
+func (s *Session) reportLocked(r int) *protocol.ProbeReport {
+	if s.st.reports[r] != nil {
+		return s.st.reports[r]
+	}
+	return s.st.early[r]
+}
+
+// beginPlanLocked asks for the session plan when both sides have a report to
+// plan on and no planning ran or runs.
+func (s *Session) beginPlanLocked() {
+	st := &s.st
+	if st.state == StateProbing && !st.plan.planning && !st.plan.planned && s.plannableLocked(0) && s.plannableLocked(1) {
+		st.plan.begin(&st.work.plan)
+	}
+}
+
 // onReadyLocked handles a punch_ready: accepted once per side in summarized,
-// ignored later, a violation before. It gives an RTT sample (since the
-// summary went out, less elapsed_ms) and carries, maybe, a port mapping
-// that finished after the report. When both are in, the first round starts.
+// or once punching after an eager go (eagerGoLocked), ignored otherwise
+// later, a violation before. It gives an RTT sample (since the summary went
+// out, less elapsed_ms) and carries, maybe, a port mapping that finished
+// after the report. When both are in while summarized, the first round
+// starts.
 func (s *Session) onReadyLocked(r int, m *protocol.PunchReady, now time.Duration) effects {
 	st := &s.st
 	var fx effects
@@ -70,7 +124,9 @@ func (s *Session) onReadyLocked(r int, m *protocol.PunchReady, now time.Duration
 			return fx
 		}
 	case StatePunching, StateConfirming:
-		return fx
+		if st.ready[r] {
+			return fx
+		}
 	default:
 		fx.end(violation(r, detailUnexpected))
 		return fx
@@ -85,6 +141,9 @@ func (s *Session) onReadyLocked(r int, m *protocol.PunchReady, now time.Duration
 		if f.PortMap != nil {
 			s.latePortMapLocked(r, f.Family, *f.PortMap, now)
 		}
+	}
+	if st.state != StateSummarized {
+		return fx // an eager go started round 1 already
 	}
 	if !st.ready[1-r] {
 		l.ping.schedule(waitReady, now)

@@ -108,7 +108,7 @@ func TestFaultHandlers(t *testing.T) {
 	})
 	t.Run("ready close", func(t *testing.T) {
 		r := newRig(t)
-		p := r.pair(SessionOptions{})
+		p := r.pair(readyGated())
 		sums := p.summaries()
 		arm(t, fiHandleReady, faultinject.CloseConn(), 1)
 		send(t, p.cl[0], simclient.Ready(sums[0], protocol.RoleInitiator, 1))

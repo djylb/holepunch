@@ -59,17 +59,26 @@ type MergeDiag struct {
 	// own records (ObsTable.STUNConflicts): STUN is a hint, recorded but
 	// never classified against natprobe.
 	STUNConflicts int
-	MemoryPanics  int // TraitsMemory.Apply panicked; its advice was ignored
+	MemoryPanics  int // TraitsMemory.Apply or Recall panicked; its advice was ignored
 }
 
 // TraitsKey identifies one NAT across sessions: a stable identity the
 // caller provides (a client id or a hash of its key, for example; empty keys
-// by public IP only), the family, and the public IP — a new public IP may
-// well be another NAT. natprobe re-exports it.
+// by public IP only), the family, the public IP — a new public IP may well
+// be another NAT — and the local IP of the client's primary socket, which
+// tells apart the hosts behind one public IP without any identity of the
+// client's: a router and the computers it puts behind a NAT of its own
+// leave through the same public IP with different NATs. natprobe
+// re-exports it.
 type TraitsKey struct {
 	ClientKey string
 	Family    protocol.Family
 	PublicIP  netip.Addr
+	// LocalIP is the address the client reported for its primary socket.
+	// It is the client's word, but it only selects the client's own entry
+	// under a PublicIP natprobe measured; a host whose local address
+	// changed starts without a memory.
+	LocalIP netip.Addr
 }
 
 // TraitsMemory is the cross-session traits memory. The coordinator calls
@@ -95,6 +104,26 @@ type TraitsMemory interface {
 	// conclusion is fresh evidence and renews it.
 	//holepunch:callback
 	Observe(k TraitsKey, final protocol.Traits, succeeded bool)
+	// Recall returns the remembered conclusions of k as traits, for a warm
+	// start: a session whose client reported one answered probe, too
+	// little to classify its NAT, planned on what an earlier session
+	// measured directly. ok is false when no mapping is remembered. It only
+	// reads.
+	//holepunch:callback
+	Recall(k TraitsKey) (tr protocol.Traits, ok bool)
+}
+
+// MergeOptions are the inputs of ProbeHandle.Merge besides the report.
+type MergeOptions struct {
+	// Memory refines the view, or is nil.
+	Memory TraitsMemory
+	// ClientKey completes the memory's key (TraitsKey.ClientKey).
+	ClientKey string
+	// VerifiedOnly keeps a LAN-observed family to verified endpoints.
+	VerifiedOnly bool
+	// Warm completes a family the report measured too little to classify
+	// from Memory.Recall (MergeResult.Warm): an early probe_report.
+	Warm bool
 }
 
 // MergeResult is one merge of a probe_report with natprobe's records.
@@ -107,6 +136,11 @@ type MergeResult struct {
 	// back. It is View when no memory was given.
 	Raw  protocol.PeerView
 	Diag MergeDiag
+	// Warm reports, for a merge with MergeOptions.Warm, that every family
+	// with a server sample has a known endpoint-independent mapping — measured,
+	// or recalled and consistent with the sample — so the view can be
+	// planned on.
+	Warm bool
 }
 
 // ProbeHandle is one session's natprobe registration, held by the
@@ -140,10 +174,8 @@ type ProbeHandle interface {
 	Announce(role protocol.Role, observers []protocol.ObserverSpec)
 	// Merge computes the server's authoritative view of role from its
 	// probe_report, and the same view without the traits memory, from one
-	// snapshot of the records. mem refines the view, or is nil; clientKey
-	// completes its key; verifiedOnly keeps a LAN-observed family to
-	// verified endpoints. It never panics.
-	Merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, clientKey string, verifiedOnly bool) (MergeResult, error)
+	// snapshot of the records. It never panics.
+	Merge(role protocol.Role, rep protocol.ProbeReport, opts MergeOptions) (MergeResult, error)
 	// AttachSandwichSink sets the session's sandwich event sink. A natprobe
 	// reader calls it after it has answered the probe, outside every lock
 	// and inside a recover boundary, at most one call at a time per

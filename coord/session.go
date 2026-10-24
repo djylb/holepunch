@@ -157,7 +157,8 @@ type sessionState struct {
 	rng       *rand.Rand    // round seeds and plan ids
 	quota     quota
 
-	reports    [2]*protocol.ProbeReport
+	reports    [2]*protocol.ProbeReport // the final reports
+	early      [2]*protocol.ProbeReport // the early reports of warm sides (ProbeSpec.Warm)
 	summaryAt  time.Duration
 	summarized bool
 	ready      [2]bool
@@ -206,6 +207,9 @@ type planState struct {
 	// clients accepted it.
 	mode      protocol.SessionMode
 	transport string
+	// warm is how each side started; a WarmHit side's final report is
+	// still to refine the plan when it comes (refine).
+	warm [2]WarmStart
 }
 
 // admission is what each side's peer may aim at (admission.index): the
@@ -297,9 +301,10 @@ type roundState struct {
 
 // work is what the session goroutine has to do besides frames.
 type work struct {
-	plan      bool // both reports are in: plan the session
-	evalRound bool // a round ended: plan the next one
-	refreshed bool // an anchor refresh ended: plan its round again
+	plan      bool    // both reports are in: plan the session
+	evalRound bool    // a round ended: plan the next one
+	refreshed bool    // an anchor refresh ended: plan its round again
+	refine    [2]bool // the final report of a side planned warm came: check it against the plan
 }
 
 // timelineCap bounds the progress timeline.
@@ -372,7 +377,7 @@ func (s *Session) Snapshot() Snapshot {
 	}
 	for r := range 2 {
 		snap.Attached[r] = st.links[r] != nil
-		snap.Reported[r] = st.reports[r] != nil
+		snap.Reported[r] = s.reportLocked(r) != nil
 		snap.RTT[r], _ = st.rtt[r].min()
 	}
 	return snap

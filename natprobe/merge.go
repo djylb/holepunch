@@ -2,6 +2,7 @@ package natprobe
 
 import (
 	"errors"
+	"net/netip"
 	"slices"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 //     counts, the latter capped by the former;
 //   - self-reported STUN and port-mapping addresses must pass the endpoint
 //     constraints (nat.ObsTable.AdmitReported: on a verified IP, or, for a
-//     LAN-observed family unless verifiedOnly, any
+//     LAN-observed family unless opts.VerifiedOnly, any
 //     global address); an admitted STUN value is a hint that can neither raise
 //     natprobe's conclusions above Medium nor overturn them; one that
 //     contradicts them is counted (nat.MergeDiag.STUNConflicts), and one
@@ -30,34 +31,34 @@ import (
 //     PathDependent;
 //   - the overlay addresses the client reported become overlay endpoints at
 //     its primary socket's port;
-//   - the traits memory may refine the result (mem nil: no memory), and the
-//     traits are final (Provisional false).
+//   - the traits memory may refine the result (opts.Memory nil: no memory),
+//     and the traits are final (Provisional false);
+//   - with opts.Warm — an early report, as little as one answered probe — a
+//     family whose key has a remembered endpoint-independent mapping (EIM,
+//     TraitsMemory.Recall) that its samples do not contradict takes what
+//     the samples leave unknown from it; the result is Warm when every
+//     family with a sample is completed so. Any other remembered mapping —
+//     its planning needs the filtering and allocation measured now — a
+//     dependent mapping or several exits measured now, a preserving NAT
+//     seen at another port than the socket's, a LAN-observed family or no
+//     memo leave the result cold: the session then waits for the final
+//     report.
 //
 // The result's Raw is the view without the memory, merged from the same
-// records. Only key.ClientKey is used; the family and the public IP of each family
-// complete the key. The report must come from role of this session
-// (protocol.CheckOrigin), else Merge returns that validation error. Merge
-// is safe for concurrent use and never panics.
-//
-// mem is a TraitsMemory or nil; clientKey is TraitsKey.ClientKey, which the
-// family and the public IP of each family complete; verifiedOnly keeps a
-// LAN-observed family to verified endpoints. The result's Raw is the same
-// merge without the memory.
-func (h *handle) Merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, clientKey string, verifiedOnly bool) (nat.MergeResult, error) {
-	return h.mergeWith(role, rep, mem, TraitsKey{ClientKey: clientKey}, mergeOptions{verifiedOnly: verifiedOnly})
-}
-
-// mergeOptions tunes merge.
-type mergeOptions struct {
-	// verifiedOnly keeps a LAN-observed family (Traits.LANObserved) to
-	// verified endpoints: otherwise its global STUN and port-mapping
-	// addresses become unverified endpoints, the only public addresses the
-	// peer can aim at (coord.TargetsVerifiedOnly).
-	verifiedOnly bool
+// records. opts.ClientKey is TraitsKey.ClientKey, which the family and the
+// public IP of each family complete; opts.VerifiedOnly keeps a LAN-observed
+// family (Traits.LANObserved) to verified endpoints: otherwise its global
+// STUN and port-mapping addresses become unverified endpoints, the only
+// public addresses the peer can aim at (coord.TargetsVerifiedOnly). The
+// report must come from role of this session (protocol.CheckOrigin), else
+// Merge returns that validation error. Merge is safe for concurrent use and
+// never panics.
+func (h *handle) Merge(role protocol.Role, rep protocol.ProbeReport, opts nat.MergeOptions) (nat.MergeResult, error) {
+	return h.mergeWith(role, rep, opts.Memory, TraitsKey{ClientKey: opts.ClientKey}, opts)
 }
 
 // mergeWith is Merge with the whole key and the options.
-func (h *handle) mergeWith(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts mergeOptions) (res nat.MergeResult, err error) {
+func (h *handle) mergeWith(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts nat.MergeOptions) (res nat.MergeResult, err error) {
 	if h == nil || h.e == nil {
 		return res, errors.New("natprobe: nil handle")
 	}
@@ -70,7 +71,7 @@ func (h *handle) mergeWith(role protocol.Role, rep protocol.ProbeReport, mem Tra
 	return res, err
 }
 
-func (h *handle) merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts mergeOptions) (nat.MergeResult, error) {
+func (h *handle) merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey, opts nat.MergeOptions) (nat.MergeResult, error) {
 	res := nat.MergeResult{View: protocol.PeerView{Families: []protocol.FamilyView{}}}
 	if err := protocol.CheckOrigin(rep, h.e.id, role); err != nil {
 		res.Raw = res.View
@@ -81,17 +82,22 @@ func (h *handle) merge(role protocol.Role, rep protocol.ProbeReport, mem TraitsM
 	}
 	obs := h.Observations(role)
 	var seen []protocol.Family
+	warm, cold := false, false
 	for _, fr := range rep.Families {
 		if !fr.Family.Valid() || slices.Contains(seen, fr.Family) {
 			continue
 		}
 		seen = append(seen, fr.Family)
-		view, raw := h.mergeFamily(fr, obs, mem, key, opts, &res.Diag)
+		view, raw, w := h.mergeFamily(fr, obs, mem, key, opts, &res.Diag)
 		res.View.Families = append(res.View.Families, view)
 		if mem != nil {
 			res.Raw.Families = append(res.Raw.Families, raw)
 		}
+		if view.Traits.Samples > 0 {
+			warm, cold = warm || w, cold || !w
+		}
 	}
+	res.Warm = opts.Warm && warm && !cold
 	if mem == nil {
 		res.Raw = res.View
 	}
@@ -114,9 +120,10 @@ type familyMerge struct {
 	diag      *nat.MergeDiag
 }
 
-// mergeFamily merges one reported family: the view refined by mem, and the
-// raw view without it (the view itself when mem is nil).
-func (h *handle) mergeFamily(fr protocol.FamilyReport, obs []nat.Observation, mem TraitsMemory, key TraitsKey, opts mergeOptions, diag *nat.MergeDiag) (view, raw protocol.FamilyView) {
+// mergeFamily merges one reported family: the view refined by mem, the raw
+// view without it (the view itself when mem is nil), and, with opts.Warm,
+// whether the memory completed it (recalled).
+func (h *handle) mergeFamily(fr protocol.FamilyReport, obs []nat.Observation, mem TraitsMemory, key TraitsKey, opts nat.MergeOptions, diag *nat.MergeDiag) (view, raw protocol.FamilyView, warm bool) {
 	m := &familyMerge{h: h, f: fr.Family, alt: map[uint8]bool{}, answered: map[slotKey]bool{}, diag: diag}
 	var observers []nat.Observer
 	for _, s := range obs {
@@ -137,7 +144,7 @@ func (h *handle) mergeFamily(fr protocol.FamilyReport, obs []nat.Observation, me
 		m.socks = append(m.socks, nat.SocketMeta{ID: sr.ID, Kind: sr.Kind, Local: sr.Local})
 	}
 	m.t = nat.NewTable(m.f, m.socks, observers)
-	m.t.SetReportedFallback(!opts.verifiedOnly)
+	m.t.SetReportedFallback(!opts.VerifiedOnly)
 	m.socks = m.t.Sockets() // the sockets the table accepted
 	m.mergeRows(fr)
 	m.mergeFilters(fr)
@@ -149,7 +156,7 @@ func (h *handle) mergeFamily(fr protocol.FamilyReport, obs []nat.Observation, me
 	tr.PortAnchorMs = m.anchorMs(tr)
 	measured := tr
 	if mem != nil && tr.Samples > 0 {
-		k := TraitsKey{ClientKey: key.ClientKey, Family: m.f, PublicIP: tr.PublicIP}
+		k := TraitsKey{ClientKey: key.ClientKey, Family: m.f, PublicIP: tr.PublicIP, LocalIP: primaryLocal(m.socks)}
 		cur := tr
 		if life.Safe("natprobe/memory", func() { cur = mem.Apply(k, cur) }) != nil {
 			diag.MemoryPanics++
@@ -157,13 +164,75 @@ func (h *handle) mergeFamily(fr protocol.FamilyReport, obs []nat.Observation, me
 			tr = cur
 			tr.Family = m.f
 		}
+		if opts.Warm && !tr.LANObserved {
+			var rec protocol.Traits
+			var ok bool
+			if life.Safe("natprobe/memory", func() { rec, ok = mem.Recall(k) }) != nil {
+				diag.MemoryPanics++
+			} else if ok {
+				tr, warm = m.recalled(tr, rec)
+			}
+		}
 	}
 	eps := m.t.Endpoints()
 	view = protocol.FamilyView{Family: m.f, Traits: m.final(tr), Endpoints: eps}
 	if mem == nil {
-		return view, view
+		return view, view, warm
 	}
-	return view, protocol.FamilyView{Family: m.f, Traits: m.final(measured), Endpoints: slices.Clone(eps)}
+	return view, protocol.FamilyView{Family: m.f, Traits: m.final(measured), Endpoints: slices.Clone(eps)}, warm
+}
+
+// primaryLocal is the local IP of the primary socket among socks (the
+// TraitsKey's LocalIP), unmapped; zero without one.
+func primaryLocal(socks []nat.SocketMeta) netip.Addr {
+	for _, s := range socks {
+		if s.Kind == protocol.SocketPrimary {
+			return s.Local.Addr().Unmap()
+		}
+	}
+	return netip.Addr{}
+}
+
+// recalled completes tr, an early measurement, with a remembered
+// endpoint-independent mapping (EIM: the peer aims at the mapping just
+// observed) and what else rec remembers: port preservation, filtering and
+// hairpin, each only where tr knows nothing; ok reports that it did. A
+// remembered dependent mapping (ADM, APDM) never applies — its planning
+// needs the filtering and allocation measured now, which the memory may not
+// hold — nor does rec when tr contradicts it: a dependent mapping or
+// several exits measured now, or a remembered preserving NAT this sample
+// shows at another port than the primary socket's. An unknown mapping
+// takes High confidence, as the memory's own Apply gives a remembered
+// cross-address EIM; filtering and allocation Medium.
+func (m *familyMerge) recalled(tr, rec protocol.Traits) (out protocol.Traits, ok bool) {
+	if rec.Mapping != protocol.MapEIM || tr.Mapping == protocol.MapADM || tr.Mapping == protocol.MapAPDM || tr.MultiExit {
+		return tr, false
+	}
+	preserving := rec.PortAlloc == protocol.AllocPreserving
+	if preserving {
+		local := netip.AddrPort{}
+		for _, s := range m.socks {
+			if s.Kind == protocol.SocketPrimary {
+				local = s.Local
+			}
+		}
+		if !tr.Observed.IsValid() || tr.Observed.Port() != local.Port() {
+			return tr, false
+		}
+	}
+	if tr.Mapping == protocol.MapUnknown {
+		tr.Mapping, tr.MappingConf, tr.CrossIP = rec.Mapping, protocol.ConfHigh, true
+	}
+	if preserving && tr.PortAlloc == protocol.AllocUnknown {
+		tr.PortAlloc, tr.PortAllocConf = protocol.AllocPreserving, protocol.ConfMedium
+	}
+	if tr.Filtering == protocol.FiltUnknown && rec.Filtering != protocol.FiltUnknown {
+		tr.Filtering, tr.FilteringConf = rec.Filtering, protocol.ConfMedium
+	}
+	if tr.Hairpin == protocol.TriUnknown {
+		tr.Hairpin = rec.Hairpin
+	}
+	return tr, true
 }
 
 // final is the merge's last word on traits: no longer provisional, and the

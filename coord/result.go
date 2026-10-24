@@ -54,6 +54,7 @@ type Result struct {
 	// derived); it contains no plain address.
 	StrategyKey string
 	MemoryHit   bool          // the first round's variant came from the strategy memory
+	Warm        [2]WarmStart  // how each side started (warm starts: Config.NoWarm)
 	Rounds      []RoundRecord // <= 8, rescue round included
 	RTT         [2]time.Duration
 	ClockOffset [2]time.Duration // diagnostic only (pong.client_unix_ms)
@@ -64,6 +65,28 @@ type Result struct {
 	Retry       RetryAdvice
 	Labels      map[string]string // SessionOptions.Labels
 }
+
+// WarmStart is how a side of a session started (Config.NoWarm).
+type WarmStart string
+
+// Warm starts.
+const (
+	// WarmOff: the side started cold — not offered, its early report never
+	// came, or its final report came before the session was planned.
+	WarmOff WarmStart = ""
+	// WarmHit: the session was planned on the side's early report and the
+	// remembered traits, and its final report, if it came before the
+	// session confirmed, did not overturn them.
+	WarmHit WarmStart = "hit"
+	// WarmCold: the early report was not enough (no remembered mapping, a
+	// new public IP, an observation that contradicted the memory): the
+	// session waited for the final report.
+	WarmCold WarmStart = "cold"
+	// WarmContradicted: the session was planned on the early report, and
+	// the final report overturned the remembered traits; the rounds after
+	// it were planned on the final report.
+	WarmContradicted WarmStart = "contradicted"
+)
 
 // RoundRecord describes one round.
 type RoundRecord struct {

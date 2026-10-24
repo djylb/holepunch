@@ -17,6 +17,7 @@ import (
 type planIn struct {
 	unobserved []protocol.Family // Session.unobserved
 	reports    [2]protocol.ProbeReport
+	early      [2]bool // reports[r] is side r's early report: merged warm
 	echoed     [2]bool
 	planner    plan.Planner
 	memory     StrategyMemory
@@ -38,7 +39,10 @@ type planOut struct {
 	bgOnly             bool                 // engine.BackgroundOnly by the memory's scores
 	sessionMode        protocol.SessionMode // background when offered and both reports accept it
 	stunConflicts      int                  // STUN values contradicting natprobe (MergeDiag)
-	term               *terminal
+	// cold marks a side whose early report the warm merge could not
+	// complete: the session waits for its final report, unplanned.
+	cold [2]bool
+	term *terminal
 }
 
 // planSession runs on the session goroutine when both reports are in: it
@@ -50,9 +54,9 @@ func (s *Session) planSession() {
 		t      planTicket
 		round1 bool
 	)
-	offLock(s, s.planInputLocked, s.plan, func(tk planTicket, _ planIn, out planOut, now time.Time) effects {
+	offLock(s, s.planInputLocked, s.plan, func(tk planTicket, in planIn, out planOut, now time.Time) effects {
 		var fx effects
-		fx, round1 = s.takePlanLocked(out, s.since(now))
+		fx, round1 = s.takePlanLocked(in, out, s.since(now))
 		t = tk
 		return fx
 	})
@@ -72,31 +76,41 @@ func (s *Session) planSession() {
 		if t.state = StateSummarized; s.validLocked(t) {
 			// Round 1's anchor refresh runs while the summaries travel and
 			// the readies come back; the go waits for it.
-			s.beginRefreshLocked(t, d, j.cin, j.in, s.since(now))
+			if !s.beginRefreshLocked(t, d, j.cin, j.in, s.since(now)) && s.eagerGoLocked() {
+				fx.merge(s.startRoundLocked(s.since(now)))
+			}
 		}
 		return fx
 	})
 }
 
-// planInputLocked takes the session plan's input once both reports are in.
+// planInputLocked takes the session plan's input once each side has a
+// report to plan on (plannableLocked): its final report, else its early one.
 func (s *Session) planInputLocked(time.Duration) (planTicket, planIn, bool) {
 	st := &s.st
-	if st.state != StateProbing || st.reports[0] == nil || st.reports[1] == nil || st.plan.planned {
+	if st.state != StateProbing || !s.plannableLocked(0) || !s.plannableLocked(1) || st.plan.planned {
 		return planTicket{}, planIn{}, false
 	}
-	return s.ticketLocked(1, false), planIn{
-		reports:    [2]protocol.ProbeReport{*st.reports[0], *st.reports[1]},
+	in := planIn{
 		echoed:     st.sand.echoed,
 		planner:    st.plan.planner,
 		memory:     st.plan.memory,
 		unobserved: s.unobserved,
-	}, true
+	}
+	for r := range in.reports {
+		if st.reports[r] != nil {
+			in.reports[r] = *st.reports[r]
+		} else {
+			in.reports[r], in.early[r] = *st.early[r], true
+		}
+	}
+	return s.ticketLocked(1, false), in, true
 }
 
 // plan computes the session plan outside the lock.
 func (s *Session) plan(in planIn) planOut {
 	out := planOut{planner: in.planner, memory: in.memory}
-	if !s.mergeViews(in, &out) {
+	if !s.mergeViews(in, &out) || out.cold[0] || out.cold[1] {
 		return out
 	}
 	out.pair = s.pairFacts(in, &out)
@@ -166,11 +180,13 @@ func (s *Session) mergeViews(in planIn, out *planOut) bool {
 	}
 	verifiedOnly := s.c.cfg.Targets == TargetsVerifiedOnly
 	for r := range in.reports {
-		m, err := s.handle.Merge(roleOf(r), in.reports[r], mem, s.keys[r], verifiedOnly)
+		m, err := s.handle.Merge(roleOf(r), in.reports[r], nat.MergeOptions{Memory: mem, ClientKey: s.keys[r], VerifiedOnly: verifiedOnly,
+			Warm: in.early[r]})
 		if err != nil {
 			out.term = &terminal{code: protocol.ReasonInternal, detail: trunc.String("merge: "+err.Error(), protocol.MaxDetail)}
 			return false
 		}
+		out.cold[r] = in.early[r] && !m.Warm
 		// The memory's own conclusions must not renew it: the traits fed
 		// back at the end come from this session's evidence only (Raw).
 		out.views[r], out.raw[r] = m.View, m.Raw
@@ -462,10 +478,41 @@ func samePermutation(a, b []plan.VariantID) bool {
 
 // takePlanLocked stores the planning result; it reports whether round 1 is to be planned. A rejected pair or a
 // transport conflict ends the session here, right after the second
-// report.
-func (s *Session) takePlanLocked(out planOut, now time.Duration) (effects, bool) {
+// report. A side whose early report the warm merge found cold leaves the
+// session unplanned, waiting for that side's final report — or planning
+// again at once when it came meanwhile. A side planned on its early report
+// is WarmHit, and its final report, if it came meanwhile, refines the plan.
+func (s *Session) takePlanLocked(in planIn, out planOut, now time.Duration) (effects, bool) {
 	st := &s.st
 	var fx effects
+	if out.cold[0] || out.cold[1] {
+		for r, cold := range out.cold {
+			if cold {
+				st.plan.warm[r] = WarmCold
+			}
+		}
+		for r, l := range st.links {
+			if l != nil && s.plannableLocked(r) && !s.plannableLocked(1-r) {
+				l.ping.schedule(waitReport, now) // waiting again for the peer's final report
+			}
+		}
+		st.plan.end()
+		s.beginPlanLocked()
+		if st.work.plan {
+			s.kick()
+		}
+		s.rearmLocked(now)
+		return fx, false
+	}
+	for r, early := range in.early {
+		if early {
+			st.plan.warm[r] = WarmHit
+			if st.reports[r] != nil {
+				st.work.refine[r] = true
+				s.kick()
+			}
+		}
+	}
 	st.updated = now
 	st.plan.planned = true
 	st.plan.views, st.plan.pviews, st.plan.rawViews = out.views, out.pviews, out.raw
@@ -548,7 +595,7 @@ func (s *Session) applyRound1Locked(d decision, nowT time.Time) effects {
 			Self:      st.plan.views[r],
 			Peer:      s.peerViewLocked(1 - r),
 			Pair:      st.adm.pair,
-			Transport: protocol.TransportPick{Mode: st.plan.transport, PeerData: st.reports[1-r].Transport.Data},
+			Transport: protocol.TransportPick{Mode: st.plan.transport, PeerData: s.reportLocked(1 - r).Transport.Data},
 			Timeouts:  s.starts[r].Timeouts,
 			Plan: protocol.PlanSpec{
 				ID:             pid,

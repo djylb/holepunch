@@ -47,14 +47,18 @@ type Set struct {
 	// shows what the opener is worth on a network that classifies outbound
 	// flows. Ordinary hole punching has no opener, so Plain sets it.
 	NoOpener bool
+	// NoEagerGo: round 1 always waits for both punch_ready, even when
+	// neither side prepares anything for it. It changes the latency, never
+	// the outcome, and so is not one of the Singles either.
+	NoEagerGo bool
 }
 
 // switches returns the switches in declaration order with their names.
-func (s Set) switches() [11]struct {
+func (s Set) switches() [12]struct {
 	name string
 	on   bool
 } {
-	return [11]struct {
+	return [12]struct {
 		name string
 		on   bool
 	}{
@@ -69,6 +73,7 @@ func (s Set) switches() [11]struct {
 		{"NoEarlyAbort", s.NoEarlyAbort},
 		{"NoPrediction", s.NoPrediction},
 		{"NoOpener", s.NoOpener},
+		{"NoEagerGo", s.NoEagerGo},
 	}
 }
 
@@ -86,6 +91,7 @@ func Plain() Set {
 		NoEarlyAbort:    true,
 		NoPrediction:    true,
 		NoOpener:        true,
+		NoEagerGo:       true,
 	}
 }
 

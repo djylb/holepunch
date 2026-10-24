@@ -174,6 +174,11 @@ func (s *Session) doWork() {
 	if w.refreshed {
 		s.afterRefresh()
 	}
+	for r, refine := range w.refine {
+		if refine {
+			s.refine(r)
+		}
+	}
 }
 
 // linkLostLocked applies the loss of link r:

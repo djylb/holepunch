@@ -48,6 +48,11 @@ type ProbeSpec struct {
 	ExtraReply   bool             `json:"extra"`                 // hint only; the ack declares what is really sent
 	SecondSocket bool             `json:"second_socket"`         // probe a second socket when APDM is suspected
 	Siblings     uint8            `json:"siblings"`              // sibling interfaces to probe, clamped to 2
+	// Warm asks for an early probe_report as soon as the primary socket of
+	// every probed family has an answer: the server may plan on it and the
+	// NAT traits it remembers of this client, while probing goes on to the
+	// final report.
+	Warm bool `json:"warm,omitempty"`
 }
 
 // ObserverSpec is one natprobe observer.
@@ -70,13 +75,16 @@ const (
 
 // FamilyReport is one family of probe_report.families.
 type FamilyReport struct {
-	Family     Family         `json:"family"`
-	Failure    Reason         `json:"failure,omitempty"`     // probe_timeout | udp_blocked | no_probe_endpoint | internal
-	Sockets    []SocketReport `json:"sockets"`               // [0] is the primary socket; <= 6
-	Filters    []FilterReport `json:"filters,omitempty"`     // <= 24
-	STUN       []RowReport    `json:"stun,omitempty"`        // self-reported; <= 8
-	PortMap    *PortMapReport `json:"port_map,omitempty"`    // self-reported; later results go in punch_ready
-	LocalAddrs []netip.Addr   `json:"local_addrs,omitempty"` // <= 16; overlay addresses left out
+	Family  Family         `json:"family"`
+	Failure Reason         `json:"failure,omitempty"`  // probe_timeout | udp_blocked | no_probe_endpoint | internal
+	Sockets []SocketReport `json:"sockets"`            // [0] is the primary socket; <= 6
+	Filters []FilterReport `json:"filters,omitempty"`  // <= 24
+	STUN    []RowReport    `json:"stun,omitempty"`     // self-reported; <= 8
+	PortMap *PortMapReport `json:"port_map,omitempty"` // self-reported; later results go in punch_ready
+	// PortMapFailed: the port mapping attempt of the primary socket ended
+	// without a mapping, so punch_ready will carry none either.
+	PortMapFailed bool         `json:"port_map_failed,omitempty"`
+	LocalAddrs    []netip.Addr `json:"local_addrs,omitempty"` // <= 16; overlay addresses left out
 	// Overlay are the host's addresses of the family on overlay, tunnel and
 	// virtual-bridge interfaces (Tailscale, WireGuard, ZeroTier, docker …)
 	// and in 100.64/10, on which the primary socket also listens: they are
@@ -344,6 +352,16 @@ type Stage struct {
 	// their mappings target each other in pairs.
 	// Only a predict stage may be paired.
 	Pair bool `json:"pair,omitempty"`
+}
+
+// SocketsBeforeFiring is how many of the side's sockets a client binds
+// before firing: all of them, or only the primary when they are paced
+// (OpenPerSec).
+func (s FamilySide) SocketsBeforeFiring() int {
+	if s.OpenPerSec > 0 {
+		return 1
+	}
+	return int(max(s.Sockets, 1))
 }
 
 // FreshSockets is how many fresh sockets the side binds this round: the

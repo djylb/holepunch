@@ -72,6 +72,7 @@ func (c *Coordinator) newSession(opts SessionOptions) (*Session, error) {
 		if probes[r], err = c.probeSpec(roleOf(r), &opts, ab.SinglePortProbe); err != nil {
 			return nil, err
 		}
+		probes[r].Warm = c.warmFor(opts.ClientKeys[r], ab)
 	}
 
 	s := &Session{
@@ -359,6 +360,13 @@ func (c *Coordinator) probeSpec(role protocol.Role, opts *SessionOptions, single
 		spec = singlePortSpec(spec)
 	}
 	return spec, nil
+}
+
+// warmFor reports whether a client of key may start warm (not
+// Config.NoWarm): the coordinator merges with natprobe, has a traits memory,
+// and the client a key the memory can know it by.
+func (c *Coordinator) warmFor(key string, ab ablation.Set) bool {
+	return !c.cfg.NoWarm && !c.set.unverified && c.set.traits != nil && key != "" && !ab.NoMemory
 }
 
 func singlePortSpec(spec protocol.ProbeSpec) protocol.ProbeSpec {

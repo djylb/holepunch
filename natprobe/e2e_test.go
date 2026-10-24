@@ -172,7 +172,7 @@ func runEndToEnd(t *testing.T, f protocol.Family, ip netip.Addr) {
 		t.Fatal(err)
 	}
 	mem := natprobe.NewTraitsMemory(natprobe.TraitsMemoryConfig{})
-	merged, err := h.Merge(protocol.RoleResponder, rep, mem, "c", false)
+	merged, err := h.Merge(protocol.RoleResponder, rep, nat.MergeOptions{Memory: mem, ClientKey: "c"})
 	if err != nil {
 		t.Fatal(err)
 	}

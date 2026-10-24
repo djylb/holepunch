@@ -117,6 +117,19 @@ type Config struct {
 	// merge and fed at the end of a session; nil uses
 	// natprobe.NewTraitsMemory with its defaults and NoMemory{} turns it off.
 	TraitsMemory natprobe.TraitsMemory
+	// NoWarm turns warm starts off. By default a client the TraitsMemory
+	// knows starts warm: a session with its ClientKey asks it
+	// (ProbeSpec.Warm) for an early probe_report once
+	// one probe of each family is answered, and when the memory remembers an
+	// endpoint-independent mapping (EIM) of that client at the public IP just
+	// observed — and the observation does not contradict it — the session
+	// is planned on that report instead of waiting for probing to end
+	// (natprobe Merge, MergeOptions.Warm). Otherwise it waits for the final
+	// report as before, which costs nothing; and when the final report of a
+	// warm side contradicts the memory, it replaces the planning input from
+	// the next round on. It needs a Registry, a TraitsMemory and the
+	// sessions' ClientKeys. Result.Warm tells how each side started.
+	NoWarm bool
 	// Observer receives the session events, asynchronously and in order per
 	// session, from one dispatcher goroutine with a bounded queue: events
 	// that do not fit are dropped and counted. nil starts no dispatcher.

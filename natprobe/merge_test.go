@@ -372,6 +372,7 @@ type panicMemory struct{}
 
 func (panicMemory) Apply(TraitsKey, protocol.Traits) protocol.Traits { panic("apply") }
 func (panicMemory) Observe(TraitsKey, protocol.Traits, bool)         {}
+func (panicMemory) Recall(TraitsKey) (protocol.Traits, bool)         { panic("recall") }
 
 // PortAnchorMs: server monotonic ms from Register to the anchor's first probe.
 func TestMergeAnchorMs(t *testing.T) {
@@ -446,7 +447,7 @@ func TestMergeWithMemory(t *testing.T) {
 	}
 	final := first
 	final.Mapping, final.MappingConf, final.CrossIP = protocol.MapADM, protocol.ConfHigh, true // the punch_result.traits correction
-	mem.Observe(TraitsKey{ClientKey: "client-1", Family: protocol.FamilyUDP4, PublicIP: srcA.Addr()}, final, true)
+	mem.Observe(TraitsKey{ClientKey: "client-1", Family: protocol.FamilyUDP4, PublicIP: srcA.Addr(), LocalIP: netip.MustParseAddr("192.168.1.10")}, final, true)
 	second := run("s2", 2)
 	if second.Mapping != protocol.MapADM || second.MappingConf != protocol.ConfMedium || second.Provisional {
 		t.Fatalf("second %+v", second)
@@ -522,9 +523,61 @@ func TestMergeOverlay(t *testing.T) {
 
 // mergeTest is Merge with a typed memory and key and the default options.
 func (h *handle) mergeTest(role protocol.Role, rep protocol.ProbeReport, mem TraitsMemory, key TraitsKey) (protocol.PeerView, nat.MergeDiag, error) {
-	res, err := h.mergeWith(role, rep, mem, key, mergeOptions{})
+	res, err := h.mergeWith(role, rep, mem, key, nat.MergeOptions{})
 	if err != nil {
 		return protocol.PeerView{}, nat.MergeDiag{}, err
 	}
 	return res.View, res.Diag, nil
+}
+
+// TestMergeWarm: an early report (one answered probe) is completed from a
+// remembered EIM, and the merge is Warm; a remembered ADM or APDM, a
+// preserving NAT seen at another port, no memo and a merge without Warm
+// leave it cold. Raw never takes the recalled conclusions.
+func TestMergeWarm(t *testing.T) {
+	r := newRig(t, rigOpts{})
+	learned := eimMedium()
+	learned.MappingConf, learned.CrossIP, learned.Filtering = protocol.ConfHigh, true, protocol.FiltEIF
+	key := TraitsKey{ClientKey: "client-1", Family: protocol.FamilyUDP4, PublicIP: srcA.Addr(), LocalIP: netip.MustParseAddr("192.168.1.10")}
+	run := func(id string, b byte, mem TraitsMemory, src netip.AddrPort, warm bool) nat.MergeResult {
+		s := newSession(t, r, id, protocol.RoleInitiator, b)
+		s.probe(0, 0, src, false, false)
+		res, err := s.h.mergeWith(protocol.RoleInitiator, s.report(protocol.FamilyUDP4, local4, nil), mem,
+			TraitsKey{ClientKey: "client-1"}, nat.MergeOptions{Warm: warm})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	eim := NewTraitsMemory(TraitsMemoryConfig{Clock: r.clk})
+	eim.Observe(key, learned, true)
+	res := run("w1", 1, eim, srcA, true)
+	tr := res.View.Families[0].Traits
+	if !res.Warm || tr.Mapping != protocol.MapEIM || tr.MappingConf != protocol.ConfHigh || tr.Filtering != protocol.FiltEIF ||
+		tr.Observed != srcA || res.Raw.Families[0].Traits.Mapping != protocol.MapUnknown {
+		t.Fatalf("warm %v view %+v raw %+v", res.Warm, tr, res.Raw.Families[0].Traits)
+	}
+	if res := run("w2", 2, eim, netip.AddrPortFrom(srcA.Addr(), 41234), true); res.Warm {
+		t.Fatalf("a preserving NAT at another port: %+v", res.View.Families[0].Traits)
+	}
+	if res := run("w3", 3, eim, srcA, false); res.Warm || res.View.Families[0].Traits.Mapping != protocol.MapUnknown {
+		t.Fatalf("without Warm: %+v", res.View.Families[0].Traits)
+	}
+	apdm := NewTraitsMemory(TraitsMemoryConfig{Clock: r.clk})
+	symm := learned
+	symm.Mapping, symm.PortAlloc = protocol.MapAPDM, protocol.AllocRandom
+	apdm.Observe(key, symm, true)
+	if res := run("w4", 4, apdm, srcA, true); res.Warm {
+		t.Fatalf("a remembered APDM: %+v", res.View.Families[0].Traits)
+	}
+	adm := NewTraitsMemory(TraitsMemoryConfig{Clock: r.clk})
+	dep := learned
+	dep.Mapping = protocol.MapADM
+	adm.Observe(key, dep, true)
+	if res := run("w6", 6, adm, srcA, true); res.Warm {
+		t.Fatalf("a remembered ADM: %+v", res.View.Families[0].Traits)
+	}
+	if res := run("w5", 5, NewTraitsMemory(TraitsMemoryConfig{Clock: r.clk}), srcA, true); res.Warm {
+		t.Fatal("warm without a memo")
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch/internal/leak"
+	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 )
@@ -80,7 +81,7 @@ func (so *solo) report() (protocol.ProbeReport, protocol.PeerView) {
 		so.t.Fatal("no probe_report")
 	}
 	rep := *m.(*protocol.ProbeReport)
-	res, err := so.s.h.Merge(so.role, rep, nil, "", false)
+	res, err := so.s.h.Merge(so.role, rep, nat.MergeOptions{})
 	if err != nil {
 		so.t.Fatal(err)
 	}

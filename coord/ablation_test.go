@@ -19,6 +19,10 @@ func ablated(s ablation.Set) SessionOptions {
 	return SessionOptions{Parent: ablation.With(context.Background(), s)}
 }
 
+// readyGated is a session whose round 1 waits for both readies
+// (NoEagerGo), for the tests of that wait.
+func readyGated() SessionOptions { return ablated(ablation.Set{NoEagerGo: true}) }
+
 // TestAblationSwitches: each ablation switch turns its mechanism off.
 func TestAblationSwitches(t *testing.T) {
 	t.Run("NoRTTAlign", func(t *testing.T) {

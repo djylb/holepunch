@@ -106,7 +106,7 @@ func (s *Session) sideClampLocked(k, r int, lim protocol.ClassLimits, now time.D
 		now:        now,
 		lim:        lim,
 		families:   st.plan.cls.Families,
-		caps:       st.reports[r].Caps,
+		caps:       s.reportLocked(r).Caps,
 		sandwich:   st.sand.negotiated && st.sand.echoed[r],
 		relayOnly:  protocol.RelayOnly(st.plan.cls.Families, st.adm.pair, st.plan.views),
 		budgetLeft: s.budgetLeftLocked(r, now),

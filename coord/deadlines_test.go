@@ -90,7 +90,7 @@ func TestDeadlines(t *testing.T) {
 // ReadyTimeout ends the session with not_synchronized.
 func TestSummarizedDeadline(t *testing.T) {
 	r := newRig(t)
-	p := r.pair(SessionOptions{})
+	p := r.pair(readyGated())
 	sums := p.summaries()
 	send(t, p.cl[0], simclient.Ready(sums[0], protocol.RoleInitiator, 1))
 	testkit.WaitFor(t, "ready", func() bool { return p.s.Snapshot().Ready[0] })

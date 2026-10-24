@@ -136,7 +136,7 @@ func (s *Session) deadlineLocked(now time.Duration) effects {
 			fx.end(&terminal{code: protocol.ReasonInternal, detail: detailPlannerTimeout})
 			return fx
 		}
-		fx.end(&terminal{code: protocol.ReasonProbeTimeout, failed: missing(st.reports[0] != nil, st.reports[1] != nil),
+		fx.end(&terminal{code: protocol.ReasonProbeTimeout, failed: missing(s.plannableLocked(0), s.plannableLocked(1)),
 			notifyFailed: true})
 	case StateSummarized:
 		fx.end(&terminal{code: protocol.ReasonNotSynchronized, failed: missing(st.ready[0], st.ready[1]),

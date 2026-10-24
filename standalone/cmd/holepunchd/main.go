@@ -48,6 +48,7 @@ type options struct {
 	noExtraReply  bool
 	allowExtreme  bool
 	verifiedOnly  bool
+	noWarm        bool
 	debug         bool
 }
 
@@ -80,6 +81,8 @@ func parse(args []string) (options, error) {
 	fs.BoolVar(&o.allowExtreme, "allow-extreme", false, "allow the extreme per-round budget class")
 	fs.BoolVar(&o.verifiedOnly, "verified-targets-only", false, "never aim at addresses a client only reported itself: "+
 		"a client the server sees at a private address (on the server's LAN) then connects only to peers on that LAN")
+	fs.BoolVar(&o.noWarm, "no-warm", false, "always wait for a client's probing to end, instead of planning a client the server "+
+		"has seen before on its first probe answers and the NAT traits remembered of it")
 	fs.IntVar(&o.maxSessions, "max-sessions", 0, "concurrent sessions (0: the coordinator's default)")
 	fs.DurationVar(&o.heartbeat, "heartbeat", server.DefaultHeartbeat, "heartbeat interval of the host links")
 	fs.DurationVar(&o.handshakeWait, "handshake-timeout", server.DefaultHandshakeTimeout, "bound of a client's TLS handshake and first request")
@@ -265,9 +268,11 @@ func coordConfig(o options, reg *natprobe.Registry, probe coord.ProbeFunc, log *
 		Budget:   coord.BudgetConfig{AllowExtreme: o.allowExtreme},
 		Limits:   coord.Limits{MaxSessions: o.maxSessions},
 		Targets:  o.targets(),
+		NoWarm:   o.noWarm,
 		OnResult: func(r coord.Result) {
 			log.Info("session", "id", r.SessionID, "host", r.Labels["host_id"], "dialer", r.Labels["dialer_id"],
-				"outcome", r.Outcome, "code", r.Reason, "detail", r.Detail, "rounds", len(r.Rounds), "pair", r.PairClass)
+				"outcome", r.Outcome, "code", r.Reason, "detail", r.Detail, "rounds", len(r.Rounds), "pair", r.PairClass,
+				"warm", r.Warm, "summary_after", summaryAfter(r.Timing))
 		},
 	}
 	if o.debug {
@@ -277,6 +282,15 @@ func coordConfig(o options, reg *natprobe.Registry, probe coord.ProbeFunc, log *
 		}
 	}
 	return cfg
+}
+
+// summaryAfter is how long after its creation a session sent the
+// summaries; 0 when it never did.
+func summaryAfter(t coord.Timing) time.Duration {
+	if t.Summary.IsZero() {
+		return 0
+	}
+	return t.Summary.Sub(t.Created)
 }
 
 // eventData formats an event's data for the log; a recovered panic shows

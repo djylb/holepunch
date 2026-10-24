@@ -3,11 +3,13 @@ package coord
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/trunc"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/plan"
@@ -297,6 +299,7 @@ func (s *Session) resultLocked(t terminal, now time.Time) Result {
 	res.Warn = slices.Clone(st.warn)
 	res.PairClass = st.plan.cls.PairClass
 	res.MemoryHit = st.plan.memHit
+	res.Warm = st.plan.warm
 	res.Rounds = slices.Clone(st.rounds.records)
 	res.Counters = st.ctr
 	res.Clients = st.confirm.finals
@@ -368,7 +371,8 @@ func (st *sessionState) addWarn(w protocol.Warning) {
 
 // feedbackLocked captures the memory feedback of the session: the strategy
 // memory learns from finished rounds and the traits memory from the
-// merged views corrected by punch_result.traits.
+// merged views corrected by punch_result.traits and confirmed by the
+// winning path (peerConfirmed).
 func (s *Session) feedbackLocked(res *Result) feedback {
 	st := &s.st
 	fb := feedback{memory: st.plan.memory, key: st.plan.memKey, rounds: res.Rounds}
@@ -391,11 +395,15 @@ func (s *Session) feedbackLocked(res *Result) feedback {
 					}
 				}
 			}
+			if p := st.confirm.finals[1-r]; p != nil && p.Path != nil && p.Path.Family == fv.Family {
+				final = peerConfirmed(final, *p.Path)
+			}
 			if !final.PublicIP.IsValid() {
 				continue
 			}
 			fb.traits = append(fb.traits, traitsNote{
-				key:   natprobe.TraitsKey{ClientKey: s.keys[r], Family: fv.Family, PublicIP: final.PublicIP},
+				key: natprobe.TraitsKey{ClientKey: s.keys[r], Family: fv.Family, PublicIP: final.PublicIP,
+					LocalIP: primaryLocal(s.reportLocked(r), fv.Family)},
 				final: final,
 			})
 		}
@@ -403,11 +411,34 @@ func (s *Session) feedbackLocked(res *Result) feedback {
 	return fb
 }
 
+// primaryLocal is the local IP rep reported for the primary socket of
+// family f (the TraitsKey's LocalIP, as natprobe's merge takes it); zero
+// without one.
+func primaryLocal(rep *protocol.ProbeReport, f protocol.Family) netip.Addr {
+	if rep == nil {
+		return netip.Addr{}
+	}
+	for _, fr := range rep.Families {
+		if fr.Family != f {
+			continue
+		}
+		for _, sr := range fr.Sockets {
+			if sr.Kind == protocol.SocketPrimary {
+				return sr.Local.Addr().Unmap()
+			}
+		}
+	}
+	return netip.Addr{}
+}
+
 // applyTraitsUpdate applies a punch-time correction; a correction of the
 // mapping or the filtering from another address natprobe or the peer stands
-// for (peer, alt) is cross-IP evidence. Hairpin is no other address, and a
-// STUN server is only a hint: the traits memory
-// must not learn a cross-IP mapping from it.
+// for (peer, alt) is cross-IP evidence. A confidence change is none: the
+// client compares against the summary's view, which the memory may have
+// raised, so it would renew the memory from its own conclusion; a
+// confirmation by the winning path is peerConfirmed's. Hairpin is no other
+// address, and a STUN server is only a hint: the traits memory must not
+// learn a cross-IP mapping from it.
 func applyTraitsUpdate(t protocol.Traits, u protocol.TraitsUpdate) protocol.Traits {
 	if u.Mapping != nil {
 		t.Mapping = *u.Mapping
@@ -433,6 +464,22 @@ func applyTraitsUpdate(t protocol.Traits, u protocol.TraitsUpdate) protocol.Trai
 	if (u.Mapping != nil || u.Filtering != nil) && (u.Source == protocol.TraitsSourcePeer || u.Source == protocol.TraitsSourceAlt) {
 		t.CrossIP = true
 	}
+	return t
+}
+
+// peerConfirmed adds the evidence of the winning path to t: the peer reached
+// the side over a public path at the very mapping natprobe observed of its
+// primary socket (the peer's remote address), so the mapping kept its port
+// toward a second IP — an endpoint-independent mapping, cross-IP evidence,
+// which a first round that connects at once leaves no punch-time correction
+// for. It takes the peer's word, as a peer-sourced correction does, and
+// only confirms what natprobe measured itself (EIM): a lying peer can
+// renew a conclusion, never make one.
+func peerConfirmed(t protocol.Traits, p protocol.PathInfo) protocol.Traits {
+	if t.Mapping != protocol.MapEIM || p.Kind != protocol.PathPublic || !t.Observed.IsValid() || netaddr.Canon(p.Remote) != netaddr.Canon(t.Observed) {
+		return t
+	}
+	t.MappingConf, t.CrossIP = protocol.ConfHigh, true
 	return t
 }
 

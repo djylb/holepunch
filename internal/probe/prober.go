@@ -37,6 +37,10 @@ type Spec struct {
 	Family  protocol.Family    // the family this prober probes
 	Timeout time.Duration      // timeouts.probe_timeout_ms; ≤ 0 means 2000 ms; clamped to [500 ms, 10 s]
 	Clock   clock.Clock        // nil means the system clock
+	// OnFirstAck, when set, is called once on Run's goroutine when the
+	// first main observer answered the primary socket: the table then
+	// holds a verified row (an early probe_report). It must not block.
+	OnFirstAck func()
 }
 
 // Counters count what a Prober sent and received, for budget assertions and
@@ -92,6 +96,7 @@ type Prober struct {
 	ran      atomic.Bool
 	finished atomic.Bool
 	hairpin  atomic.Bool // the hairpin self-test started; it runs once
+	stopped  atomic.Bool // Stop: Run returns what it has
 	dropped  atomic.Uint32
 	icmp     atomic.Uint32
 
@@ -289,6 +294,29 @@ func (p *Prober) Run(ctx context.Context) (res Result) {
 	return res
 }
 
+// Stop makes Run return now with what it measured so far, as at its
+// normal end; a Run that has not started returns at once. It is safe to call
+// from any goroutine, more than once.
+func (p *Prober) Stop() {
+	if p == nil {
+		return
+	}
+	p.stopped.Store(true)
+	select {
+	case p.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Table returns the observation table Run fills; it is safe for concurrent
+// use, so a snapshot may be taken while Run goes on.
+func (p *Prober) Table() *nat.ObsTable {
+	if p == nil {
+		return nil
+	}
+	return p.table
+}
+
 func (p *Prober) run(ctx context.Context) Result {
 	s := newRunState(p)
 	if p.setupErr != "" {
@@ -305,6 +333,9 @@ func (p *Prober) run(ctx context.Context) Result {
 	timer := p.clk.NewTimer(s.deadline)
 	defer timer.Stop()
 	for {
+		if p.stopped.Load() {
+			return s.finish("", "")
+		}
 		now := s.elapsed()
 		if r, done := s.step(now); done {
 			return r

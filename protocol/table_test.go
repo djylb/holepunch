@@ -99,7 +99,7 @@ func TestProtocolTable(t *testing.T) {
 		{MsgPunchStart, "punch_start", "server", 16 << 10, typeOf[PunchStart](),
 			[]string{"session_id", "role", "token", "wire", "control", "probe", "timeouts", "policy?", "mode?"}},
 		{MsgProbeReport, "probe_report", "client", 32 << 10, typeOf[ProbeReport](),
-			[]string{"session_id", "role", "control", "caps", "elapsed_ms", "families", "clock", "transport", "mode?"}},
+			[]string{"session_id", "role", "control", "caps", "elapsed_ms", "families", "clock", "transport", "mode?", "early?"}},
 		{MsgProbeSummary, "probe_summary", "server", 48 << 10, typeOf[ProbeSummary](),
 			[]string{"session_id", "self", "peer", "pair", "transport", "timeouts", "plan"}},
 		{MsgPunchReady, "punch_ready", "client", 1 << 10, typeOf[PunchReady](),
@@ -181,9 +181,9 @@ func TestProtocolTable(t *testing.T) {
 	checkFields(t, "round_result.families.remap", typeOf[Remap](), "o", "a", "c")
 	checkFields(t, "stats", typeOf[Stats](), "sent", "recv", "replies", "rounds", "hits", "drops", "budget_hit?")
 	checkFields(t, "timing", typeOf[Timing](), "probe_ms", "summary_wait_ms", "go_wait_ms", "punch_ms", "handover_ms")
-	checkFields(t, "ProbeSpec", typeOf[ProbeSpec](), "v", "observers", "extra", "second_socket", "siblings", "stun?", "rtt_hint_ms?")
+	checkFields(t, "ProbeSpec", typeOf[ProbeSpec](), "v", "observers", "extra", "second_socket", "siblings", "stun?", "rtt_hint_ms?", "warm?")
 	checkFields(t, "ProbeSpec.observers", typeOf[ObserverSpec](), "id", "addr", "group", "alt?")
-	checkFields(t, "FamilyReport", typeOf[FamilyReport](), "family", "failure?", "sockets", "filters", "stun?", "port_map?", "local_addrs", "overlay?", "traits")
+	checkFields(t, "FamilyReport", typeOf[FamilyReport](), "family", "failure?", "sockets", "filters", "stun?", "port_map?", "port_map_failed?", "local_addrs", "overlay?", "traits")
 	checkFields(t, "punch_assist (peer_targets window)", typeOf[PortWindow](), "ip", "lo", "hi")
 	checkFields(t, "FamilyReport.sockets", typeOf[SocketReport](), "id", "kind", "local", "rows")
 	checkFields(t, "FamilyReport.rows", typeOf[RowReport](), "o", "a?", "tx", "s", "rtt?", "c")

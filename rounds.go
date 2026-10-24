@@ -117,7 +117,7 @@ func (rt *runtime) punchLoop() (*candidate.Action, error) {
 			if !gotGo {
 				gotGo = true
 				handshakeDeadline = g.at.Add(rt.waits.handshake)
-				rt.timing.goWait = g.at.Sub(rt.readyAt)
+				rt.timing.goWait = max(g.at.Sub(rt.readyAt), 0) // an eager go may come before the ready went out
 				rt.firstGoAt = g.at
 			}
 			if cur != nil {
@@ -318,7 +318,7 @@ func (rt *runtime) startRound(g stamped[protocol.PunchGo], pending carried) *rou
 		}
 		fr := &familyRound{rt: rt, run: run, w: w, side: side, inject: make(chan []extraTarget, 16)}
 		fr.meter = newRoundMeter(side.Family, rp.Round, side, ceil)
-		fr.socks, fr.bindFailed = rt.socks.roundSockets(rt.g.Context(), w.primary, socketsBeforeFiring(side), roundPurpose(side))
+		fr.socks, fr.bindFailed = rt.socks.roundSockets(rt.g.Context(), w.primary, side.SocketsBeforeFiring(), roundPurpose(side))
 		if side.OpenPerSec > 0 {
 			fr.paced, fr.tried = make([]*udpSock, side.Sockets), make([]bool, side.Sockets)
 		}

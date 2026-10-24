@@ -40,10 +40,26 @@ type e2eWorld struct {
 
 func newE2E(t *testing.T, opts ...func(*coord.Config)) *e2eWorld {
 	t.Helper()
+	return newE2EWorld(t, false, opts...)
+}
+
+// newE2EWorld is newE2E, with natprobe's change-IP replies from a second
+// server address when alt is set: the cross-address evidence that teaches
+// the traits memory an endpoint-independent mapping.
+func newE2EWorld(t *testing.T, alt bool, opts ...func(*coord.Config)) *e2eWorld {
+	t.Helper()
 	n := nattest.NewNetwork()
-	server := n.PublicHost(netip.IPv4Unspecified())
+	addrs := []netip.Addr{netip.IPv4Unspecified()}
+	if alt {
+		addrs = append(addrs, netip.IPv4Unspecified())
+	}
+	server := n.PublicHost(addrs...)
+	groups := []natprobe.ObserverGroup{{Bind: server.Addrs()[0]}}
+	if alt {
+		groups = append(groups, natprobe.ObserverGroup{Bind: server.Addrs()[1], Alt: true})
+	}
 	reg := natprobe.NewRegistry(natprobe.RegistryConfig{})
-	srv, err := natprobe.NewServer(natprobe.ServerConfig{Registry: reg, Groups: []natprobe.ObserverGroup{{Bind: server.Addrs()[0]}},
+	srv, err := natprobe.NewServer(natprobe.ServerConfig{Registry: reg, Groups: groups,
 		Listen: server.Listen, SourceRate: natprobe.Rate{PerSec: -1}})
 	if err != nil {
 		t.Fatal(err)
@@ -71,9 +87,15 @@ func newE2E(t *testing.T, opts ...func(*coord.Config)) *e2eWorld {
 // punch runs one session between hosts[0] (initiator) and hosts[1] and
 // returns the coordinator's result and both clients' sessions.
 func (w *e2eWorld) punch(hosts [2]*nattest.Host, mappers [2]holepunch.PortMapper) (coord.Result, [2]*holepunch.Session) {
+	w.t.Helper()
+	return w.punchWith(coord.SessionOptions{}, hosts, mappers)
+}
+
+// punchWith is punch with the session's options.
+func (w *e2eWorld) punchWith(opts coord.SessionOptions, hosts [2]*nattest.Host, mappers [2]holepunch.PortMapper) (coord.Result, [2]*holepunch.Session) {
 	t := w.t
 	t.Helper()
-	s, err := w.c.NewSession(coord.SessionOptions{})
+	s, err := w.c.NewSession(opts)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -82,7 +82,11 @@ func (h sockHandle) WriteTo(b []byte, to netip.AddrPort) error {
 // probePhase binds the probing sockets of every family the server observes,
 // starts the port mappings, runs the probers in parallel within
 // probe_timeout_ms + probeSlack and writes probe_report — or, when no family
-// produced a usable result, punch_result{ok:false}.
+// produced a usable result, punch_result{ok:false}. A warm session
+// (ProbeSpec.Warm) writes an early report as soon as the primary socket of
+// every probed family has an answer, and ends probing when the summary
+// arrives: the server planned on the early report, and the final report
+// then carries what probing measured until then.
 func (rt *runtime) probePhase() error {
 	ctx := rt.g.Context()
 	var fams []*famState
@@ -116,19 +120,38 @@ func (rt *runtime) probePhase() error {
 	defer pcancel()
 	probeEnd := rt.clk.AfterFunc(time.Duration(rt.timeouts.ProbeTimeoutMs)*time.Millisecond+probeSlack, pcancel)
 	defer probeEnd.Stop()
-	var live atomic.Int32
+	var live, acked atomic.Int32
 	done := make(chan struct{})
+	wake := make(chan struct{}, 1)
+	notify := func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
 	live.Store(int32(len(bound)))
 	exited := func() {
 		if live.Add(-1) == 0 {
 			close(done)
+			notify()
+		}
+	}
+	warm := rt.start.Probe.Warm
+	var onFirstAck func()
+	if warm {
+		rt.ctl.warmWake(wake)
+		defer rt.ctl.warmWake(nil)
+		onFirstAck = func() {
+			if acked.Add(1) == int32(len(bound)) {
+				notify()
+			}
 		}
 	}
 	for _, fs := range bound {
 		if len(rt.portMapMethods()) > 0 {
 			fs.mapping = rt.startPortMap(fs.primary, rt.policy.PortMapping)
 		}
-		pr := rt.newProber(fs)
+		pr := rt.newProber(fs, onFirstAck)
 		fs.prober.Store(pr)
 		if !rt.g.Go("probe:"+string(fs.fam), func(context.Context) {
 			defer exited()
@@ -144,12 +167,29 @@ func (rt *runtime) probePhase() error {
 	// The probers return at the latest when probeEnd cancels their ctx.
 	// Meanwhile the control link is watched: a failure, an abort or a fault
 	// ends the session now rather than after probing.
-	if _, _, early := waitControl(rt.ctl, ctx, done, nil, nil); early != nil {
-		pcancel()
-		<-done
-		return early
+	reported, stopped := false, false
+	for live.Load() > 0 {
+		if warm && !reported && acked.Load() == int32(len(bound)) {
+			if err := rt.writeReport(bound, unprobed, true); err != nil {
+				pcancel()
+				<-done
+				return err
+			}
+			reported = true
+		}
+		if reported && !stopped && rt.ctl.summarySeen() {
+			for _, fs := range bound {
+				fs.prober.Load().Stop()
+			}
+			stopped = true
+		}
+		if _, _, early := waitControl(rt.ctl, ctx, wake, nil, nil); early != nil {
+			pcancel()
+			<-done
+			return early
+		}
 	}
-	return rt.writeReport(bound, unprobed)
+	return rt.writeReport(bound, unprobed, false)
 }
 
 // bindUnobserved binds a primary socket for each family the server has no
@@ -221,8 +261,9 @@ func (rt *runtime) preferredAddr(f protocol.Family) netip.Addr {
 	return netip.Addr{}
 }
 
-// newProber builds the prober of fs, wiring the second-socket opener.
-func (rt *runtime) newProber(fs *famState) *probe.Prober {
+// newProber builds the prober of fs, wiring the second-socket opener and
+// onFirstAck (nil: none).
+func (rt *runtime) newProber(fs *famState, onFirstAck func()) *probe.Prober {
 	sibs := make([]probe.SocketHandle, len(fs.siblings))
 	for i, s := range fs.siblings {
 		sibs[i] = sockHandle{rt, s}
@@ -239,23 +280,36 @@ func (rt *runtime) newProber(fs *famState) *probe.Prober {
 		return sockHandle{rt, s}, nil
 	}
 	spec := probe.Spec{
-		Codec:   rt.codec,
-		Probe:   rt.start.Probe,
-		Family:  fs.fam,
-		Timeout: time.Duration(rt.timeouts.ProbeTimeoutMs) * time.Millisecond,
-		Clock:   rt.clk,
+		Codec:      rt.codec,
+		Probe:      rt.start.Probe,
+		Family:     fs.fam,
+		Timeout:    time.Duration(rt.timeouts.ProbeTimeoutMs) * time.Millisecond,
+		Clock:      rt.clk,
+		OnFirstAck: onFirstAck,
 	}
 	return probe.New(spec, sockHandle{rt, fs.primary}, sibs, openSecond)
 }
 
 // writeReport builds probe_report from the families that produced a result,
-// or fails with the most informative family failure when none did.
-func (rt *runtime) writeReport(bound, unprobed []*famState) error {
+// or fails with the most informative family failure when none did. An early
+// report (ProbeSpec.Warm) takes every bound family's rows answered so far
+// from its live table, without traits, clock or port mapping, and fails
+// nothing: the final report follows.
+func (rt *runtime) writeReport(bound, unprobed []*famState, early bool) error {
 	var reports []protocol.FamilyReport
 	var caps []protocol.FamilyCaps
 	var clk protocol.ClockSample
 	failures := map[protocol.Reason]famFailure{} // each family failure as it came first
 	for _, fs := range bound {
+		if early {
+			fr := fs.prober.Load().Table().Snapshot()
+			fr.Traits = protocol.Traits{Family: fs.fam}
+			fr.LocalAddrs = localAddrs(fs.fam, rt.hosts)
+			fr.Overlay = rt.overlayAddrs(fs)
+			reports = append(reports, fr)
+			caps = append(caps, protocol.FamilyCaps{Family: fs.fam, LowTTL: rt.lowTTLCapable(fs)})
+			continue
+		}
 		fs.mu.Lock()
 		res, ok := fs.result, fs.probed
 		fs.mu.Unlock()
@@ -281,7 +335,7 @@ func (rt *runtime) writeReport(bound, unprobed []*famState) error {
 		fr.LocalAddrs = localAddrs(fs.fam, rt.hosts)
 		fr.Overlay = rt.overlayAddrs(fs)
 		if fs.mapping != nil {
-			fr.PortMap = fs.mapping.takeReport()
+			fr.PortMap, fr.PortMapFailed = fs.mapping.takeReport(), fs.mapping.failed()
 		}
 		reports = append(reports, fr)
 		caps = append(caps, protocol.FamilyCaps{Family: fs.fam, LowTTL: rt.lowTTLCapable(fs)})
@@ -320,11 +374,14 @@ func (rt *runtime) writeReport(bound, unprobed []*famState) error {
 		Clock:     clk,
 		Transport: protocol.Transport{Mode: rt.opts.TransportMode, Data: rt.opts.TransportData},
 		Mode:      acceptedMode(rt.start.Mode, rt.opts.AcceptBackground),
+		Early:     early,
 	}
 	if err := sendElapsed(rt.ctl, rep, rt.startAt, func(r *protocol.ProbeReport, ms uint32) { r.ElapsedMs = ms }); err != nil {
 		return rt.ctl.sendFailure("probe_report", err)
 	}
-	rt.timing.probe = rt.clk.Now().Sub(rt.startAt)
+	if !early {
+		rt.timing.probe = rt.clk.Now().Sub(rt.startAt)
+	}
 	rt.phases.advance(protocol.PhaseReported, "probe_reported", rt.clk.Now())
 	return nil
 }

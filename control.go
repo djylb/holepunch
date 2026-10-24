@@ -69,6 +69,7 @@ type control struct {
 	accepted    bool
 	early       []earlyPing
 	seenSummary bool
+	summaryWake chan<- struct{}    // notified when the summary arrives (warmWake)
 	round1      protocol.RoundPlan // probe_summary.plan.round1 as the summary carried it, before any clamp
 	maxGo       uint8
 	confirmed   bool
@@ -225,8 +226,31 @@ func (ct *control) onSummary(f controlwire.Frame) {
 	}
 	ct.mu.Lock()
 	ct.round1 = m.Plan.Round1 // plans are values: Normalize and ClampTo return copies
+	wake := ct.summaryWake
 	ct.mu.Unlock()
 	ct.summaryCh <- stamped[protocol.ProbeSummary]{m, f.At}
+	if wake != nil {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// warmWake has the summary's arrival notified on wake, which must be
+// buffered: a warm session stops probing once the server planned on its
+// early report.
+func (ct *control) warmWake(wake chan<- struct{}) {
+	ct.mu.Lock()
+	ct.summaryWake = wake
+	ct.mu.Unlock()
+}
+
+// summarySeen reports whether the summary arrived.
+func (ct *control) summarySeen() bool {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	return ct.seenSummary
 }
 
 // onGo keeps only rounds above every go seen so far; a smaller or equal
