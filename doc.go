@@ -103,4 +103,12 @@
 // default, 150 s at most) even with context.Background(), plus a TLS
 // handshake it ran for the caller (15 s at most). Nothing polls: an
 // idle session sleeps until its next deadline.
+//
+// Settings: the zero value of a field selects its default, stated in the
+// field's documentation; for timeouts and limits it is a safe bound unless
+// the field says otherwise. A negative timeout means no timeout, as for
+// http.Server.IdleTimeout. Other negative values are an error unless the
+// field gives them a meaning. The coordinator's TTLConfig and Limits keep
+// their own rules, which their documentation states: deadlines are clamped
+// to protocol ranges, and the bounds of its memory cannot be lifted.
 package holepunch
