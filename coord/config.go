@@ -14,7 +14,8 @@ import (
 )
 
 // Rate is a token bucket: PerSec tokens per second, at most Burst at once.
-// A negative PerSec removes the limit; a zero field takes the default.
+// A zero field takes the default, a negative PerSec removes the limit, and
+// a negative Burst is an error.
 type Rate struct{ PerSec, Burst int }
 
 // ProbeFunc returns the ProbeSpec a role receives in punch_start
@@ -155,8 +156,10 @@ type Config struct {
 	Rand io.Reader
 }
 
-// TTLConfig holds the server deadlines. Each zero field
-// takes its default; out-of-range values are clamped.
+// TTLConfig holds the server deadlines. Each zero field takes its default
+// and other values are clamped to the range given, which the protocol
+// fixes. A negative BindTimeout, ReportSlack, ReadyTimeout or PunchSlack
+// is an error: the session's deadlines cannot be lifted.
 type TTLConfig struct {
 	// BindTimeout bounds created and binding from NewSession: 15 s,
 	// [3 s, 60 s].
@@ -188,9 +191,11 @@ type BudgetConfig struct {
 }
 
 // Limits are the coordinator's admission and anti-abuse limits. A zero field
-// takes the default; a negative count or rate removes the limit, except for the
-// bounds of the coordinator's memory — MaxSessions, MaxKeys, ObserverQueue and
-// FramesPerLink — which take the default instead.
+// takes the default; a negative count or rate removes the limit, except for
+// the bounds of the coordinator's memory — MaxSessions, MaxKeys,
+// ObserverQueue and FramesPerLink — and WriteTimeout and AbortTimeout, which
+// keep a client that does not read from holding the coordinator: these
+// cannot be lifted, and a negative value is an error.
 type Limits struct {
 	MaxSessions        int    // concurrent sessions, the bound of the session index: 4096
 	MaxPending         int    // sessions in created or binding: 2048
@@ -211,14 +216,15 @@ type Limits struct {
 	// MaxKeys bounds the per-key quota table: 65536 entries of a fixed size
 	// (about 300 B each with the map's share, some 20 MiB in all). A new key
 	// in a full table evicts the entry idle the longest; with every entry in
-	// use NewSession fails with ErrBusy. It cannot be removed: zero or less
-	// takes the default.
+	// use NewSession fails with ErrBusy. 0 takes the default; it cannot be
+	// removed, so a negative value is an error.
 	MaxKeys int
 
-	// WriteTimeout is the deadline of one control frame: 3 s.
+	// WriteTimeout is the deadline of one control frame: 3 s. A negative
+	// value is an error.
 	WriteTimeout time.Duration
 	// AbortTimeout is the absolute deadline shared by the punch_abort
-	// notices of a closing session: 500 ms.
+	// notices of a closing session: 500 ms. A negative value is an error.
 	AbortTimeout time.Duration
 }
 
@@ -263,7 +269,7 @@ func defaultRate(r Rate, perSec, burst int) Rate {
 	if r.PerSec == 0 {
 		r.PerSec = perSec
 	}
-	if r.Burst <= 0 {
+	if r.Burst == 0 {
 		r.Burst = burst
 	}
 	return r
@@ -274,6 +280,50 @@ func defaultCount(v, def int) int {
 		return def
 	}
 	return v
+}
+
+// validate reports the negative limits that cannot be lifted and negative
+// bursts.
+func (l Limits) validate() error {
+	for _, f := range []struct {
+		name string
+		v    int64
+	}{
+		{"MaxSessions", int64(l.MaxSessions)},
+		{"MaxKeys", int64(l.MaxKeys)},
+		{"ObserverQueue", int64(l.ObserverQueue)},
+		{"FramesPerLink", int64(l.FramesPerLink)},
+		{"WriteTimeout", int64(l.WriteTimeout)},
+		{"AbortTimeout", int64(l.AbortTimeout)},
+		{"NewSessions.Burst", int64(l.NewSessions.Burst)},
+		{"InitiatorKeyRate.Burst", int64(l.InitiatorKeyRate.Burst)},
+		{"FrameRate.Burst", int64(l.FrameRate.Burst)},
+		{"AssistIn.Burst", int64(l.AssistIn.Burst)},
+		{"AssistRelay.Burst", int64(l.AssistRelay.Burst)},
+	} {
+		if f.v < 0 {
+			return fmt.Errorf("coord: negative Limits.%s %d", f.name, f.v)
+		}
+	}
+	return nil
+}
+
+// validate reports the negative deadlines that cannot be lifted.
+func (t TTLConfig) validate() error {
+	for _, f := range []struct {
+		name string
+		v    time.Duration
+	}{
+		{"BindTimeout", t.BindTimeout},
+		{"ReportSlack", t.ReportSlack},
+		{"ReadyTimeout", t.ReadyTimeout},
+		{"PunchSlack", t.PunchSlack},
+	} {
+		if f.v < 0 {
+			return fmt.Errorf("coord: negative TTL.%s %v", f.name, f.v)
+		}
+	}
+	return nil
 }
 
 func (l Limits) withDefaults() Limits {
@@ -293,22 +343,22 @@ func (l Limits) withDefaults() Limits {
 	l.TargetsPerRound = defaultCount(l.TargetsPerRound, defTargetsPerRound)
 	// The session index, the key table, the event queue and the per-link
 	// frame limit bound the coordinator's memory: they cannot be removed.
-	if l.MaxSessions <= 0 {
+	if l.MaxSessions == 0 {
 		l.MaxSessions = defMaxSessions
 	}
-	if l.ObserverQueue <= 0 {
+	if l.ObserverQueue == 0 {
 		l.ObserverQueue = defObserverQueue
 	}
-	if l.MaxKeys <= 0 {
+	if l.MaxKeys == 0 {
 		l.MaxKeys = defMaxKeys
 	}
-	if l.FramesPerLink <= 0 {
+	if l.FramesPerLink == 0 {
 		l.FramesPerLink = defFramesPerLink
 	}
-	if l.WriteTimeout <= 0 {
+	if l.WriteTimeout == 0 {
 		l.WriteTimeout = defWriteTimeout
 	}
-	if l.AbortTimeout <= 0 {
+	if l.AbortTimeout == 0 {
 		l.AbortTimeout = defAbortTimeout
 	}
 	return l
@@ -382,6 +432,12 @@ func newSettings(cfg Config) (settings, error) {
 		return settings{}, errors.New("coord: unknown Targets policy")
 	case cfg.NoObserver && cfg.Targets == TargetsVerifiedOnly:
 		return settings{}, errors.New("coord: NoObserver verifies nothing, so it needs Targets TargetsBounded")
+	}
+	if err := cfg.Limits.validate(); err != nil {
+		return settings{}, err
+	}
+	if err := cfg.TTL.validate(); err != nil {
+		return settings{}, err
 	}
 	if err := protocol.CheckTransportMode(cfg.TransportFallback); err != nil {
 		return settings{}, fmt.Errorf("coord: TransportFallback: %w", err)

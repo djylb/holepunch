@@ -232,9 +232,14 @@ func TestTTLResolve(t *testing.T) {
 	if got.linger >= 0 || got.grace >= 0 {
 		t.Fatalf("negative %+v", got)
 	}
-	if l := (Limits{ObserverQueue: -5, FramesPerLink: -1, WriteTimeout: -1}).withDefaults(); l.ObserverQueue != defObserverQueue ||
+	if l := (Limits{}).withDefaults(); l.ObserverQueue != defObserverQueue ||
 		l.FramesPerLink != defFramesPerLink || l.WriteTimeout != defWriteTimeout {
 		t.Fatalf("limits %+v", l)
+	}
+	for _, l := range []Limits{{ObserverQueue: -5}, {FramesPerLink: -1}, {WriteTimeout: -1}} {
+		if l.validate() == nil {
+			t.Errorf("%+v valid", l)
+		}
 	}
 }
 

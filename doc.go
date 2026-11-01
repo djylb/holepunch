@@ -110,5 +110,6 @@
 // http.Server.IdleTimeout. Other negative values are an error unless the
 // field gives them a meaning. The coordinator's TTLConfig and Limits keep
 // their own rules, which their documentation states: deadlines are clamped
-// to protocol ranges, and the bounds of its memory cannot be lifted.
+// to protocol ranges, and the bounds of its memory and its write deadlines
+// cannot be lifted, so a negative value of them is an error.
 package holepunch

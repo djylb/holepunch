@@ -218,7 +218,7 @@ func TestExtremeAllowance(t *testing.T) {
 
 // keyLimiter is a limiter whose only limit is a key table of max entries.
 func keyLimiter(max int) *limiter {
-	lim := Limits{MaxKeys: max, MaxSessions: -1, MaxPending: -1, MaxPerInitiatorKey: -1, MaxPerResponderKey: -1,
+	lim := Limits{MaxKeys: max, MaxPending: -1, MaxPerInitiatorKey: -1, MaxPerResponderKey: -1,
 		InitiatorKeyRate: Rate{PerSec: -1}, NewSessions: Rate{PerSec: -1}}.withDefaults()
 	return newLimiter(lim, time.Unix(0, 0))
 }
@@ -232,8 +232,8 @@ func (l *limiter) hasKey(role int, key string) bool {
 // TestKeyTableBound: the quota table never holds more than MaxKeys entries,
 // however many keys come and go; the default is 65536 and cannot be removed.
 func TestKeyTableBound(t *testing.T) {
-	if got := (Limits{MaxKeys: -1}).withDefaults().MaxKeys; got != defMaxKeys || (Limits{}).withDefaults().MaxKeys != 65536 {
-		t.Fatalf("MaxKeys default %d", got)
+	if got := (Limits{}).withDefaults().MaxKeys; got != 65536 || (Limits{MaxKeys: -1}).validate() == nil {
+		t.Fatalf("MaxKeys default %d, or a negative MaxKeys valid", got)
 	}
 	l := keyLimiter(8)
 	now := time.Unix(100, 0)
@@ -396,9 +396,8 @@ func TestOutcomeOf(t *testing.T) {
 // port-mapping and four drift peer_targets per side and pushes at most 16
 // drifted mappings in all.
 func TestMemoryBounds(t *testing.T) {
-	lim := (Limits{MaxSessions: -1, MaxKeys: -1}).withDefaults()
-	if lim.MaxSessions != defMaxSessions || lim.MaxKeys != defMaxKeys {
-		t.Fatalf("removable bounds: %+v", lim)
+	if (Limits{MaxSessions: -1}).validate() == nil || (Limits{MaxKeys: -1}).validate() == nil {
+		t.Fatal("negative MaxSessions or MaxKeys valid")
 	}
 	_, s := testSession(t)
 	s.mu.Lock()
