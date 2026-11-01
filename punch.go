@@ -97,7 +97,8 @@ type Options struct {
 	// as public) or in the sockets at both ends; two paths of different
 	// kinds may share a socket. The session keeps as many as both sides
 	// allow and found, waiting at most about 150 ms more before the
-	// handover for them. 0 means 1; at most protocol.MaxPaths.
+	// handover for them. 0 means 1, as no session hands over no path;
+	// negative values and more than protocol.MaxPaths are an error.
 	MaxPaths int
 	// Logger, optional, receives the session's milestones: punch_start at
 	// Info, every phase transition at Debug, the progress events (the
