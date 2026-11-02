@@ -3,7 +3,7 @@ module github.com/djylb/holepunch/quicpath
 go 1.26.0
 
 require (
-	github.com/djylb/holepunch v0.0.0
+	github.com/djylb/holepunch v0.0.0-20261102213915-36a108640e1d
 	github.com/quic-go/quic-go v0.63.0
 )
 
