@@ -26,6 +26,7 @@ func TestNextAttempt(t *testing.T) {
 		{"closed", &Error{Reason: protocol.ReasonCanceled, Err: ErrClosed}, 1, ActionGiveUp, 0, 0},
 		{"canceled", herr(protocol.ReasonCanceled, "", 0), 1, ActionGiveUp, 0, 0},
 		{"context", context.Canceled, 1, ActionGiveUp, 0, 0},
+		{"canceled by the server", &Error{Reason: protocol.ReasonCanceled, AbortedBy: protocol.RoleServer}, 1, ActionRetry, 500 * time.Millisecond, time.Second},
 		{"plain error", errors.New("dial"), 1, ActionRetry, 500 * time.Millisecond, time.Second},
 		{"transient", herr(protocol.ReasonPeerOffline, "", 0), 1, ActionRetry, 500 * time.Millisecond, time.Second},
 		{"transient third", herr(protocol.ReasonControlTimeout, "", 0), 3, ActionRetry, 2 * time.Second, 4 * time.Second},

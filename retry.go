@@ -76,7 +76,9 @@ const (
 //
 //   - nil, ErrClosed, a canceled context and Reason canceled from one:
 //     ActionGiveUp, since the caller ended the session. A context that
-//     reached its deadline — a caller's per-attempt timeout — is transient.
+//     reached its deadline — a caller's per-attempt timeout — is transient,
+//     and so is Reason canceled in a punch_abort (AbortedBy set): the
+//     server or the peer canceled the session, not the caller.
 //   - Advice relay_only, and the reasons that rule a direct path out for
 //     this host or pair (udp_blocked, no_common_family): ActionRelayOnly
 //     after 30–60 min, the step doubling up to 24 h.
@@ -109,7 +111,7 @@ func NextAttempt(err error, attempt int) Attempt {
 	}
 	action, base, ceiling := ActionRetry, retryBase, retryCeiling
 	switch r, class := herr.Reason, herr.Reason.Class(); {
-	case class == protocol.ClassCanceled && !errors.Is(err, context.DeadlineExceeded):
+	case class == protocol.ClassCanceled && herr.AbortedBy == "" && !errors.Is(err, context.DeadlineExceeded):
 		return Attempt{}
 	case herr.Advice == protocol.AdviceRelayOnly, r == protocol.ReasonUDPBlocked, r == protocol.ReasonNoCommonFamily:
 		action, base, ceiling = ActionRelayOnly, relayOnlyBase, relayOnlyCeiling
