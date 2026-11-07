@@ -1,14 +1,18 @@
 // Package goroutines checks tests for leaked goroutines: Find lists the
 // goroutines still running besides the caller, the test framework's and the
 // runtime's own, waiting a while for them to end first; VerifyNone fails a
-// test with them and VerifyTestMain a whole test binary. It depends on the
-// standard library only, so that every package's tests can use it.
+// test with them and VerifyTestMain a whole test binary. Where the runtime
+// has the goroutineleak profile, the report adds it: it marks the goroutines
+// blocked forever on something no running goroutine can reach. It depends on
+// the standard library only, so that every package's tests can use it.
 package goroutines
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,6 +69,10 @@ func Find(opts ...Option) error {
 				b.WriteString("\n\n")
 				b.WriteString(g.stack)
 			}
+			if p := leakProfile(); p != "" {
+				b.WriteString("\n\n")
+				b.WriteString(p)
+			}
 			return fmt.Errorf("%s", b.String())
 		}
 		t := time.NewTimer(pause)
@@ -93,6 +101,21 @@ func VerifyTestMain(m *testing.M, opts ...Option) {
 		}
 	}
 	os.Exit(code)
+}
+
+// leakProfile returns the goroutineleak profile when it lists goroutines,
+// else "". Taking it runs a garbage collection. Runtimes without the profile
+// return "".
+func leakProfile() string {
+	p := pprof.Lookup("goroutineleak")
+	if p == nil {
+		return ""
+	}
+	var b bytes.Buffer
+	if err := p.WriteTo(&b, 1); err != nil || strings.HasPrefix(b.String(), "goroutineleak profile: total 0\n") {
+		return ""
+	}
+	return b.String()
 }
 
 // goroutine is one goroutine of a runtime.Stack dump.
