@@ -126,7 +126,8 @@ type goroutine struct {
 }
 
 // expected reports a goroutine that is no leak: one of the test framework
-// waiting for its tests, or the runtime's signal and trace handling.
+// waiting for its tests, or the runtime's signal, trace and js/wasm event
+// handling.
 func (g goroutine) expected() bool {
 	switch g.top {
 	case "testing.RunTests", "testing.(*T).Run", "testing.(*T).Parallel", "testing.runFuzzTests", "testing.runFuzzing",
@@ -134,7 +135,7 @@ func (g goroutine) expected() bool {
 		"os/signal.signal_recv", "os/signal.loop", "runtime.ensureSigM", "runtime.ReadTrace":
 		return true
 	}
-	return strings.Contains(g.stack, "runtime/trace.Start")
+	return strings.Contains(g.stack, "runtime/trace.Start") || strings.Contains(g.stack, "runtime.handleEvent")
 }
 
 // goroutines returns every goroutine but the caller's.
