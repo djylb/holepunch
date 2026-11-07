@@ -2,6 +2,7 @@ package holepunch
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/djylb/holepunch/internal/candidate"
@@ -161,28 +162,27 @@ func (rt *runtime) diagnostics(win *candidate.Action, f *failure, failPhase Phas
 
 // strategy is the diagnostic name "<pair_class>/<last variant>".
 func (rt *runtime) strategy(w *worker) string {
-	s := rt.summary.Plan.PairClass
-	for i := len(rt.roundsRun) - 1; i >= 0; i-- {
-		r := rt.roundsRun[i]
+	var s strings.Builder
+	s.WriteString(rt.summary.Plan.PairClass)
+	for _, r := range slices.Backward(rt.roundsRun) {
+
 		if slices.ContainsFunc(r.Sides, func(side protocol.FamilySide) bool { return side.Family == w.fam }) {
-			s += "/" + r.Variant
+			s.WriteString("/" + r.Variant)
 			break
 		}
 	}
 	if w.lowTTLOff.Load() || !w.lowTTL {
-		s += ";lowttl=unavailable"
+		s.WriteString(";lowttl=unavailable")
 	}
-	return s
+	return s.String()
 }
 
 // addWarn records a warning once (at most eight are kept).
 func (rt *runtime) addWarn(w protocol.Warning) {
 	rt.warnMu.Lock()
 	defer rt.warnMu.Unlock()
-	for _, x := range rt.warn {
-		if x == w {
-			return
-		}
+	if slices.Contains(rt.warn, w) {
+		return
 	}
 	if len(rt.warn) < protocol.MaxWarn {
 		rt.warn = append(rt.warn, w)

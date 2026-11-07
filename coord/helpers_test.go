@@ -355,8 +355,7 @@ func invalidArgument(err error) bool {
 
 // reasonOf is the reason of the *ReasonError in err's chain, or "".
 func reasonOf(err error) protocol.Reason {
-	var re *ReasonError
-	if errors.As(err, &re) {
+	if re, ok := errors.AsType[*ReasonError](err); ok {
 		return re.Reason
 	}
 	return ""

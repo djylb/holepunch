@@ -37,7 +37,7 @@ func TestOptionsLogger(t *testing.T) {
 	w := newWorld(t)
 	var logs [2]lockedBuffer
 	ps := &pairScript{w: w, timeouts: testTimeouts()}
-	pr := runPair(t, w, [2]*nattest.NATConfig{natCfg(nattest.PortRestricted()), natCfg(nattest.PortRestricted())}, ps, func(i int, o *Options) {
+	pr := runPair(t, w, [2]*nattest.NATConfig{new(nattest.PortRestricted()), new(nattest.PortRestricted())}, ps, func(i int, o *Options) {
 		o.Logger = slog.New(slog.NewTextHandler(&logs[i], &slog.HandlerOptions{Level: slog.LevelDebug}))
 	})
 	defer pr.closeAll()

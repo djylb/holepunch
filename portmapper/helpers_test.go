@@ -3,6 +3,7 @@ package portmapper
 import (
 	"context"
 	"errors"
+	"maps"
 	"net"
 	"net/netip"
 	"sync"
@@ -78,9 +79,7 @@ func (n *loopNetwork) purposeCounts() map[string]int {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	out := map[string]int{}
-	for k, v := range n.purposes {
-		out[k] = v
-	}
+	maps.Copy(out, n.purposes)
 	return out
 }
 
@@ -176,22 +175,23 @@ func portOf(c net.PacketConn) uint16 {
 	return uint16(c.LocalAddr().(*net.UDPAddr).Port)
 }
 
-func on(b bool) *bool { return &b }
+//go:fix inline
+func on(b bool) *bool { return new(b) }
 
 // policy builds a PortMappingPolicy; methods lists the enabled ones (none:
 // all enabled through nil switches).
 func policy(lease uint32, methods ...protocol.PortMapMethod) protocol.PortMappingPolicy {
 	p := protocol.PortMappingPolicy{LeaseSeconds: lease}
 	if len(methods) > 0 {
-		p.EnablePCP, p.EnableNATPMP, p.EnableUPnP = on(false), on(false), on(false)
+		p.EnablePCP, p.EnableNATPMP, p.EnableUPnP = new(false), new(false), new(false)
 		for _, m := range methods {
 			switch m {
 			case protocol.PortMapPCP:
-				p.EnablePCP = on(true)
+				p.EnablePCP = new(true)
 			case protocol.PortMapNATPMP:
-				p.EnableNATPMP = on(true)
+				p.EnableNATPMP = new(true)
 			case protocol.PortMapUPnP:
-				p.EnableUPnP = on(true)
+				p.EnableUPnP = new(true)
 			}
 		}
 	}

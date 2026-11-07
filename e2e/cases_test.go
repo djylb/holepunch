@@ -524,16 +524,14 @@ func cells() []*cell {
 		session: func(s *sessionSpec, w *world, sides [2]*side) {
 			s.prepare = func(r *run) {
 				ready := r.taps[1].when(toServer, wiretype.PunchReady, nil)
-				w.helpers.Add(1)
-				go func() {
-					defer w.helpers.Done()
+				w.helpers.Go(func() {
 					select {
 					case <-ready:
 						sides[1].nats[0].Rebind(nil)
 					case <-r.ctx[1].Done():
 					case <-w.quit:
 					}
-				}()
+				})
 			}
 		}})
 

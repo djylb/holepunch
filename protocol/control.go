@@ -1,5 +1,7 @@
 package protocol
 
+import "slices"
+
 import "github.com/djylb/holepunch/internal/wiretype"
 
 // Feature is an optional client behaviour offered in punch_start.control and
@@ -52,10 +54,5 @@ func AcceptFeatures(offered, supported []Feature) []Feature {
 func (c ControlSpec) Has(f Feature) bool { return containsFeature(c.Features, f) }
 
 func containsFeature(list []Feature, f Feature) bool {
-	for _, x := range list {
-		if x == f {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, f)
 }

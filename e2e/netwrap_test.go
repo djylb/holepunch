@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"maps"
 	"net"
 	"net/netip"
 	"sync"
@@ -63,9 +64,7 @@ func (c *clientNet) sentTo() map[netip.AddrPort]int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make(map[netip.AddrPort]int, len(c.sent))
-	for k, v := range c.sent {
-		out[k] = v
-	}
+	maps.Copy(out, c.sent)
 	return out
 }
 

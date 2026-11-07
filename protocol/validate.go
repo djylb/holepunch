@@ -3,6 +3,7 @@ package protocol
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 
 	"github.com/djylb/holepunch/internal/wiretype"
 )
@@ -620,10 +621,8 @@ func (p PairFacts) validate(path string) error {
 		if !f.Valid() {
 			return violation(q, "invalid family %q", f)
 		}
-		for _, g := range p.SharedFamilies[:i] {
-			if g == f {
-				return violation(q, "duplicate %s", f)
-			}
+		if slices.Contains(p.SharedFamilies[:i], f) {
+			return violation(q, "duplicate %s", f)
 		}
 	}
 	for _, m := range []map[Family]bool{p.SamePublicIP, p.LikelySameLAN, p.SharedOverlay, p.Unverified} {

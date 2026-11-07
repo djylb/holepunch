@@ -48,7 +48,7 @@ func TestExpandDeterministicAcrossPeers(t *testing.T) {
 }
 
 func TestRandomConstraints(t *testing.T) {
-	for r := byte(0); r < 40; r++ {
+	for r := range byte(40) {
 		seed := spraySeed(r, udpwire.RoleInitiator, 1, uint32(r)*7+1)
 		ports := ExpandRandom(0, 0, 300, ExpandInput{Seed: seed, StageIndex: int(r),
 			Exclude: func(p uint16) bool { return p%50 == 0 }})
@@ -69,7 +69,7 @@ func TestRandomConstraints(t *testing.T) {
 }
 
 func TestPredictConstraints(t *testing.T) {
-	for r := byte(0); r < 40; r++ {
+	for r := range byte(40) {
 		seed := spraySeed(r, udpwire.RoleResponder, 2, uint32(r)*13+5)
 		ports := ExpandPredict(40000, []int16{2}, 128, ExpandInput{Seed: seed, StageIndex: int(r)})
 		if len(ports) == 0 {

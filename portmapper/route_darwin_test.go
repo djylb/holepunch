@@ -16,7 +16,7 @@ func referenceGateway(t *testing.T) (netip.Addr, string, bool) {
 		t.Logf("route(8) unavailable, comparison skipped: %v", err)
 		return netip.Addr{}, "", false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "gateway:"); ok {
 			if a, err := netip.ParseAddr(strings.TrimSpace(v)); err == nil {
 				return a, "route(8)", true

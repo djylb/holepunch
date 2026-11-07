@@ -156,14 +156,12 @@ func (r *run) execute() {
 	}
 	var wg sync.WaitGroup
 	for i := range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if i == 1 && r.spec.late > 0 {
 				time.Sleep(r.spec.late)
 			}
 			r.client(i)
-		}()
+		})
 	}
 	wg.Wait()
 	for i := range 2 {

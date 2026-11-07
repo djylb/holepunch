@@ -93,8 +93,7 @@ func fail(r protocol.Reason, detail string, err error) *failure {
 // them (a context cause, a connection's error), so it runs inside a recover
 // boundary.
 func classify(callerCtx context.Context, cause error) *failure {
-	var pe *life.PanicError
-	if errors.As(cause, &pe) {
+	if pe, ok := errors.AsType[*life.PanicError](cause); ok {
 		if f := (*failure)(nil); errors.As(cause, &f) && f.reason == protocol.ReasonInternal {
 			return f
 		}
@@ -103,8 +102,7 @@ func classify(callerCtx context.Context, cause error) *failure {
 	if callerCtx.Err() != nil {
 		return fail(protocol.ReasonCanceled, "", context.Cause(callerCtx))
 	}
-	var f *failure
-	if errors.As(cause, &f) {
+	if f, ok := errors.AsType[*failure](cause); ok {
 		return f
 	}
 	if r, d, ok := msgframe.Reason(cause); ok {

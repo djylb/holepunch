@@ -77,7 +77,7 @@ func TestDependencies(t *testing.T) {
 	if err != nil {
 		t.Skip("go list unavailable:", err)
 	}
-	for _, dep := range strings.Fields(string(out)) {
+	for dep := range strings.FieldsSeq(string(out)) {
 		switch {
 		case strings.HasSuffix(dep, "holepunch/coord"), strings.HasSuffix(dep, "holepunch/natprobe"),
 			strings.HasSuffix(dep, "holepunch/portmapper"), strings.HasSuffix(dep, "holepunch/nattest"):
@@ -89,7 +89,7 @@ func TestDependencies(t *testing.T) {
 		t.Fatalf("go list: %v", err)
 	}
 	const mod = "github.com/djylb/holepunch"
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		dep, _, _ := strings.Cut(line, " ") // a test variant: "pkg [pkg.test]"
 		ours := dep == mod || strings.HasPrefix(dep, mod+"/") || dep == mod+"_test" || dep == mod+".test"
 		if !ours || strings.HasPrefix(dep, mod+"/quicpath") || strings.HasPrefix(dep, mod+"/standalone") {
@@ -132,8 +132,7 @@ func BenchmarkSendGate(b *testing.B) {
 	m := newRoundMeter(protocol.FamilyUDP4, 1, protocol.FamilySide{MaxPackets: 1 << 30}, &roundCeiling{})
 	to := netip.MustParseAddrPort("198.51.100.9:5000")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		hd := udpwire.Header{Type: udpwire.TPunch, Round: 1, Cand: 1}
 		rt.sender.mu.Lock()
 		rt.sender.initiated = 0

@@ -113,8 +113,8 @@ func fill(v reflect.Value, seed int, depth int) {
 		}
 		fill(v.Elem(), seed, depth+1)
 	case reflect.Struct:
-		for i := range v.NumField() {
-			fill(v.Field(i), seed, depth+1)
+		for _, field := range v.Fields() {
+			fill(field, seed, depth+1)
 		}
 	case reflect.Interface, reflect.Func, reflect.Chan, reflect.UnsafePointer, reflect.Invalid:
 	}

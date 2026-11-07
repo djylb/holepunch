@@ -331,7 +331,7 @@ func TestValidateClientMessages(t *testing.T) {
 		{"progress_meta_65", prog(func(m *Progress) { m.Meta = map[string]string{"k": strings.Repeat("v", 65)} }), false, "", "meta"},
 		{"progress_meta_17_keys_truncated_not_rejected", prog(func(m *Progress) {
 			m.Meta = map[string]string{}
-			for i := 0; i < 17; i++ {
+			for i := range 17 {
 				m.Meta[fmt.Sprint(i)] = "v"
 			}
 		}), true, "", ""},
@@ -462,7 +462,7 @@ func TestAssistDirections(t *testing.T) {
 func TestMetaLimits(t *testing.T) {
 	p := sample[Progress]()
 	p.Meta = map[string]string{}
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		p.Meta[fmt.Sprintf("key%02d", i)] = strings.Repeat("v", 64) // 12 × 69 B = 828 B
 	}
 	if err := p.Validate(); err != nil {
@@ -477,7 +477,7 @@ func TestMetaLimits(t *testing.T) {
 	}
 	// Keys beyond the 16 kept by Normalize do not count.
 	p.Meta = map[string]string{}
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		p.Meta[fmt.Sprintf("key%02d", i)] = strings.Repeat("v", 57) // 16 × 62 B = 992 B kept
 	}
 	p.Meta["zzz_dropped_by_normalize_1"] = strings.Repeat("v", 64)
@@ -487,7 +487,7 @@ func TestMetaLimits(t *testing.T) {
 	}
 	a := sample[Assist]()
 	a.Meta = map[string]string{}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		a.Meta[fmt.Sprintf("k%d", i)] = strings.Repeat("v", 64)
 	}
 	if err := a.Validate(); err != nil {
@@ -545,10 +545,10 @@ func TestValidateResults(t *testing.T) {
 		{"pr_traits_2", pr(func(m *PunchResult) { v6 := tu; v6.Family = FamilyUDP6; m.Traits = []TraitsUpdate{tu, v6} }), true, "", ""},
 		{"pr_traits_dup", pr(func(m *PunchResult) { m.Traits = repeat(tu, 2) }), false, "", "traits[1].family"},
 		{"pr_code_unknown", pr(func(m *PunchResult) { m.OK, m.Reason, m.Phase = false, "probe_failed", PhaseFailed }), false, "", "code"},
-		{"pr_velocity_nan", pr(func(m *PunchResult) { u := tu; u.PortVelocity = ptr(float32(math.NaN())); m.Traits = []TraitsUpdate{u} }), false, "", "traits[0].port_velocity"},
+		{"pr_velocity_nan", pr(func(m *PunchResult) { u := tu; u.PortVelocity = new(float32(math.NaN())); m.Traits = []TraitsUpdate{u} }), false, "", "traits[0].port_velocity"},
 		{"pr_traits_3", pr(func(m *PunchResult) { m.Traits = repeat(tu, 3) }), false, "", "traits"},
 		{"pr_traits_source", pr(func(m *PunchResult) { u := tu; u.Source = "guess"; m.Traits = []TraitsUpdate{u} }), false, "", "traits[0].source"},
-		{"pr_traits_enum", pr(func(m *PunchResult) { u := tu; u.Hairpin = ptr(Tri(5)); m.Traits = []TraitsUpdate{u} }), false, "", "traits[0]"},
+		{"pr_traits_enum", pr(func(m *PunchResult) { u := tu; u.Hairpin = new(Tri(5)); m.Traits = []TraitsUpdate{u} }), false, "", "traits[0]"},
 		{"pr_warn_8", pr(func(m *PunchResult) { m.Warn = repeat(WarnClockSkew, 8) }), true, "", ""},
 		{"pr_warn_9", pr(func(m *PunchResult) { m.Warn = repeat(WarnClockSkew, 9) }), false, "", "warn"},
 		{"pr_warn_unknown_ok", pr(func(m *PunchResult) { m.Warn = []Warning{"future_warning"} }), true, "", ""},
@@ -664,7 +664,7 @@ func TestNormalizeOtherMessages(t *testing.T) {
 	a.Targets = repeat(ap("192.0.2.1:9"), 20)
 	a.Window = &PortWindow{IP: ip("192.0.2.1"), Lo: 100, Hi: 1000}
 	a.Meta = map[string]string{}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		a.Meta[fmt.Sprintf("k%02d", i)] = "v"
 	}
 	n, clamped := a.Normalize()
@@ -679,7 +679,7 @@ func TestNormalizeOtherMessages(t *testing.T) {
 	}
 	pr := sample[PunchResult]()
 	pr.Stats.Drops = map[string]uint32{}
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		pr.Stats.Drops[fmt.Sprintf("d%02d", i)] = 1
 	}
 	if n, clamped := pr.Normalize(); !clamped || len(n.Stats.Drops) != 16 || len(pr.Stats.Drops) != 20 {

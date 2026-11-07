@@ -318,9 +318,7 @@ func (ps *pairScript) run(ctx context.Context, ends [2]net.Conn) error {
 	events := make(chan linkEvent, 64)
 	var wg sync.WaitGroup
 	for i, l := range links {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				m, ok := l.next(time.Hour, protocol.MsgRoundResult, protocol.MsgPunchResult, protocol.MsgAssist)
 				if !ok {
@@ -329,7 +327,7 @@ func (ps *pairScript) run(ctx context.Context, ends [2]net.Conn) error {
 				}
 				events <- linkEvent{idx: i, m: m}
 			}
-		}()
+		})
 	}
 	defer func() {
 		for _, l := range links {

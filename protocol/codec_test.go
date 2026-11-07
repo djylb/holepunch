@@ -292,7 +292,7 @@ func clientLists() []struct {
 // null elements: "a[].b" gives {"a":[{"b":[null,null]}]}.
 func nestedList(path string, n int) string {
 	var open, closing []string
-	for _, k := range strings.Split(path, ".") {
+	for k := range strings.SplitSeq(path, ".") {
 		if name, ok := strings.CutSuffix(k, "[]"); ok {
 			open, closing = append(open, `{"`+name+`":[`), append([]string{"]}"}, closing...)
 		} else {
@@ -408,10 +408,10 @@ func maximalReport() ProbeReport {
 func TestMarshalLimitsAndEscaping(t *testing.T) {
 	p := Progress{SessionID: testSession, Role: RoleInitiator, Stage: "fire", Detail: "<a&b>"}
 	p.Counters, p.Meta = map[string]uint32{}, map[string]string{}
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		p.Counters[fmt.Sprintf("c%063d", i)] = 4294967295
 	}
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		p.Meta[fmt.Sprintf("m%03d", i)] = strings.Repeat("v", 64)
 	}
 	var tooLarge *ValidationError

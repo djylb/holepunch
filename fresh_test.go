@@ -61,7 +61,7 @@ func TestFreshSockets(t *testing.T) {
 		w := newWorld(t)
 		ps := &pairScript{w: w, timeouts: testTimeouts(), round: freshPlan}
 		var fail *failFresh
-		pr := runPair(t, w, [2]*nattest.NATConfig{prc(), natCfg(nattest.SymmetricPreserveRandom())}, ps, func(i int, o *Options) {
+		pr := runPair(t, w, [2]*nattest.NATConfig{prc(), new(nattest.SymmetricPreserveRandom())}, ps, func(i int, o *Options) {
 			if i == 1 {
 				fail = &failFresh{Network: o.Network, n: failures}
 				o.Network = fail

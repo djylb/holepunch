@@ -341,8 +341,8 @@ func (p *socketPool) reserve() bool {
 func (p *socketPool) unreserve() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for i := len(p.all) - 1; i >= 0; i-- {
-		if p.all[i] == nil {
+	for i, v := range slices.Backward(p.all) {
+		if v == nil {
 			p.all = append(p.all[:i], p.all[i+1:]...)
 			return
 		}

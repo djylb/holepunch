@@ -16,7 +16,7 @@ import (
 	"github.com/djylb/holepunch/protocol"
 )
 
-func prc() *nattest.NATConfig { return natCfg(nattest.PortRestricted()) }
+func prc() *nattest.NATConfig { return new(nattest.PortRestricted()) }
 
 func wantSuccess(t *testing.T, pr *pairRun) {
 	t.Helper()
@@ -131,7 +131,7 @@ func TestPairSymmetricSequential(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	ps := &pairScript{w: w, timeouts: testTimeouts()}
-	pr := runPair(t, w, [2]*nattest.NATConfig{natCfg(nattest.SymmetricSeq(1)), prc()}, ps, nil)
+	pr := runPair(t, w, [2]*nattest.NATConfig{new(nattest.SymmetricSeq(1)), prc()}, ps, nil)
 	defer pr.closeAll()
 	wantSuccess(t, pr)
 	d := pr.res[0].sess.Diagnostics()

@@ -96,8 +96,7 @@ func TestRestoreConcurrentCallers(t *testing.T) {
 	cancel()
 	var wg sync.WaitGroup
 	for range 16 {
-		wg.Add(1)
-		go func() { defer wg.Done(); _ = restore() }()
+		wg.Go(func() { ; _ = restore() })
 	}
 	wg.Wait()
 }

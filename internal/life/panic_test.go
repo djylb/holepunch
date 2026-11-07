@@ -156,8 +156,7 @@ func TestPanicErrorUnwrap(t *testing.T) {
 
 func TestPanicNilIsRecovered(t *testing.T) {
 	err := Safe("nil", func() { panic(nil) })
-	var perr *PanicError
-	if !errors.As(err, &perr) {
+	if _, ok := errors.AsType[*PanicError](err); !ok {
 		t.Fatalf("Safe(panic(nil)) = %v", err)
 	}
 }

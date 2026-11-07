@@ -128,8 +128,7 @@ var lossStalled = linkLoss{code: protocol.ReasonPeerOffline, detail: detailStall
 // classifyLoss maps the reason a link stopped (Conn.Err, or an error of the
 // session's own) to a linkLoss.
 func classifyLoss(err error) linkLoss {
-	var pe *life.PanicError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*life.PanicError](err); ok {
 		return linkLoss{code: protocol.ReasonInternal, detail: panicDetail(pe), kind: lossInternal}
 	}
 	if r, d, ok := msgframe.Reason(err); ok {

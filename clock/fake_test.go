@@ -354,9 +354,7 @@ func TestFakeConcurrentUse(t *testing.T) {
 	var wg sync.WaitGroup
 	stopAdvancing := make(chan struct{})
 	var advancer sync.WaitGroup
-	advancer.Add(1)
-	go func() {
-		defer advancer.Done()
+	advancer.Go(func() {
 		prev := clk.Now()
 		for {
 			select {
@@ -372,7 +370,7 @@ func TestFakeConcurrentUse(t *testing.T) {
 				prev = now
 			}
 		}
-	}()
+	})
 	for w := range workers {
 		wg.Add(1)
 		go func(seed uint64) {

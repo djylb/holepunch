@@ -7,12 +7,13 @@ import (
 	"github.com/djylb/holepunch/protocol"
 )
 
-func natCfg(c nattest.NATConfig) *nattest.NATConfig { return &c }
+//go:fix inline
+func natCfg(c nattest.NATConfig) *nattest.NATConfig { return new(c) }
 
 func TestPairPortRestricted(t *testing.T) {
 	w := newWorld(t)
 	ps := &pairScript{w: w, timeouts: testTimeouts()}
-	pr := runPair(t, w, [2]*nattest.NATConfig{natCfg(nattest.PortRestricted()), natCfg(nattest.PortRestricted())}, ps, nil)
+	pr := runPair(t, w, [2]*nattest.NATConfig{new(nattest.PortRestricted()), new(nattest.PortRestricted())}, ps, nil)
 	defer pr.closeAll()
 	for i, r := range pr.res {
 		if r.err != nil {

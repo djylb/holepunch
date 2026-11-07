@@ -113,12 +113,10 @@ func (w *e2eWorld) punchWith(opts coord.SessionOptions, hosts [2]*nattest.Host, 
 		if err := s.Attach(role, srv, coord.AttachOptions{Security: protocol.ControlSecurityInsecureForTesting}); err != nil {
 			t.Fatal(err)
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			sess[i], errs[i] = holepunch.Punch(ctx, cli, holepunch.Options{ControlSecurity: protocol.ControlSecurityInsecureForTesting,
 				Network: hosts[i], TransportMode: "quic", PortMapper: mappers[i]})
-		}()
+		})
 	}
 	wg.Wait()
 	select {

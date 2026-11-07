@@ -559,9 +559,9 @@ func lastOutcome(prev []api.RoundOutcome) (api.RoundOutcome, bool) {
 }
 
 func lastNonRescue(prev []api.RoundOutcome) (api.RoundOutcome, bool) {
-	for i := len(prev) - 1; i >= 0; i-- {
-		if !prev[i].Rescue {
-			return prev[i], true
+	for _, p := range slices.Backward(prev) {
+		if !p.Rescue {
+			return p, true
 		}
 	}
 	return api.RoundOutcome{}, false

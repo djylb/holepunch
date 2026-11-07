@@ -292,8 +292,7 @@ func (c *Coordinator) emit(ev Event) { c.disp.emit(ev) }
 func (c *Coordinator) noteCallbackPanic(sessionID string, err error) {
 	c.ctr.panics.Add(1)
 	ev := Event{Kind: EvInternalError, At: c.set.clock.Now(), SessionID: sessionID, Detail: err.Error()}
-	var pe *life.PanicError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*life.PanicError](err); ok {
 		ev.Detail = pe.Where()
 		ev.Data = PanicInfo{Value: pe.Error(), Stack: pe.Stack()}
 	}

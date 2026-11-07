@@ -31,7 +31,8 @@ func ip(s string) netip.Addr { return netip.MustParseAddr(s) }
 
 const testSession = "8Qm2s1Kc0b7ZtW9xPq3LrA"
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }
 
 // isViolation reports whether err is a *ValidationError with reason
 // protocol_violation.
@@ -85,8 +86,8 @@ func sampleMessages() []Message {
 			ExtraReply: true, SecondSocket: true, Siblings: 2, STUN: []netip.AddrPort{ap("198.51.100.1:3478")}, RTTHintMs: 40},
 		Timeouts: DefaultTimeouts(),
 		Policy: &Policy{Budget: DefaultBudget(),
-			PortMapping: PortMappingPolicy{EnableUPnP: ptr(true), EnablePCP: ptr(false), EnableNATPMP: ptr(true), LeaseSeconds: 3600},
-			LowTTL:      ptr(true), LowTTLHops: []int{4, 7}},
+			PortMapping: PortMappingPolicy{EnableUPnP: new(true), EnablePCP: new(false), EnableNATPMP: new(true), LeaseSeconds: 3600},
+			LowTTL:      new(true), LowTTLHops: []int{4, 7}},
 	}
 	report := ProbeReport{
 		SessionID: testSession, Role: RoleInitiator, Control: DefaultControlSpec(),
@@ -139,8 +140,8 @@ func sampleMessages() []Message {
 		Path:   samplePath(ConfirmedByReady),
 		Stats:  Stats{Sent: 211, Recv: 17, Replies: 9, Rounds: 2, Hits: 2, Drops: map[string]uint32{DropAuth: 1, DropReplay: 3}, BudgetHit: true},
 		Timing: Timing{ProbeMs: 131, SummaryWaitMs: 930, GoWaitMs: 71, PunchMs: 3350, HandoverMs: 31},
-		Traits: []TraitsUpdate{{Family: FamilyUDP4, Mapping: ptr(MapEIM), MappingConf: ptr(ConfHigh), Filtering: ptr(FiltADF),
-			FilteringConf: ptr(ConfLow), PortStep: ptr(int16(2)), PortVelocity: ptr(float32(0.5)), Hairpin: ptr(TriFalse), Source: TraitsSourcePeer}},
+		Traits: []TraitsUpdate{{Family: FamilyUDP4, Mapping: new(MapEIM), MappingConf: new(ConfHigh), Filtering: new(FiltADF),
+			FilteringConf: new(ConfLow), PortStep: new(int16(2)), PortVelocity: new(float32(0.5)), Hairpin: new(TriFalse), Source: TraitsSourcePeer}},
 		Warn: []Warning{WarnClockSkew}}
 	return []Message{start, Ping{Seq: 1}, Pong{Seq: 1, HoldUs: 41, ClientUnixMs: 1791234567514}, report, summary, ready, gom,
 		progress, seen, relayed, targets, abort, rr, pr}

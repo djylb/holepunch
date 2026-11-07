@@ -125,7 +125,7 @@ func effective(b Budget, top bool) []int {
 func TestTightenBudgetProperties(t *testing.T) {
 	r := rand.New(rand.NewPCG(1, 2))
 	ceil := budgetFields(CeilingBudget())
-	for iter := 0; iter < 20000; iter++ {
+	for iter := range 20000 {
 		levels := make([]Budget, 1+r.IntN(4))
 		for i := range levels {
 			levels[i] = randBudget(r)
@@ -182,9 +182,9 @@ func boolp(r *rand.Rand) *bool {
 	case 0:
 		return nil
 	case 1:
-		return ptr(true)
+		return new(true)
 	}
-	return ptr(false)
+	return new(false)
 }
 
 func TestTightenPolicyProperties(t *testing.T) {
@@ -206,7 +206,7 @@ func TestTightenPolicyProperties(t *testing.T) {
 		}
 		return f(p)
 	}
-	for iter := 0; iter < 20000; iter++ {
+	for range 20000 {
 		s, l := randPolicy(), randPolicy()
 		got := Tighten(s, l)
 		var sb, lb Budget
@@ -281,7 +281,7 @@ func TestTightenPolicyProperties(t *testing.T) {
 func TestIdentities(t *testing.T) {
 	ids := map[string]bool{}
 	tokens := map[Token]bool{}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		id := NewSessionID()
 		if len(id) != 24 || checkSessionID(id) != nil || ids[id] {
 			t.Fatalf("NewSessionID = %q", id)
@@ -318,7 +318,7 @@ func TestPayloadRangePerSession(t *testing.T) {
 	mins, spans, ranges := map[uint16]int{}, map[uint16]int{}, map[[2]uint16]int{}
 	routes := map[RouteID]bool{}
 	const n = 10000
-	for i := 0; i < n; i++ {
+	for range n {
 		w := NewWireSpec()
 		span := w.PayloadMax - w.PayloadMin
 		_, clamped := w.Normalize()

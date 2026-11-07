@@ -103,9 +103,7 @@ func (w *world) load(r *run, nat *nattest.NAT, i, pps int, afterProbe bool) {
 		}
 	}
 	ctx := r.ctx[i]
-	w.helpers.Add(1)
-	go func() {
-		defer w.helpers.Done()
+	w.helpers.Go(func() {
 		begin, end := (<-chan frameEvent)(nil), summary
 		if afterProbe {
 			begin, end = summary, nil
@@ -141,5 +139,5 @@ func (w *world) load(r *run, nat *nattest.NAT, i, pps int, afterProbe bool) {
 			}
 			_, _ = out.WriteToUDPAddrPort([]byte{0}, netip.AddrPortFrom(dst, uint16(port)))
 		}
-	}()
+	})
 }

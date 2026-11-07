@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,7 +64,7 @@ func lint(t *testing.T, dir string, args ...string) (map[string]int, map[string]
 	code := run(abs, args, &stdout, &stderr)
 	got := map[string]int{}
 	lines := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(stdout.String()), "\n") {
 		if line == "" {
 			continue
 		}
@@ -155,12 +156,8 @@ func TestPatternsSelectPackages(t *testing.T) {
 
 func union2(a, b map[string]int) map[string]int {
 	out := map[string]int{}
-	for k, n := range a {
-		out[k] = n
-	}
-	for k, n := range b {
-		out[k] = n
-	}
+	maps.Copy(out, a)
+	maps.Copy(out, b)
 	return out
 }
 

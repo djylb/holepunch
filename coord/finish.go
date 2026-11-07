@@ -59,8 +59,7 @@ func (t terminal) cause() error {
 
 // internalTerm is the end for a recovered panic or an injected fault.
 func internalTerm(err error) terminal {
-	var pe *life.PanicError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*life.PanicError](err); ok {
 		return terminal{code: protocol.ReasonInternal, detail: panicDetail(pe), panic: pe}
 	}
 	return terminal{code: protocol.ReasonInternal, detail: trunc.String(err.Error(), protocol.MaxDetail)}
@@ -537,8 +536,7 @@ func (s *Session) onParentDone() {
 func (s *Session) onGroupDone() {
 	s.guard("coord.context", func() {
 		cause := context.Cause(s.group.Context())
-		var pe *life.PanicError
-		if errors.As(cause, &pe) {
+		if pe, ok := errors.AsType[*life.PanicError](cause); ok {
 			s.finish(internalTerm(pe))
 			return
 		}

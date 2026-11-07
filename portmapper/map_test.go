@@ -211,7 +211,7 @@ func TestMapPreferenceOrder(t *testing.T) {
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	off := protocol.PortMappingPolicy{EnablePCP: on(false), EnableNATPMP: on(false), EnableUPnP: on(false)}
+	off := protocol.PortMappingPolicy{EnablePCP: new(false), EnableNATPMP: new(false), EnableUPnP: new(false)}
 	if _, _, err := m.Map(context.Background(), pc, off); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Map(all disabled) error = %v, want ErrUnsupported", err)
 	}

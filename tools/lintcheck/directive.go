@@ -3,6 +3,7 @@ package main
 import (
 	"go/ast"
 	"go/token"
+	"slices"
 	"strings"
 )
 
@@ -171,11 +172,9 @@ func (c *checker) registerNetImpl(p *pkg, fd *ast.FuncDecl) string {
 	if fd == nil {
 		return directivePrefix + dirNetImpl + " must be in the doc comment of a function"
 	}
-	for _, allowed := range netImplPackages() {
-		if p.rel == allowed {
-			c.netimpl[fd] = true
-			return ""
-		}
+	if slices.Contains(netImplPackages(), p.rel) {
+		c.netimpl[fd] = true
+		return ""
 	}
 	return directivePrefix + dirNetImpl + " is only allowed in the root package, natprobe and hostaddr"
 }

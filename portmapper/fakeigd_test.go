@@ -99,7 +99,7 @@ func (f *fakeIGD) serveSSDP() {
 			continue
 		}
 		st := ""
-		for _, line := range strings.Split(req, "\r\n") {
+		for line := range strings.SplitSeq(req, "\r\n") {
 			if k, v, ok := strings.Cut(line, ":"); ok && strings.EqualFold(k, "ST") {
 				st = strings.TrimSpace(v)
 			}

@@ -193,9 +193,7 @@ func TestRunGuardConcurrentSenders(t *testing.T) {
 	host := g.rt.netw.(*nattest.Host)
 	var wg sync.WaitGroup
 	for i := range 6 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			rng := rand.New(rand.NewPCG(uint64(i), 7))
 			for range 40 {
 				port := 9000 + rng.IntN(6)
@@ -208,7 +206,7 @@ func TestRunGuardConcurrentSenders(t *testing.T) {
 					_ = g.answer(classHandshake, port)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	st := host.Stats()

@@ -296,9 +296,7 @@ func TestConcurrentOpenClose(t *testing.T) {
 	tn := NewTrackingNetwork(udpNetwork{})
 	var wg, closers sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 25 {
 				pc, err := tn.ListenPacket(context.Background(), "udp4", loopback, "birthday")
 				if err != nil {
@@ -310,7 +308,7 @@ func TestConcurrentOpenClose(t *testing.T) {
 				_ = tn.Stats()
 				_ = tn.OpenConns()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	// The tracker counts a Close before the wrapped conn closes: wait for

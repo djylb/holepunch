@@ -153,11 +153,9 @@ func (h *cellHelpers) spawn(f func()) {
 	if h.ended {
 		return
 	}
-	h.wg.Add(1)
-	go func() {
-		defer h.wg.Done()
+	h.wg.Go(func() {
 		f()
-	}()
+	})
 }
 
 // end closes stop and waits up to d for the helpers to return; it reports

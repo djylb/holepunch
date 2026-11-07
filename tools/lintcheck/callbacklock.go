@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -58,9 +60,7 @@ func (s lockSet) entered() lockSet {
 
 func (s lockSet) clone() lockSet {
 	out := make(lockSet, len(s))
-	for k, v := range s {
-		out[k] = v
-	}
+	maps.Copy(out, s)
 	return out
 }
 
@@ -212,8 +212,8 @@ func (lf *lockFlow) stmt(s ast.Stmt, held lockSet) (lockSet, bool) {
 func (lf *lockFlow) branch(s *ast.BranchStmt, held lockSet) (lockSet, bool) {
 	switch s.Tok {
 	case token.BREAK, token.CONTINUE:
-		for i := len(lf.targets) - 1; i >= 0; i-- {
-			t := lf.targets[i]
+		for _, t := range slices.Backward(lf.targets) {
+
 			if s.Label != nil && t.label != s.Label.Name || s.Label == nil && s.Tok == token.CONTINUE && !t.loop {
 				continue
 			}

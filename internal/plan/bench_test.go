@@ -14,7 +14,7 @@ func BenchmarkClassifyRound(b *testing.B) {
 	var p DefaultPlanner
 	in := classifyInput(a, peer)
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		cl := p.Classify(in)
 		p.Round(roundInput(cl, a, peer, 2, []api.RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}}))
 	}
@@ -23,7 +23,7 @@ func BenchmarkClassifyRound(b *testing.B) {
 func BenchmarkExpandRandom(b *testing.B) {
 	in := ExpandInput{Seed: [8]byte{1, 2, 3}}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ExpandRandom(0, 0, 368, in)
 	}
 }
@@ -32,7 +32,9 @@ func BenchmarkExpandRandom(b *testing.B) {
 // (coverShifts) runs on every seed.
 func BenchmarkExpandPaired16(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		in := ExpandInput{PairSeed: [8]byte{byte(i), byte(i >> 8), byte(i >> 16)}}
 		ExpandPaired(40000, []int16{1}, minPairSpan, in)
 	}
@@ -41,7 +43,7 @@ func BenchmarkExpandPaired16(b *testing.B) {
 // The random-stage capacity is constant time.
 func BenchmarkRangeCapacity(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		RangeCapacity(0, 0, nil)
 	}
 }
@@ -58,7 +60,7 @@ func BenchmarkClassifyRoundDualStack(b *testing.B) {
 	var p DefaultPlanner
 	ci := api.ClassifyInput{Initiator: views[0], Responder: views[1], Policy: protocol.Policy{Budget: protocol.DefaultBudget()}}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		cl := p.Classify(ci)
 		in := roundInput(cl, a4, b4, 2, []api.RoundOutcome{{Round: 1, Variant: cl.Ladder[0], Class: api.RoundNoContact, Budget: protocol.BudgetBalanced}})
 		in.Views = views

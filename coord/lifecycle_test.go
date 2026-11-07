@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -326,12 +327,7 @@ func TestConfirmLinger(t *testing.T) {
 }
 
 func contains[T comparable](list []T, s T) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, s)
 }
 
 // TestControlLossDuringPunching: a side that loses its link while punching
@@ -493,13 +489,11 @@ func TestCoordinatorClose(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 20 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := r.c.Close(); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	if a := expectAbort(t, cb); a.Reason != protocol.ReasonServerShutdown || a.By != protocol.RoleServer {
 		t.Fatalf("abort %+v", a)
@@ -597,15 +591,13 @@ func TestConcurrentAbort(t *testing.T) {
 	p := r.pair(SessionOptions{})
 	var wg sync.WaitGroup
 	for i := range 100 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if i%10 == 0 {
 				_ = r.c.Close()
 				return
 			}
 			p.s.Abort(protocol.ReasonCanceled, "")
-		}()
+		})
 	}
 	wg.Wait()
 	r.wait(p.s)

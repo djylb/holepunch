@@ -20,11 +20,11 @@ func jsonFields(t reflect.Type) []string {
 		t = t.Elem()
 	}
 	var out []string
-	for i := 0; i < t.NumField(); i++ {
-		tag := t.Field(i).Tag.Get("json")
+	for field := range t.Fields() {
+		tag := field.Tag.Get("json")
 		name, opts, _ := strings.Cut(tag, ",")
 		if name == "" || name == "-" {
-			out = append(out, "!untagged:"+t.Field(i).Name)
+			out = append(out, "!untagged:"+field.Name)
 			continue
 		}
 		if strings.Contains(opts, "omitempty") || strings.Contains(opts, "omitzero") {
@@ -210,7 +210,7 @@ func TestProtocolTable(t *testing.T) {
 func TestEnumValues(t *testing.T) {
 	texts := func(n int, f func(i int) ([]byte, error)) []string {
 		var out []string
-		for i := 0; i < n; i++ {
+		for i := range n {
 			b, err := f(i)
 			if err != nil {
 				t.Fatal(err)
@@ -235,7 +235,7 @@ func TestEnumValues(t *testing.T) {
 			t.Errorf("%s: %v, want %s", name, tc.got, tc.want)
 		}
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		var f Filtering
 		b, _ := Filtering(i).MarshalText()
 		if err := f.UnmarshalText(b); err != nil || f != Filtering(i) {

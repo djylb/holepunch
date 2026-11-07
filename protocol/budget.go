@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"cmp"
+	"slices"
 	"time"
 )
 
@@ -184,11 +185,8 @@ func Tighten(server, local *Policy) Policy {
 	if want := normalizeHops(l.LowTTLHops); len(want) > 0 {
 		var kept []int
 		for _, h := range hops {
-			for _, w := range want {
-				if h == w {
-					kept = append(kept, h)
-					break
-				}
+			if slices.Contains(want, h) {
+				kept = append(kept, h)
 			}
 		}
 		if len(kept) == 0 {

@@ -286,8 +286,7 @@ func (p *Prober) Run(ctx context.Context) (res Result) {
 		// Safe returns a *life.PanicError. errors.As matches that outermost
 		// value before it would call an Unwrap or As method, so no caller
 		// code runs here.
-		var pe *life.PanicError
-		if errors.As(err, &pe) {
+		if pe, ok := errors.AsType[*life.PanicError](err); ok {
 			res.Panic = pe
 		}
 	}
@@ -357,8 +356,7 @@ func (p *Prober) run(ctx context.Context) Result {
 // elsewhere in the session → internal; anything else → canceled, the session
 // reporting its own failure.
 func ctxReason(ctx context.Context) (protocol.Reason, string) {
-	var pe *life.PanicError
-	if errors.As(context.Cause(ctx), &pe) {
+	if pe, ok := errors.AsType[*life.PanicError](context.Cause(ctx)); ok {
 		return protocol.ReasonInternal, "panic:" + pe.Where()
 	}
 	return protocol.ReasonCanceled, ""

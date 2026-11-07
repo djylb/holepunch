@@ -88,11 +88,11 @@ func TestReobserveReportsRemap(t *testing.T) {
 // remapPush is the coordinator's part: the latest remap side i
 // reported, pushed to the other side as peer_targets{source: drift}.
 func remapPush(ps *pairScript, i int) []protocol.Assist {
-	for k := len(ps.rounds[i]) - 1; k >= 0; k-- {
-		for _, f := range ps.rounds[i][k].Families {
+	for _, v := range slices.Backward(ps.rounds[i]) {
+		for _, f := range v.Families {
 			if f.Remap != nil {
 				return []protocol.Assist{{From: protocol.RoleServer, Kind: protocol.AssistPeerTargets,
-					Round: ps.rounds[i][k].Round + 1, Family: f.Family, Source: protocol.TargetsDrift,
+					Round: v.Round + 1, Family: f.Family, Source: protocol.TargetsDrift,
 					Targets: []netip.AddrPort{f.Remap.Observed}}}
 			}
 		}

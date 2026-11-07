@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 func main() {
@@ -76,10 +77,5 @@ func run(wd string, args []string, stdout, stderr io.Writer) int {
 }
 
 func contains(list []*pkg, p *pkg) bool {
-	for _, q := range list {
-		if q == p {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, p)
 }

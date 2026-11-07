@@ -71,9 +71,7 @@ func (c *udpClient) open(id uint8) *udpSock {
 	}
 	c.conns = append(c.conns, conn)
 	s := &udpSock{id: id, conn: conn}
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
+	c.wg.Go(func() {
 		buf, scratch := make([]byte, 2048), make([]byte, 2048)
 		for {
 			n, from, err := conn.ReadFromUDPAddrPort(buf)
@@ -95,7 +93,7 @@ func (c *udpClient) open(id uint8) *udpSock {
 				p.Deliver(s.id, from, &h, &tl, time.Now())
 			}
 		}
-	}()
+	})
 	return s
 }
 

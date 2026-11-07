@@ -81,8 +81,7 @@ func FuzzReadFrame(f *testing.F) {
 				if errors.Is(err, context.DeadlineExceeded) {
 					t.Fatal("reading did not terminate")
 				}
-				var perr *life.PanicError
-				if errors.As(err, &perr) {
+				if _, ok := errors.AsType[*life.PanicError](err); ok {
 					t.Fatalf("panic while reading: %v", err)
 				}
 				for _, known := range []error{io.EOF, io.ErrUnexpectedEOF, ErrBadMagic, ErrVersion, ErrZeroType,

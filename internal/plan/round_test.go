@@ -104,7 +104,7 @@ func TestDualStackSamePairClass(t *testing.T) {
 		if dec.Stop != "" {
 			break
 		}
-		for r := 0; r < 2; r++ {
+		for r := range 2 {
 			if len(dec.Sides[r]) != 2 {
 				t.Fatalf("round %d role %d has %d families, want 2", round, r, len(dec.Sides[r]))
 			}
@@ -169,7 +169,7 @@ func TestLowTTLDisabled(t *testing.T) {
 	in := roundInput(cl, a, b, 2, []api.RoundOutcome{{Round: 1, Variant: vEasy1, Class: api.RoundNoContact, Budget: protocol.BudgetLight}})
 	in.Policy.LowTTL = &off
 	dec := p.Round(in)
-	for r := 0; r < 2; r++ {
+	for r := range 2 {
 		for _, fs := range dec.Sides[r] {
 			for _, st := range fs.Stages {
 				if st.TTL != 0 {

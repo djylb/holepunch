@@ -120,7 +120,7 @@ func TestReplyOnlyMarshals(t *testing.T) {
 	if dec.Stop != "" {
 		t.Skipf("stopped (%s) — no stages anywhere is also valid", dec.Stop)
 	}
-	for r := 0; r < 2; r++ {
+	for r := range 2 {
 		rp := protocol.RoundPlan{Round: 2, Variant: dec.VariantName, Budget: dec.Budget, WindowMs: uint16(dec.Window / time.Millisecond), Seed: 1, Sides: dec.Sides[r]}
 		pg := protocol.PunchGo{SessionID: "s1", Round: 2, WindowMs: rp.WindowMs, Plan: &rp}
 		if _, err := msgframe.Encode(pg); err != nil {
@@ -150,7 +150,7 @@ func TestDualStackBudgetMerged(t *testing.T) {
 	lim, _ := dec.Budget.Limits()
 	sess := protocol.DefaultBudget()
 	emit := effNPS0(sess)*int(dec.Window/time.Millisecond)/1000 + 16
-	for r := 0; r < 2; r++ {
+	for r := range 2 {
 		socks := sumField(dec.Sides[r], func(fs protocol.FamilySide) int { return int(fs.Sockets) })
 		pk := sumField(dec.Sides[r], func(fs protocol.FamilySide) int { return int(fs.MaxPackets) })
 		spray := sumField(dec.Sides[r], sprayCount)
@@ -303,7 +303,7 @@ func TestGrantAfterWindowClamp(t *testing.T) {
 	if dec.Stop != "" {
 		t.Fatalf("stopped: %s", dec.Stop)
 	}
-	for r := 0; r < 2; r++ {
+	for r := range 2 {
 		for _, fs := range dec.Sides[r] {
 			g := sprayCount(fs)
 			emit := int(fs.MaxNewPerSec)*int(dec.Window/time.Millisecond)/1000 + 16
@@ -364,7 +364,7 @@ func TestDirectCountedInDistinct(t *testing.T) {
 	f := protocol.FamilyUDP4
 	a, b := pdfTraits(f), seqTraits(f)
 	vb := view(b)
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		vb.Families[0].Endpoints = append(vb.Families[0].Endpoints, protocol.Endpoint{Addr: netip.AddrPortFrom(b.Observed.Addr(), uint16(41000+i)), Source: protocol.EndpointServer, Verified: true})
 	}
 	var p DefaultPlanner
@@ -453,7 +453,7 @@ func TestBlockedPersists(t *testing.T) {
 	if dec.Stop != "" {
 		return
 	}
-	for r := 0; r < 2; r++ {
+	for r := range 2 {
 		for _, fs := range dec.Sides[r] {
 			if sprayCount(fs) > 0 {
 				t.Errorf("round 3 after a Blocked round still sprays %d ports", sprayCount(fs))
@@ -604,7 +604,7 @@ func TestSweepMarshal(t *testing.T) {
 				if dec.Stop != "" {
 					break
 				}
-				for r := 0; r < 2; r++ {
+				for r := range 2 {
 					rp := protocol.RoundPlan{Round: uint8(round), Variant: dec.VariantName, Budget: dec.Budget, WindowMs: uint16(dec.Window / time.Millisecond), Seed: 1, Sides: dec.Sides[r]}
 					msg, clamped := carrier(rp)
 					if _, err := msgframe.Encode(msg); err != nil {

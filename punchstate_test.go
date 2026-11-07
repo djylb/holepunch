@@ -41,9 +41,7 @@ func TestPunchStateStableUnderReadLoops(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		short, foreign := []byte{0x01}, make([]byte, 64) // ErrShort, ErrForeign
 		for i := 0; ; i++ {
 			select {
@@ -60,7 +58,7 @@ func TestPunchStateStableUnderReadLoops(t *testing.T) {
 				time.Sleep(200 * time.Microsecond)
 			}
 		}
-	}()
+	})
 	so.summary(self, fakePeer("203.0.113.99:4000"), to)
 	_, ready := so.link.next(5*time.Second, protocol.MsgPunchReady)
 	time.Sleep(50 * time.Millisecond)

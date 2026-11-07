@@ -715,8 +715,8 @@ func fitDirect(stages []protocol.Stage, sockets, budget int) ([]protocol.Stage, 
 		}
 		// One target, one repeat, one socket per stage and still too many:
 		// drop the last Direct stage.
-		for i := len(out) - 1; i >= 0; i-- {
-			if out[i].Kind == protocol.StageDirect {
+		for i, o := range slices.Backward(out) {
+			if o.Kind == protocol.StageDirect {
 				out = append(out[:i], out[i+1:]...)
 				break
 			}

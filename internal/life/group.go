@@ -211,8 +211,8 @@ func (g *Group) shutdown(join time.Duration) error {
 	g.cancel(ErrClosed)
 
 	var first error
-	for i := len(list) - 1; i >= 0; i-- {
-		o := list[i]
+	for _, o := range slices.Backward(list) {
+
 		var err error
 		// The error comes from the resource's own code, and errors.Is runs
 		// its Is and Unwrap methods: both stay inside the recover boundary.

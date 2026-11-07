@@ -580,15 +580,13 @@ func TestShutdownIdempotentAndConcurrent(t *testing.T) {
 		var wg sync.WaitGroup
 		results := make([]error, 8)
 		for i := range results {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				if (i%2 == 0) == releaseFirst {
 					results[i] = c.Release()
 				} else {
 					results[i] = c.Close()
 				}
-			}()
+			})
 		}
 		wg.Wait()
 		var rel, cls []error
