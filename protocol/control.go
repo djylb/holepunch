@@ -1,8 +1,10 @@
 package protocol
 
-import "slices"
+import (
+	"slices"
 
-import "github.com/djylb/holepunch/internal/wiretype"
+	"github.com/djylb/holepunch/internal/wiretype"
+)
 
 // Feature is an optional client behaviour offered in punch_start.control and
 // echoed (accepted subset) in probe_report.control. Syntax

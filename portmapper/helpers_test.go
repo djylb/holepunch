@@ -175,9 +175,6 @@ func portOf(c net.PacketConn) uint16 {
 	return uint16(c.LocalAddr().(*net.UDPAddr).Port)
 }
 
-//go:fix inline
-func on(b bool) *bool { return new(b) }
-
 // policy builds a PortMappingPolicy; methods lists the enabled ones (none:
 // all enabled through nil switches).
 func policy(lease uint32, methods ...protocol.PortMapMethod) protocol.PortMappingPolicy {

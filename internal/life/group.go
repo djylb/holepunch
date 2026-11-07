@@ -212,7 +212,6 @@ func (g *Group) shutdown(join time.Duration) error {
 
 	var first error
 	for _, o := range slices.Backward(list) {
-
 		var err error
 		// The error comes from the resource's own code, and errors.Is runs
 		// its Is and Unwrap methods: both stay inside the recover boundary.

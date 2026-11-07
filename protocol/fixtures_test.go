@@ -31,9 +31,6 @@ func ip(s string) netip.Addr { return netip.MustParseAddr(s) }
 
 const testSession = "8Qm2s1Kc0b7ZtW9xPq3LrA"
 
-//go:fix inline
-func ptr[T any](v T) *T { return new(v) }
-
 // isViolation reports whether err is a *ValidationError with reason
 // protocol_violation.
 func isViolation(err error) bool {

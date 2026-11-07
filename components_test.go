@@ -147,7 +147,7 @@ func TestSessionClose(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, 8)
 	for i := range errs {
-		wg.Go(func() { ; errs[i] = s.Close() })
+		wg.Go(func() { errs[i] = s.Close() })
 	}
 	wg.Wait()
 	for _, e := range errs {

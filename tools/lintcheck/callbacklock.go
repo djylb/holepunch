@@ -213,7 +213,6 @@ func (lf *lockFlow) branch(s *ast.BranchStmt, held lockSet) (lockSet, bool) {
 	switch s.Tok {
 	case token.BREAK, token.CONTINUE:
 		for _, t := range slices.Backward(lf.targets) {
-
 			if s.Label != nil && t.label != s.Label.Name || s.Label == nil && s.Tok == token.CONTINUE && !t.loop {
 				continue
 			}

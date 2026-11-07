@@ -280,7 +280,7 @@ func TestCloseIdempotentAndConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, 8)
 	for i := range errs {
-		wg.Go(func() { ; errs[i] = g.Close(time.Second) })
+		wg.Go(func() { errs[i] = g.Close(time.Second) })
 	}
 	time.Sleep(20 * time.Millisecond)
 	close(release)
@@ -459,7 +459,7 @@ func TestConcurrentGoOwnClose(t *testing.T) {
 				_ = g.Own("r", countingCloser{n: &closes, id: i})
 			})
 		}
-		wg.Go(func() { ; _ = g.Close(time.Second) })
+		wg.Go(func() { _ = g.Close(time.Second) })
 		wg.Wait()
 		_ = g.Close(time.Second)
 		if s := g.Stats(); s.Running != 0 || s.Leaked != 0 || s.Owned != 0 {

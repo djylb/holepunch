@@ -7,9 +7,6 @@ import (
 	"github.com/djylb/holepunch/protocol"
 )
 
-//go:fix inline
-func natCfg(c nattest.NATConfig) *nattest.NATConfig { return new(c) }
-
 func TestPairPortRestricted(t *testing.T) {
 	w := newWorld(t)
 	ps := &pairScript{w: w, timeouts: testTimeouts()}
