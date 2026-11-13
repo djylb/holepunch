@@ -31,6 +31,36 @@ import (
 //	}
 //
 //	opts.Network = tunedNetwork{holepunch.SystemNetwork()}
+//
+// On Android inside a VPN app, every socket must be protected so that it
+// bypasses the VPN; protect is the app's VpnService.protect, reached
+// through its bindings:
+//
+//	func (n protectedNetwork) ListenPacket(ctx context.Context, network string, laddr netip.AddrPort, purpose string) (net.PacketConn, error) {
+//		c, err := n.Network.ListenPacket(ctx, network, laddr, purpose)
+//		if err != nil {
+//			return nil, err
+//		}
+//		rc, err := c.(syscall.Conn).SyscallConn()
+//		if err == nil {
+//			cerr := rc.Control(func(fd uintptr) {
+//				if !protect(int(fd)) {
+//					err = errors.New("protect failed")
+//				}
+//			})
+//			err = errors.Join(err, cerr)
+//		}
+//		if err != nil {
+//			_ = c.Close()
+//			return nil, err
+//		}
+//		return c, nil
+//	}
+//
+// Every socket of a session goes through ListenPacket — package quicpath
+// runs QUIC on the session's own sockets, and package portmapper opens its
+// request sockets here too (purpose "portmap") — so this one method covers
+// them all.
 type Network interface {
 	// ListenPacket opens a UDP socket on laddr ("udp4" or "udp6"; a zero
 	// laddr address means every address of the family, port 0 means any).
