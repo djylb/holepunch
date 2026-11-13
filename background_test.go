@@ -61,7 +61,9 @@ func (f failBirthday) ListenPacket(ctx context.Context, network string, laddr ne
 	return f.Network.ListenPacket(ctx, network, laddr, purpose)
 }
 
-// countBinds counts the binds of paced sockets and when they happen.
+// countBinds counts the successful binds of paced sockets and when they
+// happen; a bind the system refuses (a drawn port in use) is retried on
+// another port and is not one.
 type countBinds struct {
 	Network
 	mu sync.Mutex
@@ -69,12 +71,13 @@ type countBinds struct {
 }
 
 func (c *countBinds) ListenPacket(ctx context.Context, network string, laddr netip.AddrPort, purpose string) (net.PacketConn, error) {
-	if purpose == PurposeBirthday {
+	pc, err := c.Network.ListenPacket(ctx, network, laddr, purpose)
+	if err == nil && purpose == PurposeBirthday {
 		c.mu.Lock()
 		c.at = append(c.at, time.Now())
 		c.mu.Unlock()
 	}
-	return c.Network.ListenPacket(ctx, network, laddr, purpose)
+	return pc, err
 }
 
 // TestPacedSockets: a side with OpenPerSec opens its sockets beyond the
