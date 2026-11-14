@@ -28,7 +28,7 @@ func systemGateway() (netip.Addr, error) {
 	size := uint32(16 << 10)
 	for range 4 { // the table can grow between the size query and the call
 		buf := make([]byte, size)
-		r, _, _ := proc.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)), 0)
+		r, _, _ := proc.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)), 0) //nolint:gosec // G103: the Win32 call takes the buffer and its size by pointer
 		switch errno := syscall.Errno(r); errno {
 		case 0:
 			return parseIPForwardTable(buf)

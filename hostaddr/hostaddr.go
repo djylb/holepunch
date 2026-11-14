@@ -17,7 +17,6 @@
 package hostaddr
 
 import (
-	"errors"
 	"net"
 	"net/netip"
 	"strings"
@@ -178,8 +177,6 @@ func OverlayName(name string) bool {
 	}
 	return false
 }
-
-var errNoFallback = errors.New("hostaddr: no fallback interface list")
 
 // inCGN reports whether a is in the RFC 6598 shared address space
 // 100.64.0.0/10.

@@ -16,11 +16,11 @@ func setsockoptInt(fd uintptr, level, opt, v int) error {
 	return syscall.SetsockoptInt(syscall.Handle(fd), level, opt, v)
 }
 
-// wsaEMSGSIZE is WSAEMSGSIZE (winerror.h), which package syscall does not
+// errWSAEMSGSIZE is WSAEMSGSIZE (winerror.h), which package syscall does not
 // name.
-const wsaEMSGSIZE syscall.Errno = 10040
+const errWSAEMSGSIZE syscall.Errno = 10040
 
 // IsTruncated reports whether a read failed on a datagram larger than the
 // buffer: Windows fills the buffer and fails the read with WSAEMSGSIZE. The
 // socket is fine; the next read gets the next datagram.
-func IsTruncated(err error) bool { return errors.Is(err, wsaEMSGSIZE) }
+func IsTruncated(err error) bool { return errors.Is(err, errWSAEMSGSIZE) }

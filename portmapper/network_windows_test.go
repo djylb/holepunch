@@ -40,8 +40,7 @@ func TestRequestSocketSwitchPanics(t *testing.T) {
 	n := &reportsOnNetwork{panicSyscall: true}
 	m := newTestMapper(t, Config{Network: n}, testEnv{})
 	_, err := m.openRequest(context.Background(), loopback)
-	var pe *life.PanicError
-	if !errors.As(err, &pe) {
+	if _, ok := errors.AsType[*life.PanicError](err); !ok {
 		t.Fatalf("openRequest = %v, want a PanicError", err)
 	}
 	if n.closed.Load() != 1 {

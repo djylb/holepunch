@@ -10,10 +10,10 @@ import (
 
 // Winsock error codes that package syscall does not name (winerror.h).
 const (
-	wsaENETUNREACH  syscall.Errno = 10051
-	wsaENETRESET    syscall.Errno = 10052
-	wsaEHOSTDOWN    syscall.Errno = 10064
-	wsaEHOSTUNREACH syscall.Errno = 10065
+	errWSAENETUNREACH  syscall.Errno = 10051
+	errWSAENETRESET    syscall.Errno = 10052
+	errWSAEHOSTDOWN    syscall.Errno = 10064
+	errWSAEHOSTUNREACH syscall.Errno = 10065
 )
 
 // sioUDPNetReset is SIO_UDP_NETRESET (mstcpip.h, _WSAIOW(IOC_VENDOR)),
@@ -50,14 +50,15 @@ func setReports(c net.PacketConn, on bool) error {
 		flag = 1
 	}
 	var ioErr error
-	if err := rc.Control(func(fd uintptr) {
+	err = rc.Control(func(fd uintptr) {
 		for _, code := range [...]uint32{syscall.SIO_UDP_CONNRESET, sioUDPNetReset} {
 			in, ret := flag, uint32(0)
-			if e := syscall.WSAIoctl(syscall.Handle(fd), code, (*byte)(unsafe.Pointer(&in)), uint32(unsafe.Sizeof(in)), nil, 0, &ret, nil, 0); e != nil {
+			if e := syscall.WSAIoctl(syscall.Handle(fd), code, (*byte)(unsafe.Pointer(&in)), uint32(unsafe.Sizeof(in)), nil, 0, &ret, nil, 0); e != nil { //nolint:gosec // G103: WSAIoctl takes its input buffer by pointer
 				ioErr = errors.Join(ioErr, os.NewSyscallError("wsaioctl", e))
 			}
 		}
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	return ioErr
@@ -67,11 +68,11 @@ func setReports(c net.PacketConn, on bool) error {
 // names that package syscall gives invented values on Windows and that
 // simulators return.
 func reportErrno(e syscall.Errno) bool {
-	return errors.Is(e, syscall.WSAECONNRESET) || errors.Is(e, wsaENETRESET) ||
+	return errors.Is(e, syscall.WSAECONNRESET) || errors.Is(e, errWSAENETRESET) ||
 		errors.Is(e, syscall.ECONNREFUSED) || errors.Is(e, syscall.ECONNRESET)
 }
 
 func noRouteErrno(e syscall.Errno) bool {
-	return errors.Is(e, wsaEHOSTUNREACH) || errors.Is(e, wsaENETUNREACH) || errors.Is(e, wsaEHOSTDOWN) ||
+	return errors.Is(e, errWSAEHOSTUNREACH) || errors.Is(e, errWSAENETUNREACH) || errors.Is(e, errWSAEHOSTDOWN) ||
 		errors.Is(e, syscall.EHOSTUNREACH) || errors.Is(e, syscall.ENETUNREACH) || errors.Is(e, syscall.EHOSTDOWN)
 }

@@ -22,7 +22,7 @@ var freebsdCompat32 = func() bool {
 
 // saAlign is the alignment of the sockaddrs after the header: the
 // kernel's pointer size.
-var saAlign = func() int {
+var saAlign = func() int { //nolint:nolintlint,unparam // constant only on a 64-bit build; a 32-bit one on a 64-bit kernel needs 8
 	if freebsdCompat32 {
 		return 8
 	}

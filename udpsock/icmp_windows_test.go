@@ -15,10 +15,10 @@ func TestClassifyWinsock(t *testing.T) {
 		report, noRoute bool
 	}{
 		{syscall.WSAECONNRESET, true, false},
-		{wsaENETRESET, true, false},
-		{wsaEHOSTUNREACH, true, true},
-		{wsaENETUNREACH, true, true},
-		{wsaEHOSTDOWN, true, true},
+		{errWSAENETRESET, true, false},
+		{errWSAEHOSTUNREACH, true, true},
+		{errWSAENETUNREACH, true, true},
+		{errWSAEHOSTDOWN, true, true},
 		{syscall.WSAECONNABORTED, false, false},
 		{syscall.WSAEACCES, false, false},
 	}

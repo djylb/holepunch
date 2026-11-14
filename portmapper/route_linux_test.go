@@ -15,6 +15,7 @@ import (
 // rtnetlink, a source independent of /proc/net/route: among the IPv4 unicast
 // routes to 0.0.0.0/0 through a gateway, the one with the lowest priority.
 func referenceGateway(t *testing.T) (netip.Addr, string, bool) {
+	t.Helper()
 	rib, err := syscall.NetlinkRIB(syscall.RTM_GETROUTE, syscall.AF_INET)
 	if err != nil {
 		t.Logf("rtnetlink unavailable, comparison skipped: %v", err)
