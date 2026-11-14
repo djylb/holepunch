@@ -14,10 +14,10 @@ import (
 
 // busy creates sessions until NewSession refuses one, and returns the
 // sessions it created and the refusal.
-func busy(t *testing.T, r *rig, opts SessionOptions, max int) ([]*Session, error) {
+func busy(t *testing.T, r *rig, opts SessionOptions, limit int) ([]*Session, error) {
 	t.Helper()
 	var made []*Session
-	for range max {
+	for range limit {
 		s, err := r.c.NewSession(opts)
 		if err != nil {
 			return made, err
@@ -113,8 +113,8 @@ func TestPacketQuota(t *testing.T) {
 	r := newRig(t, func(c *Config) { c.Limits.PacketsPerMinute = [2]int{64, -1} }) // under 60 left after any grant
 	p := r.pair(SessionOptions{ClientKeys: [2]string{"vis", "prov"}})
 	p.punching()
-	if left := r.c.limiter.packetsLeft(r.clk.Now(), keyInitiator, "vis"); left != 64-grantOf(p, 0) {
-		t.Fatalf("quota left %d after granting %d", left, grantOf(p, 0))
+	if left := r.c.limiter.packetsLeft(r.clk.Now(), keyInitiator, "vis"); left != 64-grantOf(p) {
+		t.Fatalf("quota left %d after granting %d", left, grantOf(p))
 	}
 	if left := r.c.limiter.packetsLeft(r.clk.Now(), keyResponder, "prov"); left != -1 {
 		t.Fatalf("unlimited responder key: %d", left)
@@ -217,16 +217,16 @@ func TestExtremeAllowance(t *testing.T) {
 }
 
 // keyLimiter is a limiter whose only limit is a key table of max entries.
-func keyLimiter(max int) *limiter {
-	lim := Limits{MaxKeys: max, MaxPending: -1, MaxPerInitiatorKey: -1, MaxPerResponderKey: -1,
+func keyLimiter(limit int) *limiter {
+	lim := Limits{MaxKeys: limit, MaxPending: -1, MaxPerInitiatorKey: -1, MaxPerResponderKey: -1,
 		InitiatorKeyRate: Rate{PerSec: -1}, NewSessions: Rate{PerSec: -1}}.withDefaults()
 	return newLimiter(lim, time.Unix(0, 0))
 }
 
-func (l *limiter) hasKey(role int, key string) bool {
+func (l *limiter) hasKey(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.keys[keyOf(role, key)] != nil
+	return l.keys[keyOf(keyInitiator, key)] != nil
 }
 
 // TestKeyTableBound: the quota table never holds more than MaxKeys entries,
@@ -282,14 +282,14 @@ func TestKeyTableEviction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", c.add, err)
 		}
-		if l.hasKey(keyInitiator, c.gone) || !l.hasKey(keyInitiator, c.add) || !l.hasKey(keyInitiator, "c") {
+		if l.hasKey(c.gone) || !l.hasKey(c.add) || !l.hasKey("c") {
 			t.Fatalf("adding %s did not evict %s alone", c.add, c.gone)
 		}
 		l.release(now, &q)
 		now = now.Add(time.Second)
 	}
 	// The sweep walks the same order: e, f and g are idle and full.
-	if n := l.sweep(now.Add(keyIdleKeep)); n != 3 || !l.hasKey(keyInitiator, "c") {
+	if n := l.sweep(now.Add(keyIdleKeep)); n != 3 || !l.hasKey("c") {
 		t.Fatalf("swept %d", n)
 	}
 }
@@ -399,7 +399,7 @@ func TestMemoryBounds(t *testing.T) {
 	if (Limits{MaxSessions: -1}).validate() == nil || (Limits{MaxKeys: -1}).validate() == nil {
 		t.Fatal("negative MaxSessions or MaxKeys valid")
 	}
-	_, s := testSession(t)
+	s := testSession(t)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := &s.st

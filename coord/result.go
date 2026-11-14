@@ -41,19 +41,19 @@ func (o Outcome) String() string {
 // all of the session's resources have been released.
 type Result struct {
 	SessionID  string
+	Reason     protocol.Reason // "" on success, otherwise one of the 26 reasons
+	Detail     string          // human readable, standard details (join_timeout, ...), never a stack
+	FailedRole protocol.Role   // the side that caused the failure; "" for the server or the caller
 	Outcome    Outcome
-	Reason     protocol.Reason    // "" on success, otherwise one of the 26 reasons
-	Detail     string             // human readable, standard details (join_timeout, ...), never a stack
-	FailedRole protocol.Role      // the side that caused the failure; "" for the server or the caller
 	Attached   [2]bool            // [initiator, responder]
 	Confirmed  [2]bool            // the role reported round_result{confirmed} or punch_result{ok}
+	MemoryHit  bool               // the first round's variant came from the strategy memory
 	Warn       []protocol.Warning // at most 8: the server's own, such as peer_result_missing and unverified_targets
 	Winner     *WinnerInfo        // non-nil on success
 	PairClass  string             // the Planner's diagnostic pair class
 	// StrategyKey is the hex StrategyKey of the pair ("" when no key was
 	// derived); it contains no plain address.
 	StrategyKey string
-	MemoryHit   bool          // the first round's variant came from the strategy memory
 	Warm        [2]WarmStart  // how each side started (warm starts: Config.NoWarm)
 	Rounds      []RoundRecord // <= 8, rescue round included
 	RTT         [2]time.Duration
@@ -115,13 +115,13 @@ type WinnerInfo struct {
 
 // ClientFinal is a client's punch_result.
 type ClientFinal struct {
-	OK         bool
 	Reason     protocol.Reason
 	Phase      protocol.Phase
 	Detail     string
 	Path       *protocol.PathInfo
 	ExtraPaths []protocol.PathInfo // punch_result.extra_paths: the other paths handed over with Path
 	Stats      protocol.Stats
+	OK         bool
 	Timing     protocol.Timing
 	Traits     []protocol.TraitsUpdate
 	Warn       []protocol.Warning

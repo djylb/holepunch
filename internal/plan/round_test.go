@@ -45,7 +45,7 @@ func TestExpandStageKinds(t *testing.T) {
 // A sandwich is set on the predicted (SEQ) side when both peers negotiated it.
 func TestSandwichOnSEQSide(t *testing.T) {
 	f := protocol.FamilyUDP4
-	a, b := pdfTraits(f), seqTraits(f) // responder = SEQ
+	a, b := pdfTraits(f), seqTraits(f) // the responder is SEQ
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
 	in := roundInput(cl, a, b, 1, nil)
@@ -55,7 +55,7 @@ func TestSandwichOnSEQSide(t *testing.T) {
 		t.Errorf("sandwich not set on the SEQ (responder) side: %v", sandwichOf(dec))
 	}
 	if sandwichOf(dec)[0] {
-		t.Errorf("sandwich wrongly set on the PDF (initiator) side")
+		t.Error("sandwich wrongly set on the PDF (initiator) side")
 	}
 }
 

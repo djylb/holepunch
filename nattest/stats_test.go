@@ -83,7 +83,7 @@ func shapeOf(socks []SocketStats) sessionShape {
 	s := sessionShape{firstBytes: map[byte]uint64{}, minLen: 1 << 30}
 	for _, k := range socks {
 		s.packets += k.PacketsSent
-		for b, c := range k.FirstByteHistogram {
+		for b, c := range &k.FirstByteHistogram {
 			if c > 0 {
 				s.firstBytes[byte(b)] += c
 			}

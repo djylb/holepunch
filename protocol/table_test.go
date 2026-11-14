@@ -262,10 +262,11 @@ func TestEnumValues(t *testing.T) {
 		}
 	}
 	var names []string
-	if n := testing.AllocsPerRun(10, func() {
+	n := testing.AllocsPerRun(10, func() {
 		names = append(names[:0], MapAPDM.String(), FiltNotPDF.String(), AllocPreserveFresh.String(), ConfHigh.String(),
 			TriTrue.String(), ControlSecurityDeclared.String(), ClassNATHard.String())
-	}); n != 0 || strings.Join(names, " ") != "apdm not_pdf preserve_fresh high true declared nat_hard" {
+	})
+	if n != 0 || strings.Join(names, " ") != "apdm not_pdf preserve_fresh high true declared nat_hard" {
 		t.Errorf("String allocated %v times: %v", n, names)
 	}
 	for _, s := range []string{"udp4", "udp6"} {

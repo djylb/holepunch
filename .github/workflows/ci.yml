@@ -112,6 +112,66 @@ jobs:
           go test -race -count=1 ./e2e/...
           go test -race -count=1 -tags holepunch_faultinject ./e2e/...
 
+  # Static checks, zero findings in every module. The tool versions are
+  # pinned: golangci-lint enables every linter but the excluded ones, so a
+  # new release would bring new linters; upgrade by hand and fix what they
+  # report.
+  static:
+    name: static checks
+    runs-on: ubuntu-latest
+    env:
+      GOLANGCI_LINT: github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+      STATICCHECK: honnef.co/go/tools/cmd/staticcheck@v0.8.2
+      FIELDALIGNMENT: golang.org/x/tools/go/analysis/passes/fieldalignment/cmd/fieldalignment@v0.52.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: |
+            go.mod
+            standalone/go.sum
+            quicpath/go.sum
+      - name: install tools
+        run: |
+          go install "$GOLANGCI_LINT"
+          go install "$STATICCHECK"
+          go install "$FIELDALIGNMENT"
+      - name: golangci-lint
+        run: |
+          cfg="$PWD/.golangci.yml"
+          for m in . standalone quicpath; do
+            (cd "$m" && golangci-lint run --config "$cfg" ./...)
+          done
+          for m in . standalone; do
+            (cd "$m" && golangci-lint run --config "$cfg" --build-tags holepunch_faultinject ./...)
+          done
+      - name: staticcheck
+        run: |
+          for m in . standalone quicpath; do
+            (cd "$m" && staticcheck -checks all ./... && staticcheck -checks all -tags holepunch_faultinject ./...)
+          done
+      # Every struct is laid out at its smallest size; reports about the
+      # pointer-scan length alone are not failures.
+      - name: fieldalignment
+        run: |
+          fail=0
+          for m in . standalone quicpath; do
+            for tags in "" holepunch_faultinject; do
+              out=$(cd "$m" && fieldalignment -tags="$tags" ./... 2>&1) || true
+              # Anything but pointer-scan reports fails: a size report, or the
+              # tool unable to analyse a package.
+              bad=$(printf '%s\n' "$out" | grep -v 'pointer data' | grep -v '^$' || true)
+              if [ -n "$bad" ]; then echo "$bad"; fail=1; fi
+            done
+          done
+          exit $fail
+      - name: 32-bit
+        run: |
+          for m in . standalone quicpath; do
+            (cd "$m" && GOOS=linux GOARCH=386 go vet ./... && GOOS=linux GOARCH=arm go build ./...)
+          done
+
   cross:
     name: cross (${{ matrix.goos }}/${{ matrix.goarch }})
     strategy:

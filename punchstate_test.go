@@ -20,7 +20,7 @@ import (
 func TestPunchStateStableUnderReadLoops(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	so.start(to)
 	_, self := so.report()

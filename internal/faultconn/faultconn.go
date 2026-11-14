@@ -45,11 +45,11 @@ type Conn struct {
 
 	mu        sync.Mutex
 	f         faults
-	recording bool
 	events    []Event
+	recording bool
 
-	closed chan struct{}
 	once   sync.Once
+	closed chan struct{}
 
 	reads, readReturns, writes, readDeadlines, writeDeadlines atomic.Int64
 }

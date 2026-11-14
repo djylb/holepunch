@@ -290,6 +290,7 @@ func TestServerLoopback(t *testing.T) {
 }
 
 func loopbackAttempt(t *testing.T, wait time.Duration) bool {
+	t.Helper()
 	reg := NewRegistry(RegistryConfig{})
 	s := startServer(t, ServerConfig{Registry: reg})
 	obs := s.Observers(protocol.FamilyUDP4)
@@ -740,6 +741,7 @@ func TestServerAltGroup(t *testing.T) {
 }
 
 func altGroupAttempt(t *testing.T, wait time.Duration) bool {
+	t.Helper()
 	reg := NewRegistry(RegistryConfig{})
 	alt := netip.MustParseAddr("127.0.0.2")
 	var altPorts []uint16

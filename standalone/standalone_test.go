@@ -67,8 +67,8 @@ func TestDependencies(t *testing.T) {
 		dec := json.NewDecoder(strings.NewReader(string(out)))
 		for dec.More() {
 			var p struct {
-				ImportPath string
-				Standard   bool
+				ImportPath string `json:"ImportPath"`
+				Standard   bool   `json:"Standard"`
 			}
 			if err := dec.Decode(&p); err != nil {
 				t.Fatal(err)
@@ -83,9 +83,9 @@ func TestDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("go list: %v", err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		pkg, imports, _ := strings.Cut(line, " ")
-		for _, imp := range strings.Fields(imports) {
+		for imp := range strings.FieldsSeq(imports) {
 			if imp == mod+"/internal/goroutines" {
 				continue // its tests only: checked below
 			}
@@ -98,7 +98,7 @@ func TestDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("go list: %v", err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if pkg, imports, _ := strings.Cut(line, " "); slices.Contains(strings.Fields(imports), mod+"/internal/goroutines") {
 			t.Errorf("%s imports the goroutine leak check outside its tests", pkg)
 		}

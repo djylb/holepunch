@@ -37,12 +37,12 @@ var (
 )
 
 type natCfg struct {
-	noNAT     bool
-	mapping   protocol.Mapping // EIM, ADM, APDM
-	alloc     string           // pres | seq | random
+	alloc     string // pres | seq | random
 	step      int
 	velocity  float64 // background allocations, ports/s (seq)
 	base      int
+	noNAT     bool
+	mapping   protocol.Mapping   // EIM, ADM, APDM
 	filtering protocol.Filtering // EIF, ADF, PDF
 	hairpin   bool
 	pub       netip.Addr // default pubIP
@@ -91,13 +91,13 @@ type sim struct {
 	altPort     netip.AddrPort
 	slotCookie  map[[2]uint8]uint32
 	slotObs     map[[2]uint8]netip.AddrPort
-	replySeq    uint32
 	srvWin      udpwire.SeqWindow
 	cliWin      udpwire.SeqWindow
+	replySeq    uint32
 	stunOn      bool
 	stunWrongV6 bool          // the STUN server answers with an IPv6 address
-	stunDelay   time.Duration // the STUN server's answer arrives this long after the request; 0: one RTT
 	extraFirst  bool          // the extra leaves before the ack
+	stunDelay   time.Duration // the STUN server's answer arrives this long after the request; 0: one RTT
 
 	cli, srv  *udpwire.Codec
 	spec      Spec
@@ -111,9 +111,9 @@ type sim struct {
 	// delivered so far, and exited reports that it returned. wakes is
 	// whether it selects on the ICMP wake-up channel (Run, not Hairpin).
 	loop, wakes bool
+	exited      atomic.Bool
 	selects     atomic.Int64
 	awaited     int64
-	exited      atomic.Bool
 }
 
 // selectClock is the fake clock as the prober sees it: Run and Hairpin
@@ -157,17 +157,17 @@ func (s *simSock) WriteTo(b []byte, to netip.AddrPort) error {
 
 type simOpts struct {
 	nat        natCfg
-	role       udpwire.Role
 	rtt        time.Duration
 	loss       float64
 	seed       uint64
+	role       udpwire.Role
 	alt        bool
 	stun       bool
 	siblings   uint8
 	second     bool
 	extraReply bool
-	ports      int
 	rttHint    uint16
+	ports      int
 	timeout    time.Duration
 }
 

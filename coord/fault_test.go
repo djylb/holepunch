@@ -188,8 +188,7 @@ func TestFaultFinishSteps(t *testing.T) {
 			t.Run(step+"/"+act.name, func(t *testing.T) {
 				reg := natprobe.NewRegistry(natprobe.RegistryConfig{})
 				r := newRig(t, withRegistry(reg))
-				parent, cancel := context.WithCancel(context.Background())
-				defer cancel()
+				parent := t.Context()
 				p := r.pair(SessionOptions{ClientKeys: [2]string{"a", "b"}, Parent: parent})
 				arm(t, step, act.a, 0)
 				p.s.Abort(protocol.ReasonCanceled, "")
@@ -278,7 +277,7 @@ func TestFaultClosePanic(t *testing.T) {
 			expectClosePanic(t, err)
 			if first == nil {
 				first = err
-			} else if err != first {
+			} else if err != first { //nolint:errorlint // every Close returns the very same error value
 				t.Fatalf("callers got different errors: %v, %v", first, err)
 			}
 		case <-time.After(testkit.WaitBound(t)):
@@ -306,7 +305,7 @@ func TestFaultClosePanic(t *testing.T) {
 	go func() { done <- r.c.Close() }()
 	select {
 	case err := <-done:
-		if err != first {
+		if err != first { //nolint:errorlint // every Close returns the very same error value
 			t.Fatalf("second close: %v, want %v", err, first)
 		}
 	case <-time.After(testkit.WaitBound(t)):
@@ -318,7 +317,7 @@ func TestFaultClosePanic(t *testing.T) {
 // it, as a *life.PanicError.
 func expectClosePanic(t *testing.T, err error) {
 	t.Helper()
-	pe, ok := err.(*life.PanicError)
+	pe, ok := errors.AsType[*life.PanicError](err)
 	if !ok || pe.Where() != fiClose || !errors.Is(err, faultinject.ErrInjected) {
 		t.Fatalf("close: %v (%T), want the injected panic as a *life.PanicError", err, err)
 	}

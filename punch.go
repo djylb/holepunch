@@ -48,15 +48,6 @@ type Options struct {
 	// LocalInterface is the preferred network interface of the primary
 	// sockets ("" = any), looked up by name in Network.InterfaceAddrs.
 	LocalInterface string
-	// ExcludeOverlay leaves the host's overlay addresses out of the
-	// session: those on tunnel and overlay interfaces (Tailscale,
-	// WireGuard, ZeroTier, tun, utun) and in 100.64/10 are then neither
-	// reported to the peer nor aimed at. The
-	// zero value includes them, ranked below the public and LAN paths: an
-	// overlay path wins only when nothing else answers or when its RTT is
-	// at most 0.8 × the best other one, and Result.Path.Kind says so.
-	// Measurements that must not go through a tunnel exclude them.
-	ExcludeOverlay bool
 	// TransportMode is the upper-layer transport this side offers ("quic",
 	// "kcp", ...; at most 16 bytes of printable ASCII, see
 	// protocol.CheckTransportMode); the server's decision is
@@ -69,6 +60,15 @@ type Options struct {
 	// Policy is this side's local policy. It only tightens the server's
 	// (protocol.Tighten).
 	Policy *protocol.Policy
+	// ExcludeOverlay leaves the host's overlay addresses out of the
+	// session: those on tunnel and overlay interfaces (Tailscale,
+	// WireGuard, ZeroTier, tun, utun) and in 100.64/10 are then neither
+	// reported to the peer nor aimed at. The
+	// zero value includes them, ranked below the public and LAN paths: an
+	// overlay path wins only when nothing else answers or when its RTT is
+	// at most 0.8 × the best other one, and Result.Path.Kind says so.
+	// Measurements that must not go through a tunnel exclude them.
+	ExcludeOverlay bool
 	// ControlSecurity says how the control connection is protected. The
 	// default, ControlSecurityAuto, lets the library judge the connection:
 	// it accepts one that shows it is secure (ConnectionState, as *tls.Conn
@@ -78,6 +78,12 @@ type Options struct {
 	// InsecureForTesting is for tests and loopback only and is marked in
 	// Diagnostics.Warn and every progress meta.
 	ControlSecurity protocol.ControlSecurity
+	// AcceptBackground accepts a Background session when the server offers
+	// one (coord.SessionOptions.Mode): the caller already relays its
+	// traffic and nobody waits for this one, so a pair of hard NATs may run
+	// the slow birthday — up to about a minute, many sockets opened slowly.
+	// Without it every session runs interactive.
+	AcceptBackground bool
 	// OnProgress receives a copy of every progress event, in order, on one
 	// library goroutine (queue of 256, the oldest dropped when full). It must
 	// not block for long; a panic is recovered and counted. It is never
@@ -110,12 +116,6 @@ type Options struct {
 	// is recovered and counted. nil logs nothing. OnProgress is independent
 	// of it.
 	Logger *slog.Logger
-	// AcceptBackground accepts a Background session when the server offers
-	// one (coord.SessionOptions.Mode): the caller already relays its
-	// traffic and nobody waits for this one, so a pair of hard NATs may run
-	// the slow birthday — up to about a minute, many sockets opened slowly.
-	// Without it every session runs interactive.
-	AcceptBackground bool
 }
 
 // Punch runs one hole-punching session over an established control
@@ -289,7 +289,12 @@ type runtime struct {
 	mapper    PortMapper
 	abl       ablation.Set
 	insecure  bool
-	attachAt  time.Time
+	// started is set when punch_start is read and read-only afterwards;
+	// fired and birthdayRan are orchestrator state.
+	started     bool
+	fired       bool
+	birthdayRan bool
+	attachAt    time.Time
 
 	g      *life.Group
 	pg     *life.Group
@@ -308,7 +313,6 @@ type runtime struct {
 	nom   *nominator
 
 	// set when punch_start is read; read-only afterwards
-	started     bool
 	start       protocol.PunchStart
 	startAt     time.Time
 	role        protocol.Role
@@ -320,6 +324,7 @@ type runtime struct {
 	policy      protocol.Policy
 	features    []protocol.Feature
 	timeouts    protocol.Timeouts
+	udpBlocked  atomic.Bool // set by a round goroutine
 	waits       waitPlan
 	deadline    clock.Timer // the session deadline
 	localIPs    map[netip.Addr]struct{}
@@ -343,9 +348,6 @@ type runtime struct {
 	roundsRun    []protocol.RoundPlan
 	firstGoAt    time.Time
 	lastRTT      time.Duration
-	fired        bool
-	birthdayRan  bool
-	udpBlocked   atomic.Bool // set by a round goroutine
 	timing       timings
 	traitsSource [2]atomic.Bool
 	primaryPath  protocol.PathInfo   // set by finish: the primary path handed over
@@ -423,7 +425,7 @@ func (rt *runtime) waitStart() (startMsg, error) {
 	if err := faultinject.Point(fiAttachReadStart); err != nil {
 		return startMsg{}, err
 	}
-	s, w, err := waitControl(rt.ctl, ctx, rt.ctl.startCh, t.C(), nil)
+	s, w, err := waitControl(ctx, rt.ctl, rt.ctl.startCh, t.C(), nil)
 	switch {
 	case err != nil:
 		return startMsg{}, err
@@ -547,7 +549,7 @@ func (rt *runtime) waitSummary() (stamped[protocol.ProbeSummary], error) {
 	for {
 		now := rt.clk.Now()
 		t.Reset(max(earliest(deadline, keepalive).Sub(now), 0))
-		s, w, err := waitControl(rt.ctl, ctx, rt.ctl.summaryCh, t.C(), func(a stamped[protocol.Assist]) {
+		s, w, err := waitControl(ctx, rt.ctl, rt.ctl.summaryCh, t.C(), func(a stamped[protocol.Assist]) {
 			// Round 1's anchor refresh follows the summary on the link: when
 			// both wait here, the select may take it first.
 			if a.msg.Kind == protocol.AssistRefresh && !rt.abl.NoAssistRelay {

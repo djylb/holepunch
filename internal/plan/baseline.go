@@ -42,7 +42,7 @@ func baselineRepeatsFor(n int) uint8 {
 // unverified family has no verified targets; its rounds are Direct only
 // anyway (directOnly).
 func takesBaseline(fp familyPlan, role int) bool {
-	return !fp.Unverified && !(fp.PairClass == PairOpenEDM && role == roleIndex(fp.SideA))
+	return !fp.Unverified && (fp.PairClass != PairOpenEDM || role != roleIndex(fp.SideA))
 }
 
 // withBaseline returns a first round's Direct stages with the baseline in

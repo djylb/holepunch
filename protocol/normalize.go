@@ -160,23 +160,24 @@ func (r RoundPlan) Normalize() (RoundPlan, bool) {
 }
 
 func (s FamilySide) normalize(l ClassLimits) (FamilySide, bool) {
-	c := clampTo(&s.SendDelayMs, MaxSendDelayMs)
-	c = clampTo(&s.Sockets, min(MaxSideSockets, l.MaxSockets)) || c
-	c = clampTo(&s.MaxPackets, min(CeilingBudget().MaxPackets, l.MaxPackets)) || c
-	c = clampTo(&s.MaxPPS, min(CeilingBudget().MaxPPS, l.MaxPPS)) || c
-	c = clampTo(&s.MaxNewPerSec, CeilingBudget().MaxNewPerSec) || c
-	c = clampTo(&s.MaxDistinctPorts, l.MaxDistinctPorts) || c
-	c = clampTo(&s.OpenPerSec, CeilingBudget().MaxNewPerSec) || c
-	if len(s.Stages) > MaxStages {
-		s.Stages, c = s.Stages[:MaxStages], true
+	fs := s
+	c := clampTo(&fs.SendDelayMs, MaxSendDelayMs)
+	c = clampTo(&fs.Sockets, min(MaxSideSockets, l.MaxSockets)) || c
+	c = clampTo(&fs.MaxPackets, min(CeilingBudget().MaxPackets, l.MaxPackets)) || c
+	c = clampTo(&fs.MaxPPS, min(CeilingBudget().MaxPPS, l.MaxPPS)) || c
+	c = clampTo(&fs.MaxNewPerSec, CeilingBudget().MaxNewPerSec) || c
+	c = clampTo(&fs.MaxDistinctPorts, l.MaxDistinctPorts) || c
+	c = clampTo(&fs.OpenPerSec, CeilingBudget().MaxNewPerSec) || c
+	if len(fs.Stages) > MaxStages {
+		fs.Stages, c = fs.Stages[:MaxStages], true
 	}
-	s.Stages = slices.Clone(s.Stages)
-	for i := range s.Stages {
+	fs.Stages = slices.Clone(fs.Stages)
+	for i := range fs.Stages {
 		var sc bool
-		s.Stages[i], sc = s.Stages[i].normalize()
+		fs.Stages[i], sc = fs.Stages[i].normalize()
 		c = sc || c
 	}
-	out, fc := s.clampFresh(min(MaxSideSockets, int(l.MaxSockets)))
+	out, fc := fs.clampFresh(min(MaxSideSockets, int(l.MaxSockets)))
 	return out, fc || c
 }
 

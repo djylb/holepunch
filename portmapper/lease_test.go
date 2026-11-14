@@ -29,7 +29,7 @@ func TestReleaseStopsRenewalAndDeletes(t *testing.T) {
 	}
 	// Renewed at half the granted lifetime, with the nonce of the create.
 	for i := 1; i <= 2; i++ {
-		waitPending(t, fc, 1)
+		waitPending(t, fc)
 		fc.Advance(30 * time.Minute)
 		testkit.WaitFor(t, "PCP renewal", func() bool { return gw.counts().pcpRenews == i })
 	}
@@ -111,7 +111,7 @@ func TestRenewalRecreatesAfterGatewayReboot(t *testing.T) {
 	// The gateway stops answering: the renewal fails and is retried at a
 	// quarter of the lifetime.
 	gw.set(func(f *fakeGW) { f.pcpMode = serveSilent })
-	waitPending(t, fc, 1)
+	waitPending(t, fc)
 	before := gw.counts().received
 	fc.Advance(time.Minute)
 	testkit.WaitFor(t, "failed renewal", func() bool { return gw.counts().received > before && fc.Pending() == 1 })
@@ -145,7 +145,7 @@ func TestRenewalRetriesAtQuarterLease(t *testing.T) {
 	}
 	// A failed UPnP renewal is retried at a quarter of the lease.
 	igd.set(func(f *fakeIGD) { f.failAdds = true })
-	waitPending(t, fc, 1)
+	waitPending(t, fc)
 	fc.Advance(5 * time.Minute)
 	testkit.WaitFor(t, "failed renewal", func() bool {
 		next, ok := fc.Next()

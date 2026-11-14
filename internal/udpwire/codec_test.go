@@ -143,9 +143,9 @@ func TestSealRejects(t *testing.T) {
 		name  string
 		c     *Codec
 		edit  func(*Header, *TLVs)
-		typ   Type
 		n     int
 		want  error
+		typ   Type
 		nilH  bool
 		nilTL bool
 	}{

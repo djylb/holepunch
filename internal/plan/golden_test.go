@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"net/netip"
@@ -99,7 +100,7 @@ func TestGoldenDecisionTable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read golden (run with -update): %v", err)
 			}
-			if string(got) != string(want) {
+			if !bytes.Equal(got, want) {
 				t.Errorf("golden mismatch for %s; run: go test ./internal/plan -run TestGolden -update", c.name)
 			}
 		})

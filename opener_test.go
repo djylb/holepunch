@@ -1,6 +1,7 @@
 package holepunch
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"net/netip"
@@ -60,11 +61,12 @@ func (r *openerRig) next(i int) bool {
 	return wrapped
 }
 
-func (r *openerRig) punch(i int, hops int) {
+func (r *openerRig) punch(i, hops int) {
 	r.t.Helper()
 	h := udpwire.Header{Type: udpwire.TPunch, Round: 1}
-	if err := r.rt.sender.Send(context.Background(), r.sock, r.dst[i], &h, nil,
-		sendOpt{class: classInitiate, stage: txDirect, round: r.m, quota: quotaPlan, hops: hops}); err != nil {
+	err := r.rt.sender.Send(context.Background(), r.sock, r.dst[i], &h, nil,
+		sendOpt{class: classInitiate, stage: txDirect, round: r.m, quota: quotaPlan, hops: hops})
+	if err != nil {
 		r.t.Fatal(err)
 	}
 }
@@ -89,8 +91,9 @@ func TestOpenerFirstDatagramPerFlow(t *testing.T) {
 		t.Fatal("the first datagram to a second remote is no opener")
 	}
 	h := udpwire.Header{Type: udpwire.TSuccess}
-	if err := r.rt.sender.Send(context.Background(), r.sock, r.dst[1], &h, &udpwire.TLVs{Observed: r.dst[1]},
-		sendOpt{class: classReply, stage: txReply}); err != nil {
+	err := r.rt.sender.Send(context.Background(), r.sock, r.dst[1], &h, &udpwire.TLVs{Observed: r.dst[1]},
+		sendOpt{class: classReply, stage: txReply})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if r.next(1) {
@@ -137,7 +140,7 @@ func TestOpenerSTUNRequestOpens(t *testing.T) {
 	buf := make([]byte, 64)
 	_ = r.conn[0].SetReadDeadline(time.Now().Add(2 * time.Second))
 	n, _, err := r.conn[0].ReadFrom(buf)
-	if err != nil || string(buf[:n]) != string(req) {
+	if err != nil || !bytes.Equal(buf[:n], req) {
 		t.Fatalf("STUN request changed on the way: % x, %v", buf[:n], err)
 	}
 	r.punch(0, 0)

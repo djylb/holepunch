@@ -130,7 +130,7 @@ func TestLinkRateLimit(t *testing.T) {
 
 func TestLinkMTU(t *testing.T) {
 	n, _, nat, c, o := linkPair(t, LinkConfig{MTU: 1280})
-	send(t, c, addrOf(o), string(make([]byte, 1252))) // 1252 + 28 = 1280
+	send(t, c, addrOf(o), string(make([]byte, 1252))) // the payload plus 28 header bytes is 1280
 	recvNow(t, o)
 	send(t, c, addrOf(o), string(make([]byte, 1253)))
 	expectNone(t, o)

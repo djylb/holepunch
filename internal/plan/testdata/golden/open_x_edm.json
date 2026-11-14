@@ -21,10 +21,10 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.3:40003"
                 ],
+                "at_ms": 0,
                 "repeats": 1
               },
               {
@@ -46,10 +46,10 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.1:40001"
                 ],
+                "at_ms": 0,
                 "repeats": 6
               }
             ]
@@ -75,10 +75,10 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.3:40003"
                 ],
+                "at_ms": 0,
                 "repeats": 1,
                 "ttl": 4
               },
@@ -102,10 +102,10 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 150,
                 "targets": [
                   "203.0.113.1:40001"
                 ],
+                "at_ms": 150,
                 "repeats": 6
               }
             ]
@@ -131,20 +131,20 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.3:40003"
                 ],
+                "at_ms": 0,
                 "repeats": 1
               },
               {
                 "kind": "predict",
-                "at_ms": 20,
-                "ip": "203.0.113.3",
-                "anchor": 40003,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 20,
+                "anchor": 40003,
                 "span": 16
               }
             ]
@@ -163,10 +163,10 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 500,
                 "targets": [
                   "203.0.113.1:40001"
                 ],
+                "at_ms": 500,
                 "repeats": 5
               }
             ]
@@ -193,20 +193,20 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.3:40003"
                 ],
+                "at_ms": 0,
                 "repeats": 1
               },
               {
                 "kind": "predict",
-                "at_ms": 20,
-                "ip": "203.0.113.3",
-                "anchor": 40003,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 20,
+                "anchor": 40003,
                 "span": 16
               }
             ]
@@ -225,10 +225,10 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 2000,
                 "targets": [
                   "203.0.113.1:40001"
                 ],
+                "at_ms": 2000,
                 "repeats": 4
               }
             ]

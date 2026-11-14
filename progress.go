@@ -213,12 +213,13 @@ func (s *progressSink) deliver(p protocol.Progress) {
 		s.rt.cnt.progressDropped.Add(1)
 		return
 	}
-	if pe := life.Safe("onprogress", func() {
+	pe := life.Safe("onprogress", func() {
 		if err := faultinject.Point(fiProgressDeliver); err != nil {
 			panic(err)
 		}
 		s.fn(p)
-	}); pe != nil {
+	})
+	if pe != nil {
 		s.rt.cnt.callbackPanics.Add(1)
 	}
 }

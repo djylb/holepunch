@@ -46,11 +46,11 @@ type Assist struct {
 	Role      Role       `json:"role,omitempty"` // C→S: the sender (consistency check); S→C: omitted
 	From      Role       `json:"from,omitempty"` // S→C: the original sender, written by the server
 	Kind      AssistKind `json:"kind"`
-	Round     uint8      `json:"round"`
 	Family    Family     `json:"family"`
 	// peer_seen
 	Remote netip.AddrPort `json:"remote,omitzero"` // source of the received packet = the peer's mapping on this path
 	Local  netip.AddrPort `json:"local,omitzero"`  // C→S only: the receiving socket; removed before forwarding
+	Round  uint8          `json:"round"`
 	Sock   uint8          `json:"sock"`            // from the packet header: the peer's sending socket
 	Cand   uint16         `json:"cand"`            // from the packet header: the peer's target id (stage<<12 | idx)
 	Type   uint8          `json:"type"`            // the packet's UDP type

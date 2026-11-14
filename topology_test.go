@@ -88,7 +88,7 @@ func TestUpstreamLANCandidates(t *testing.T) {
 	hosts := [2]*nattest.Host{homes[0].Host(), homes[1].Host()}
 	var upstream [2]netip.AddrPort
 	ps := &pairScript{w: w, timeouts: testTimeouts()}
-	ps.pair = func(p *protocol.PairFacts, views *[2]protocol.PeerView, reports [2]protocol.ProbeReport) {
+	ps.pair = func(p *protocol.PairFacts, _ *[2]protocol.PeerView, reports [2]protocol.ProbeReport) {
 		if !p.SamePublicIP[protocol.FamilyUDP4] || p.LikelySameLAN[protocol.FamilyUDP4] {
 			t.Errorf("pair facts %+v", p)
 		}

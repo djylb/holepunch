@@ -14,9 +14,9 @@ type Traits struct {
 	Filtering      Filtering `json:"filtering,omitempty"`
 	FilteringConf  Conf      `json:"filtering_conf,omitempty"`
 	PortAlloc      PortAlloc `json:"port_alloc,omitempty"`
+	PortStep       int16     `json:"port_step,omitempty"`     // sequential: signed step
+	PortVelocity   float32   `json:"port_velocity,omitempty"` // other hosts' allocation rate, ports/s
 	PortAllocConf  Conf      `json:"port_alloc_conf,omitempty"`
-	PortStep       int16     `json:"port_step,omitempty"`      // sequential: signed step
-	PortVelocity   float32   `json:"port_velocity,omitempty"`  // other hosts' allocation rate, ports/s
 	PortNoisy      bool      `json:"port_noisy,omitempty"`     // sequential: other hosts allocated between this side's probes, however short the baseline
 	PortAnchor     uint16    `json:"port_anchor,omitempty"`    // last external port by creation order
 	PortAnchorMs   int64     `json:"port_anchor_ms,omitempty"` // creation time on the server's monotonic axis
@@ -44,10 +44,10 @@ type Traits struct {
 	// at the public addresses it reported itself (STUN, port mapping), in the
 	// unverified mode, unless the server allows verified targets only.
 	LANObserved bool           `json:"lan_observed,omitempty"`
-	PublicIP    netip.Addr     `json:"public_ip,omitzero"`
-	Observed    netip.AddrPort `json:"observed,omitzero"` // primary socket as seen by observer 0
 	Samples     uint8          `json:"samples,omitempty"` // server observers with a valid sample
 	Provisional bool           `json:"provisional,omitempty"`
+	PublicIP    netip.Addr     `json:"public_ip,omitzero"`
+	Observed    netip.AddrPort `json:"observed,omitzero"` // primary socket as seen by observer 0
 }
 
 // TraitsUpdate is a punch-time correction of this side's traits

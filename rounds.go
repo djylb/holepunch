@@ -35,13 +35,13 @@ type roundRun struct {
 	fireAt   time.Time // goAt + delay_ms
 	firedAt  time.Time
 	end      time.Time // fireAt + window
-	fired    bool
 	ctx      context.Context
 	cancel   context.CancelFunc
 	fams     []*familyRound
-	live     atomic.Int32  // family goroutines still running
 	done     chan struct{} // closed when the last one returns
 	fatal    atomic.Pointer[protocol.Reason]
+	live     atomic.Int32 // family goroutines still running
+	fired    bool
 	birthday bool
 }
 
@@ -431,7 +431,7 @@ func (rt *runtime) endRound(run *roundRun, ctlDead bool) {
 
 // outcomes builds round_result.families[] from the round's evidence.
 func (rt *runtime) outcomes(run *roundRun) []protocol.FamilyOutcome {
-	var out []protocol.FamilyOutcome
+	out := make([]protocol.FamilyOutcome, 0, len(run.fams))
 	for _, fr := range run.fams {
 		ms := rt.sender.meterStats(fr.meter)
 		rs := rt.punch.roundEvidence(fr.w.fam)

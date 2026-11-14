@@ -211,11 +211,11 @@ func runClient(ctx context.Context, nc net.Conn, o Options) <-chan attachResult 
 // with the DefaultPlanner's ladder, rounds, peer_seen relaying and the
 // results. Fields alter its behaviour for failure tests.
 type pairScript struct {
-	w        *world
-	timeouts protocol.Timeouts
-	policy   *protocol.Policy
+	w      *world
+	policy *protocol.Policy
 	// round overrides the planner: it returns the plan of role r in round k.
-	round func(k int, r protocol.Role, views [2]protocol.PeerView) protocol.RoundPlan
+	round    func(k int, r protocol.Role, views [2]protocol.PeerView) protocol.RoundPlan
+	timeouts protocol.Timeouts
 	// noRelay drops peer_seen instead of relaying it.
 	noRelay bool
 	// stopAfterConfirm closes both links once a round_result{confirmed} arrived.
@@ -350,7 +350,7 @@ func (ps *pairScript) run(ctx context.Context, ends [2]net.Conn) error {
 	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
 	var results <-chan time.Time // armed by resultWait once both sides confirmed
-	for !(ended[0] && ended[1]) {
+	for !ended[0] || !ended[1] {
 		select {
 		case ev := <-events:
 			if ev.err != nil {

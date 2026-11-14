@@ -49,12 +49,12 @@ var (
 // fill writes seed-derived values into v in place: a non-nil pointer, slice
 // or map is written through, not replaced, so that a value sharing it sees
 // the write.
-func fill(v reflect.Value, seed int, depth int) {
+func fill(v reflect.Value, seed, depth int) {
 	if depth > maxDepth {
 		return
 	}
 	if !v.CanSet() {
-		v = reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem()
+		v = reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem() //nolint:gosec // G103: test helper that fills unexported fields through reflection
 	}
 	ip := netip.AddrFrom4([4]byte{192, 0, 2, byte(seed)})
 	switch v.Type() {
@@ -169,5 +169,5 @@ func valueOf(v reflect.Value) any {
 	if v.CanInterface() {
 		return v.Interface()
 	}
-	return reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().Interface()
+	return reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().Interface() //nolint:gosec // G103: test helper that fills unexported fields through reflection
 }

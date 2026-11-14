@@ -153,7 +153,7 @@ func (s *Session) guardClassLocked(k int, class protocol.BudgetClass, now time.D
 	if class.Rank() > ceiling.Rank() && !background {
 		class = ceiling
 	}
-	if class == protocol.BudgetHeavy && k < 3 && !(k >= 2 && st.plan.pairRND) && !(st.rounds.lastGranted == "" && st.plan.promoted) {
+	if class == protocol.BudgetHeavy && k < 3 && (k < 2 || !st.plan.pairRND) && (st.rounds.lastGranted != "" || !st.plan.promoted) {
 		class = protocol.BudgetBalanced
 	}
 	if class == protocol.BudgetExtreme &&

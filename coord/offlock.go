@@ -117,7 +117,7 @@ func (s *Session) decideJob(j roundJob) decision {
 // it is the fallback, and whether any answered.
 //
 //holepunch:callback
-func (s *Session) callPlanner(p plan.Planner, fn func(plan.Planner), fallback func(plan.Planner)) (answered plan.Planner, fellBack, ok bool) {
+func (s *Session) callPlanner(p plan.Planner, fn, fallback func(plan.Planner)) (answered plan.Planner, fellBack, ok bool) {
 	if s.callout("coord.plan", fiPlan, func() { fn(p) }) {
 		return p, false, true
 	}

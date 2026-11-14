@@ -176,7 +176,7 @@ func (m *Mapper) locate(ctx context.Context, bind netip.Addr) (local, gw netip.A
 // panics.
 func (m *Mapper) runAttempt(ctx context.Context, a *attempt, gw, local netip.Addr, port uint16, lease time.Duration) {
 	var r attemptResult
-	if perr := life.Safe("portmap.attempt", func() {
+	perr := life.Safe("portmap.attempt", func() {
 		actx, cancel := context.WithTimeout(ctx, m.cfg.AttemptTimeout)
 		defer cancel()
 		server := netip.AddrPortFrom(gw, m.pcpPort)
@@ -194,7 +194,8 @@ func (m *Mapper) runAttempt(ctx context.Context, a *attempt, gw, local netip.Add
 				r.create = p.create
 			}
 		}
-	}); perr != nil {
+	})
+	if perr != nil {
 		r = attemptResult{err: fmt.Errorf("%s: %w", a.method, perr)}
 	}
 	m.deliver(a, r)
@@ -258,12 +259,13 @@ func (m *Mapper) create(ctx context.Context, method protocol.PortMapMethod, r at
 	}
 	cctx, cancel := context.WithTimeout(ctx, m.cfg.AttemptTimeout)
 	defer cancel()
-	if perr := life.Safe("portmap.create", func() {
+	perr := life.Safe("portmap.create", func() {
 		var orphan remover
 		if live, info, orphan, err = r.create(cctx, port, lease); orphan != nil {
 			m.discard(orphan, compensateTimeout)
 		}
-	}); perr != nil {
+	})
+	if perr != nil {
 		return nil, protocol.PortMappingInfo{}, fmt.Errorf("%s: %w", method, perr)
 	}
 	return live, info, err

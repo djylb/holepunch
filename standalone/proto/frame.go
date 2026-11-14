@@ -148,9 +148,8 @@ func Decode(r io.Reader) (Message, error) {
 		return nil, fmt.Errorf("%w: %d", ErrType, hdr[1])
 	}
 	if err := readJSON(r, m, MaxPayload); err != nil {
-		var je jsonError
-		if errors.As(err, &je) {
-			return nil, fmt.Errorf("%w: %v: %v", ErrInvalid, t, je.err)
+		if je, ok := errors.AsType[jsonError](err); ok {
+			return nil, fmt.Errorf("%w: %v: %w", ErrInvalid, t, je.err)
 		}
 		return nil, unexpectedEOF(err)
 	}
@@ -197,8 +196,7 @@ func WriteJSON(w io.Writer, v any, limit int) error {
 // returned as they are, so a stream that ends before the length is io.EOF.
 func ReadJSON(r io.Reader, v any, limit int) error {
 	err := readJSON(r, v, limit)
-	var je jsonError
-	if errors.As(err, &je) {
+	if je, ok := errors.AsType[jsonError](err); ok {
 		return fmt.Errorf("%w: %w", ErrInvalid, je.err)
 	}
 	return err
@@ -305,11 +303,14 @@ func Expect[T Message](ctx context.Context, conn net.Conn) (T, error) {
 	if err != nil {
 		return zero, err
 	}
-	switch v := m.(type) {
-	case T:
+	if v, ok := m.(T); ok {
 		return v, nil
-	case *Fail:
-		return zero, v
+	}
+	// m is a protocol message, not an error that could be wrapped: *Fail is
+	// both.
+	//goland:noinspection GoTypeAssertionOnErrors
+	if f, ok := m.(*Fail); ok {
+		return zero, f
 	}
 	return zero, fmt.Errorf("%w: %v", ErrUnexpected, m.Type())
 }

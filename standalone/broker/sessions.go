@@ -102,11 +102,12 @@ func (b *Broker) policy(req OpenRequest, hi HostInfo) (proto.AccessPolicy, error
 		p   proto.AccessPolicy
 		err error
 	)
-	if perr := life.Safe("broker.Authorize", func() {
+	perr := life.Safe("broker.Authorize", func() {
 		if p, err = b.authorize(req, hi); err != nil {
-			err = fmt.Errorf("%w: %v", ErrRefused, err)
+			err = fmt.Errorf("%w: %v", ErrRefused, err) //nolint:errorlint // %v on purpose: the callback's error text is read here, inside the recover boundary
 		}
-	}); perr != nil {
+	})
+	if perr != nil {
 		return proto.AccessPolicy{}, fmt.Errorf("%w: authorize failed", ErrRefused)
 	}
 	if err != nil {

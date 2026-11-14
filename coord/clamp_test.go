@@ -112,7 +112,7 @@ func TestPlannerOutputClamped(t *testing.T) {
 // no_probe_endpoint.
 func TestPlannerWithoutTargets(t *testing.T) {
 	r := newRig(t, func(c *Config) {
-		c.Planner = evilPlanner{round: func(in plan.RoundInput) plan.RoundDecision {
+		c.Planner = evilPlanner{round: func(_ plan.RoundInput) plan.RoundDecision {
 			bad := []protocol.FamilySide{{Family: protocol.FamilyUDP4, Role: protocol.SideBoth, Sockets: 1, MaxPackets: 10,
 				Stages: []protocol.Stage{{Kind: protocol.StageDirect, Targets: []netip.AddrPort{mustAP("8.8.4.4:53")}}}}}
 			return plan.RoundDecision{Variant: 1, VariantName: "x", Budget: protocol.BudgetLight, Window: time.Second,
@@ -211,7 +211,8 @@ func TestUnverifiedModeDirectOnly(t *testing.T) {
 }
 
 // testSession is a bare session for white-box tests of the planning helpers.
-func testSession(t *testing.T, opts ...rigOpt) (*rig, *Session) {
+func testSession(t *testing.T, opts ...rigOpt) *Session {
+	t.Helper()
 	r := newRig(t, opts...)
 	s := r.session(SessionOptions{ClientKeys: [2]string{"ik", "rk"}})
 	s.st.adm.verified = [2]map[protocol.Family][]netip.Addr{
@@ -225,12 +226,12 @@ func testSession(t *testing.T, opts ...rigOpt) (*rig, *Session) {
 	s.st.reports = [2]*protocol.ProbeReport{{}, {}}
 	s.st.plan.cls = plan.Classification{Families: []protocol.Family{protocol.FamilyUDP4}}
 	t.Cleanup(func() { s.Abort(protocol.ReasonCanceled, "") })
-	return r, s
+	return s
 }
 
 // TestAdmission checks the target admission rules.
 func TestAdmission(t *testing.T) {
-	_, s := testSession(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
+	s := testSession(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u4 := protocol.FamilyUDP4
@@ -341,7 +342,7 @@ func TestAdmission(t *testing.T) {
 // family or under NoPrediction, and fresh sockets come on top of the side's
 // own within the socket ceiling.
 func TestFreshClamped(t *testing.T) {
-	_, s := testSession(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
+	s := testSession(t, withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u4 := protocol.FamilyUDP4
@@ -380,7 +381,7 @@ func TestFreshClamped(t *testing.T) {
 // time; heavy waits for round 2 with random-EDM evidence, else round 3;
 // extreme needs AllowExtreme, round 3 and the keys' hourly allowance.
 func TestEscalationGuard(t *testing.T) {
-	_, s := testSession(t, func(c *Config) { c.Budget.AllowExtreme = true; c.Limits.ExtremePerHour = 1 })
+	s := testSession(t, func(c *Config) { c.Budget.AllowExtreme = true; c.Limits.ExtremePerHour = 1 })
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := &s.st
@@ -539,7 +540,7 @@ func TestClampNeedNotKeepEquality(t *testing.T) {
 // is eight per target the stages aim at, overlay targets included, so a
 // shared overlay's stage does not eat the public targets' packets.
 func TestUnverifiedOverlayCeiling(t *testing.T) {
-	_, s := testSession(t)
+	s := testSession(t)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u4 := protocol.FamilyUDP4

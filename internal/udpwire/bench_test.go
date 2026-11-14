@@ -12,6 +12,7 @@ import (
 // natprobe ≥ 150 k probe/s per core and ≥ 1.5 M unknown-route drops/s.
 
 func benchSeal(b *testing.B, c *Codec, h Header, t *TLVs, plainLen int) {
+	b.Helper()
 	dst := make([]byte, 0, maxProbePacket)
 	b.ReportAllocs()
 	for b.Loop() {

@@ -103,16 +103,16 @@ func expectNone(t testing.TB, c Conn) {
 }
 
 // recvWait reads with a real-time timeout.
-func recvWait(t testing.TB, c Conn, d time.Duration) (string, netip.AddrPort) {
+func recvWait(t testing.TB, c Conn, d time.Duration) string {
 	t.Helper()
 	_ = c.SetReadDeadline(time.Now().Add(d))
 	defer func() { _ = c.SetReadDeadline(time.Time{}) }()
 	b := make([]byte, 65536)
-	n, src, err := c.ReadFromUDPAddrPort(b)
+	n, _, err := c.ReadFromUDPAddrPort(b)
 	if err != nil {
 		t.Fatalf("read on %v: %v", c.LocalAddr(), err)
 	}
-	return string(b[:n]), src
+	return string(b[:n])
 }
 
 // drain reads every queued packet and returns how many there were.

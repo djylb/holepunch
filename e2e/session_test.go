@@ -20,8 +20,8 @@ var roles = [2]protocol.Role{protocol.RoleInitiator, protocol.RoleResponder}
 
 // Control link delays (10–40 ms).
 const (
-	ctlMin = 10 * time.Millisecond
-	ctlMax = 40 * time.Millisecond
+	ctlLow  = 10 * time.Millisecond
+	ctlHigh = 40 * time.Millisecond
 )
 
 // sessionCap bounds a whole session from the test's side: above the
@@ -31,21 +31,21 @@ const sessionCap = 90 * time.Second
 
 // sessionSpec configures one session between two sides.
 type sessionSpec struct {
-	ablation     ablation.Set
-	ctlDelay     [2]time.Duration // one-way delays of the control links; 0 draws one in [10, 40] ms
-	ctlJitter    time.Duration
-	ctlBuffer    [2]int        // pipe buffer per direction; 0 = nattest's default
-	late         time.Duration // the responder joins this much later
-	lightTaps    bool          // taps that only count frames (load tests)
+	ctlDelay  [2]time.Duration // one-way delays of the control links; 0 draws one in [10, 40] ms
+	ctlJitter time.Duration
+	ctlBuffer [2]int        // pipe buffer per direction; 0 = nattest's default
+	late      time.Duration // the responder joins this much later
+	ablation  ablation.Set
+	lightTaps bool // taps that only count frames (load tests)
+	// background runs the session in Background mode: the coordinator
+	// offers it and both clients accept it.
+	background   bool
 	timeouts     *protocol.Timeouts
 	clientPolicy [2]*protocol.Policy
 	onProgress   [2]func(protocol.Progress)
 	clock        [2]clock.Clock
 	// maxPaths is both clients' Options.MaxPaths; 0 is one path.
 	maxPaths int
-	// background runs the session in Background mode: the coordinator
-	// offers it and both clients accept it.
-	background bool
 	// prepare runs once the links exist and before anything is attached:
 	// fault tests arm their taps and triggers here.
 	prepare func(r *run)
@@ -125,7 +125,8 @@ func (r *run) cancel(i int) { r.stop[i]() }
 // newRun creates the session and its links without attaching anything.
 func newRun(w *world, sides [2]*side, spec sessionSpec) (*run, error) {
 	r := &run{w: w, sides: sides, spec: spec}
-	so := coord.SessionOptions{Parent: ablation.With(context.Background(), spec.ablation), Timeouts: spec.timeouts}
+	parent := ablation.With(context.Background(), spec.ablation)
+	so := coord.SessionOptions{Parent: parent, Timeouts: spec.timeouts}
 	if spec.background {
 		so.Mode = protocol.ModeBackground
 	}
@@ -137,13 +138,13 @@ func newRun(w *world, sides [2]*side, spec sessionSpec) (*run, error) {
 	for i := range 2 {
 		r.delay[i] = spec.ctlDelay[i]
 		if r.delay[i] == 0 {
-			r.delay[i] = w.delay(ctlMin, ctlMax)
+			r.delay[i] = w.delay(ctlLow, ctlHigh)
 		}
 		cli, srv := w.n.Pipe(nattest.PipeConfig{A: sides[i].host, B: w.server, DelayAB: r.delay[i], DelayBA: r.delay[i],
 			Jitter: spec.ctlJitter, BufferBytes: spec.ctlBuffer[i]})
 		r.pipes[i], r.taps[i], r.spies[i] = cli, newTap(srv), &ctlSpy{PipeConn: cli}
 		r.taps[i].light = spec.lightTaps
-		r.ctx[i], r.stop[i] = context.WithTimeout(ablation.With(context.Background(), spec.ablation), sessionCap)
+		r.ctx[i], r.stop[i] = context.WithTimeout(parent, sessionCap) //nolint:fatcontext // every side context derives from parent; nothing nests
 	}
 	return r, nil
 }
@@ -323,7 +324,7 @@ func (r *run) checkHandoverOpt(send bool) error {
 			// still waiting.
 			_ = r.closeSessions()
 			if !received {
-				<-got
+				err = errors.Join(err, <-got)
 			}
 			return err
 		}

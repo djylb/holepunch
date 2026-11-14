@@ -212,7 +212,7 @@ func soapFault(w http.ResponseWriter, code int, desc string) {
 
 func (f *fakeIGD) serveSOAP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
-	service, action, _ := strings.Cut(strings.Trim(r.Header.Get("SOAPACTION"), `"`), "#")
+	service, action, _ := strings.Cut(strings.Trim(r.Header.Get("SoapAction"), `"`), "#")
 	args, err := parseSOAP(body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -256,12 +256,11 @@ func (f *fakeIGD) serveSOAP(w http.ResponseWriter, r *http.Request) {
 		entry := upnpEntry{internal: args["NewInternalClient"] + ":" + args["NewInternalPort"], lease: uint32(lease64)}
 		if old, ok := f.active[extPort]; ok {
 			if old.internal != entry.internal {
-				if action == "AddAnyPortMapping" {
-					extPort = 50000 + uint16(len(f.active))
-				} else {
+				if action != "AddAnyPortMapping" {
 					soapFault(w, upnpErrConflict, "ConflictInMappingEntry")
 					return
 				}
+				extPort = 50000 + uint16(len(f.active))
 			} else {
 				f.renews++
 			}

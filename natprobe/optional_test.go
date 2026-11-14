@@ -20,7 +20,8 @@ func TestServerOptionalGroup(t *testing.T) {
 	// closed again.
 	listen := func(network string, laddr netip.AddrPort) (net.PacketConn, error) {
 		if network == "udp6" {
-			if v6calls++; v6calls > 1 {
+			v6calls++
+			if v6calls > 1 {
 				return nil, errors.New("injected: no IPv6")
 			}
 			laddr = netip.AddrPortFrom(lo4, 0)

@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/netip"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -332,7 +333,7 @@ func TestValidateClientMessages(t *testing.T) {
 		{"progress_meta_17_keys_truncated_not_rejected", prog(func(m *Progress) {
 			m.Meta = map[string]string{}
 			for i := range 17 {
-				m.Meta[fmt.Sprint(i)] = "v"
+				m.Meta[strconv.Itoa(i)] = "v"
 			}
 		}), true, "", ""},
 	})

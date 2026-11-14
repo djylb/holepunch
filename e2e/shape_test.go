@@ -124,6 +124,7 @@ func poissonLimit(mean, alpha float64) int {
 
 // shapeAcross runs the two sessions and returns the violations.
 func shapeAcross(t *testing.T, p shapePair, seed int64) (v []string) {
+	t.Helper()
 	w := newWorld(t, worldConfig{seed: seed})
 	defer func() {
 		if err := w.close(); err != nil {

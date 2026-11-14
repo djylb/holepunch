@@ -354,11 +354,10 @@ func trailingRun(out []uint16) (length, dir int) {
 	}
 	length = 2
 	for i := n - 2; i > 0; i-- {
-		if int(out[i])-int(out[i-1]) == d {
-			length++
-		} else {
+		if int(out[i])-int(out[i-1]) != d {
 			break
 		}
+		length++
 	}
 	return length, d
 }

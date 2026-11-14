@@ -23,7 +23,7 @@ func soloRound(t *testing.T, pol *protocol.Policy, tweak func(*Options), edit fu
 	during func(so *solo) *protocol.RoundResult) (*solo, protocol.ProbeReport, *protocol.RoundResult) {
 	t.Helper()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, tweak)
+	so := newSolo(t, w, tweak)
 	to := testTimeouts()
 	to.GoWaitMs = 500
 	so.startWith(to, pol)

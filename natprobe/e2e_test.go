@@ -112,6 +112,7 @@ func TestEndToEndLoopback(t *testing.T) {
 }
 
 func runEndToEnd(t *testing.T, f protocol.Family, ip netip.Addr) {
+	t.Helper()
 	reg := natprobe.NewRegistry(natprobe.RegistryConfig{})
 	srv, err := natprobe.NewServer(natprobe.ServerConfig{Registry: reg, Groups: []natprobe.ObserverGroup{{Bind: ip}}})
 	if err != nil {

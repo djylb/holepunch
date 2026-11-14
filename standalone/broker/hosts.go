@@ -155,11 +155,12 @@ func (h *Host) revoke() {
 // the recover boundary, since its methods are the Signal's code too.
 func (h *Host) notify(in proto.Incoming) error {
 	var err error
-	if perr := life.Safe("broker.Signal.Notify", func() {
+	perr := life.Safe("broker.Signal.Notify", func() {
 		if err = h.sig.Notify(in); err != nil {
-			err = fmt.Errorf("%w: %v", ErrHostNotFound, err)
+			err = fmt.Errorf("%w: %v", ErrHostNotFound, err) //nolint:errorlint // %v on purpose: the Signal's error text is read here, inside the recover boundary
 		}
-	}); perr != nil {
+	})
+	if perr != nil {
 		return fmt.Errorf("%w: %w", ErrHostNotFound, perr)
 	}
 	return err

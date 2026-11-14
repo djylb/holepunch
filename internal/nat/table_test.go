@@ -243,7 +243,7 @@ func TestSnapshotBounds(t *testing.T) {
 	}
 }
 
-func TestTableConcurrent(t *testing.T) {
+func TestTableConcurrent(_ *testing.T) {
 	f := newFixture("192.168.1.10:40000")
 	var wg sync.WaitGroup
 	for g := range 8 {

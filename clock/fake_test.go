@@ -372,9 +372,8 @@ func TestFakeConcurrentUse(t *testing.T) {
 		}
 	})
 	for w := range workers {
-		wg.Add(1)
-		go func(seed uint64) {
-			defer wg.Done()
+		wg.Go(func() {
+			seed := uint64(w)
 			rng := rand.New(rand.NewPCG(seed, seed))
 			for range perWorker {
 				tm := clk.AfterFunc(time.Duration(rng.IntN(5))*time.Millisecond, func() { fired.Add(1) })
@@ -391,7 +390,7 @@ func TestFakeConcurrentUse(t *testing.T) {
 				}
 				_ = clk.Now()
 			}
-		}(uint64(w))
+		})
 	}
 	wg.Wait()
 	close(stopAdvancing)

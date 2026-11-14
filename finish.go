@@ -156,9 +156,10 @@ func (rt *runtime) finish(win *candidate.Action, cause error) (*Session, error) 
 // remote.
 func (rt *runtime) session(win *candidate.Action, ho *handoff, diag Diagnostics) *Session {
 	s := &Session{diag: diag, conns: []net.PacketConn{ho.primary.s.sock.conn}, codec: rt.codec}
-	peers := []netip.AddrPort{win.Remote}
+	paths := ho.paths()
+	peers := append(make([]netip.AddrPort, 0, 1+len(paths)), win.Remote)
 	res := rt.result(ho.primary)
-	for i, p := range ho.paths() {
+	for i, p := range paths {
 		if !slices.ContainsFunc(s.conns, func(c net.PacketConn) bool { return sameConn(c, p.s.sock.conn) }) {
 			s.conns = append(s.conns, p.s.sock.conn)
 		}

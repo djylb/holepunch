@@ -35,7 +35,7 @@ const (
 
 // tokenTagDomain separates the token digest kept for idempotent
 // registration from every other use of the token.
-const tokenTagDomain = "holepunch/1 natprobe token tag"
+const tokenTagDomain = "holepunch/1 natprobe token tag" //nolint:gosec // G101: a domain-separation label, not a credential
 
 // RegistryConfig configures a Registry; zero fields take the defaults.
 type RegistryConfig struct {

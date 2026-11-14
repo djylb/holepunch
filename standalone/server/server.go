@@ -123,25 +123,25 @@ type Stats struct {
 
 // Server serves standalone clients. Create it with New.
 type Server struct {
-	cfg      Config
-	log      *slog.Logger
-	group    *life.Group
-	tokenSum *[sha256.Size]byte
+	cfg       Config
+	log       *slog.Logger
+	group     *life.Group
+	tokenSum  *[sha256.Size]byte
+	closeOnce sync.Once
 
 	// The connections and listeners are tracked by pointers of the
 	// server's own, since a caller's net.Conn or net.Listener need not be
 	// comparable.
 	mu        sync.Mutex
 	closed    bool
-	listeners map[*net.Listener]struct{}
+	listeners map[*listenerRef]struct{}
 	conns     map[*stream]struct{}
 	hosts     int
 
 	accepted, refused, handshakeFailed atomic.Uint64
 	registered, opened, joined, panics atomic.Uint64
 
-	closeOnce sync.Once
-	closeErr  error
+	closeErr error // written once, under closeOnce
 }
 
 // New validates cfg and returns a server; it starts nothing.
@@ -163,7 +163,7 @@ func New(cfg Config) (*Server, error) {
 		cfg:       cfg,
 		log:       cfg.Logger,
 		group:     life.New(context.Background()),
-		listeners: map[*net.Listener]struct{}{},
+		listeners: map[*listenerRef]struct{}{},
 		conns:     map[*stream]struct{}{},
 	}
 	if s.log == nil {
@@ -181,11 +181,12 @@ func New(cfg Config) (*Server, error) {
 // Accept errors other than a closed listener are retried with a backoff
 // growing to 1 s, so that a full file table does not end the server.
 func (s *Server) Serve(l net.Listener) error {
-	if !s.trackListener(&l) {
+	ref := &listenerRef{l: l}
+	if !s.trackListener(ref) {
 		_ = l.Close()
 		return ErrClosed
 	}
-	defer s.untrackListener(&l)
+	defer s.untrackListener(ref)
 	var delay time.Duration
 	for {
 		conn, err := l.Accept()
@@ -247,7 +248,7 @@ func (s *Server) Close() error {
 		s.listeners, s.conns = nil, nil
 		s.mu.Unlock()
 		for l := range ls {
-			s.closeConn(*l)
+			s.closeConn(l.l)
 		}
 		for st := range cs {
 			s.closeConn(st.raw)
@@ -291,7 +292,10 @@ func (s *Server) pause(d time.Duration) bool {
 	}
 }
 
-func (s *Server) trackListener(l *net.Listener) bool {
+// listenerRef is the server's own identity for a listener it serves.
+type listenerRef struct{ l net.Listener }
+
+func (s *Server) trackListener(l *listenerRef) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -301,11 +305,11 @@ func (s *Server) trackListener(l *net.Listener) bool {
 	return true
 }
 
-func (s *Server) untrackListener(l *net.Listener) {
+func (s *Server) untrackListener(l *listenerRef) {
 	s.mu.Lock()
 	delete(s.listeners, l)
 	s.mu.Unlock()
-	_ = (*l).Close()
+	_ = l.l.Close()
 }
 
 func (s *Server) track(st *stream) error {

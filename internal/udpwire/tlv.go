@@ -15,12 +15,16 @@ type TLVs struct {
 	// 16 bytes of IPv6 (IPv4 as v4-mapped) plus a port, so Open returns IPv4
 	// unmapped and without a zone.
 	Observed netip.AddrPort
-	// ExtraPort is the source port of the extra reply natprobe sent for this
-	// probe, 0 if none (EXTRA_PORT; always present on probe_ack).
-	ExtraPort uint16
 	// Cookie is the return-reachability cookie of the observation slot, 0 if
 	// none (COOKIE; always present on probe_ack).
 	Cookie uint32
+	// RxCount is how many authenticated packets the sender has received from
+	// the receiver so far (RX_COUNT; success, accept, handover_ack). HasRx
+	// reports presence.
+	RxCount uint32
+	// ExtraPort is the source port of the extra reply natprobe sent for this
+	// probe, 0 if none (EXTRA_PORT; always present on probe_ack).
+	ExtraPort uint16
 	// Sandwich marks a probe natprobe hands to the coordinator (SANDWICH,
 	// probe): Round is the punch round and Phase is 0 before or 1 after
 	// the round's first punch (the sandwich), 2 or 3 for the first or
@@ -30,10 +34,6 @@ type TLVs struct {
 		Round, Phase uint8
 		Set          bool
 	}
-	// RxCount is how many authenticated packets the sender has received from
-	// the receiver so far (RX_COUNT; success, accept, handover_ack). HasRx
-	// reports presence.
-	RxCount uint32
 	// HasRx reports whether RxCount is present.
 	HasRx bool
 	// Slot is the extra-path slot of a nomination and of its accept

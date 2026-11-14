@@ -27,7 +27,7 @@ const echoMode = "udp_echo"
 
 // serve runs c.Serve on a goroutine and returns its result channel; the
 // test's cleanup cancels it and checks it returned.
-func serve(t *testing.T, c *client.Client, reg client.Registration, h client.Handler) (context.CancelFunc, chan error) {
+func serve(t *testing.T, c *client.Client, reg client.Registration, h client.Handler) chan error {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -35,12 +35,15 @@ func serve(t *testing.T, c *client.Client, reg client.Registration, h client.Han
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-done:
+		case err := <-done:
+			if err != nil {
+				t.Logf("Serve returned: %v", err)
+			}
 		case <-time.After(5 * time.Second):
 			t.Error("Serve did not return")
 		}
 	})
-	return cancel, done
+	return done
 }
 
 // echo answers the peer's datagrams on the session's filtered socket.
@@ -66,7 +69,7 @@ func ping(t *testing.T, s *client.Session, msg []byte) {
 	pc := s.PacketConn()
 	peer := net.UDPAddrFromAddrPort(s.Result().Path.RemoteAddr)
 	buf := make([]byte, 1500)
-	for attempt := 0; attempt < 20; attempt++ {
+	for range 20 {
 		if _, err := pc.WriteTo(msg, peer); err != nil {
 			t.Fatal(err)
 		}
@@ -82,8 +85,7 @@ func ping(t *testing.T, s *client.Session, msg []byte) {
 
 // failCode is the code of the server's *proto.Fail in err's chain, or "".
 func failCode(err error) proto.Code {
-	var f *proto.Fail
-	if errors.As(err, &f) {
+	if f, ok := errors.AsType[*proto.Fail](err); ok {
 		return f.Code
 	}
 	return ""
@@ -166,7 +168,7 @@ func TestCloseStuckHandler(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{})
 	var returned atomic.Bool
-	_, done := serve(t, hostC, client.Registration{HostID: "office"}, func(context.Context, *client.Session) {
+	done := serve(t, hostC, client.Registration{HostID: "office"}, func(context.Context, *client.Session) {
 		close(entered)
 		<-release // ignores its context
 		returned.Store(true)
@@ -216,7 +218,7 @@ func TestCloseCancelsHandler(t *testing.T) {
 	w := testworld.New(t, testworld.Options{})
 	hostC := w.Client(w.NATHost(nattest.FullCone()), nil)
 	entered := make(chan struct{})
-	serve(t, hostC, client.Registration{HostID: "office"}, func(ctx context.Context, s *client.Session) {
+	serve(t, hostC, client.Registration{HostID: "office"}, func(ctx context.Context, _ *client.Session) {
 		close(entered)
 		<-ctx.Done()
 	})
@@ -356,7 +358,7 @@ func TestServeRetriesUntilCanceled(t *testing.T) {
 func TestDialFailures(t *testing.T) {
 	for name, dial := range map[string]func(context.Context) (net.Conn, error){
 		"panic": func(context.Context) (net.Conn, error) { panic("dial boom") },
-		"nil":   func(context.Context) (net.Conn, error) { return nil, nil },
+		"nil":   func(context.Context) (net.Conn, error) { return nil, nil }, //nolint:nilnil // the case under test: a Dial that returns neither conn nor error
 		"error": func(context.Context) (net.Conn, error) { return nil, errors.New("down") },
 		"tls": func(context.Context) (net.Conn, error) {
 			a, b := net.Pipe()
@@ -380,7 +382,7 @@ func TestNew(t *testing.T) {
 		{},
 		{Server: "no-port"},
 		{Server: "h:1", HandshakeTimeout: -1},
-		{Dial: func(context.Context) (net.Conn, error) { return nil, nil }},
+		{Dial: func(context.Context) (net.Conn, error) { return nil, nil }}, //nolint:nilnil // only the Dial's presence matters: New rejects the config for the missing Server
 	} {
 		if _, err := client.New(cfg); err == nil {
 			t.Fatalf("%+v accepted", cfg)

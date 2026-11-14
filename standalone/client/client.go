@@ -69,9 +69,9 @@ type Client struct {
 	group *life.Group
 
 	mu       sync.Mutex
-	serving  bool
 	link     *link                 // the current registration link of Serve
 	sessions map[*Session]struct{} // the Handlers' sessions; nil once closed
+	serving  bool
 
 	closeOnce sync.Once
 	closeErr  error

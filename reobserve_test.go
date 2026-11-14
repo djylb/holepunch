@@ -104,8 +104,8 @@ func remapPush(ps *pairScript, i int) []protocol.Assist {
 // against the scripted coordinator, which pushes the responder's remap to
 // the initiator with the go of round push. move changes the responder's
 // NAT before the go of a round. It checks that the initiator connected to
-// the NAT's new IP in round push, refusing no target, and returns the run.
-func rebindScript(t *testing.T, push int, move func(k int, fc *nattest.NAT)) *pairRun {
+// the NAT's new IP in round push, refusing no target.
+func rebindScript(t *testing.T, push int, move func(k int, fc *nattest.NAT)) {
 	t.Helper()
 	w := newWorld(t)
 	fc := w.n.NAT(nattest.FullCone())
@@ -144,7 +144,6 @@ func rebindScript(t *testing.T, push int, move func(k int, fc *nattest.NAT)) *pa
 			t.Fatalf("initiator reported a remap in round %d: %+v", k+1, rr.Families[0].Remap)
 		}
 	}
-	return pr
 }
 
 // TestRebindBeforeGo (the e2e cell rebind/PRC-FC): the full-cone

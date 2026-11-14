@@ -83,7 +83,7 @@ func TestSprayTTLOnWire(t *testing.T) {
 	if cl.PairClass != PairSeqSeq {
 		t.Fatalf("pair class %q", cl.PairClass)
 	}
-	decs := chain(p, cl, a, b, 2, false, api.RoundNoContact, nil)
+	decs := chain(p, cl, a, b, 2, false, nil)
 	if len(decs) != 2 || decs[1].Variant != vSeqSeq2 {
 		t.Fatalf("round 2 is not seq_x_seq_r2: %+v", decs)
 	}

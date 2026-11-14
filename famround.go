@@ -26,8 +26,8 @@ type sendItem struct {
 	to    netip.AddrPort
 	cand  uint16
 	stage txStage
-	hops  int
 	quota sendQuota // quotaPlan or quotaTargets
+	hops  int
 	// slot is a paced socket of the round (FamilySide.OpenPerSec), opened
 	// when its first item is due; sock is nil until then. 0 for none.
 	slot int
@@ -65,8 +65,8 @@ type familyRound struct {
 	writeFails   []time.Time // recent send failures of a background round
 	halted       atomic.Bool // stopped initiating on a failure spike (round_result.halted)
 	seed         [8]byte
-	inject       chan []extraTarget
 	extras       atomic.Int32 // peer_targets targets scheduled this round
+	inject       chan []extraTarget
 	rejected     atomic.Int32 // targets admission refused this round (round_result.rejected)
 	budgetSaid   atomic.Bool
 }
@@ -267,7 +267,8 @@ func (fr *familyRound) pacedSocket(ctx context.Context, slot int) *udpSock {
 		if errors.Is(err, errNoSockets) {
 			return nil
 		}
-		if fr.bindRun++; fr.bindRun >= haltBindRun && fr.background() {
+		fr.bindRun++
+		if fr.bindRun >= haltBindRun && fr.background() {
 			fr.halted.Store(true)
 		}
 		return nil

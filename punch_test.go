@@ -43,7 +43,7 @@ func TestIdleZeroPolling(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	cc := &countingClock{inner: clock.System{}}
-	so := newSolo(t, w, nil, func(o *Options) { o.Clock = cc })
+	so := newSolo(t, w, func(o *Options) { o.Clock = cc })
 	to := testTimeouts()
 	to.SummaryWaitMs, to.GoWaitMs = 15000, 15000
 	so.start(to)
@@ -91,7 +91,7 @@ func TestProgressNotCalledAfterReturn(t *testing.T) {
 	t.Cleanup(func() { unblock.Do(func() { close(release) }) }) // on a failure too
 	var calls atomic.Int32
 	var returned, late atomic.Bool
-	so := newSolo(t, w, nil, func(o *Options) {
+	so := newSolo(t, w, func(o *Options) {
 		o.OnProgress = func(protocol.Progress) {
 			if returned.Load() {
 				late.Store(true)
@@ -122,7 +122,7 @@ func TestProgressNotCalledAfterReturn(t *testing.T) {
 func TestBudgetExceeded(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, func(o *Options) {
+	so := newSolo(t, w, func(o *Options) {
 		o.Policy = &protocol.Policy{Budget: protocol.Budget{MaxPackets: 3}}
 	})
 	to := testTimeouts()
@@ -152,7 +152,7 @@ func TestBudgetExceeded(t *testing.T) {
 func TestProbeUDPBlocked(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	so.host.FailWrites("", -1, syscall.EPERM)
 	so.start(testTimeouts())
 	pr := so.punchResult()
@@ -166,7 +166,7 @@ func TestProbeUDPBlocked(t *testing.T) {
 func TestProbeTimeout(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	ps := w.startFor(so.s, so.role, testTimeouts(), nil)
 	for i := range ps.Probe.Observers {
 		ps.Probe.Observers[i].Addr = netipAP("192.0.2.200", 3478+i)
@@ -307,7 +307,7 @@ func TestComputeWaits(t *testing.T) {
 func TestUnverifiedModeAndClockSkew(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	to.GoWaitMs = 500
 	so.start(to)

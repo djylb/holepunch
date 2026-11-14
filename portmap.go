@@ -39,9 +39,9 @@ type portMapping struct {
 	mu       sync.Mutex
 	done     bool
 	ok       bool
+	reported bool // already sent in probe_report or punch_ready
 	info     protocol.PortMappingInfo
 	closer   *releaseCloser
-	reported bool // already sent in probe_report or punch_ready
 }
 
 // result returns the finished mapping, if any.

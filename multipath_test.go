@@ -150,6 +150,7 @@ func TestMultiPathLANAndPublic(t *testing.T) {
 // the primary sockets of two dual-stack public hosts (TestDualStackUnverifiedV6
 // with both families sending).
 func dualStackScript(t *testing.T, w *world) *pairScript {
+	t.Helper()
 	ps := &pairScript{w: w, timeouts: testTimeouts()}
 	ps.pair = func(p *protocol.PairFacts, views *[2]protocol.PeerView, reports [2]protocol.ProbeReport) {
 		p.SharedFamilies = []protocol.Family{protocol.FamilyUDP6, protocol.FamilyUDP4}

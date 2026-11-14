@@ -87,7 +87,7 @@ func TestRestoreTwiceRunsOnce(t *testing.T) {
 	}
 }
 
-func TestRestoreConcurrentCallers(t *testing.T) {
+func TestRestoreConcurrentCallers(_ *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = a.Close() }()
 	defer func() { _ = b.Close() }()
@@ -114,9 +114,8 @@ func TestInterruptRestoreRace(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		restore := InterruptRead(ctx, a)
 		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); cancel() }()
-		go func() { defer wg.Done(); _ = restore() }()
+		wg.Go(cancel)
+		wg.Go(func() { _ = restore() })
 		wg.Wait()
 		_ = restore()
 		go func() { _, _ = b.Write([]byte{1}) }()

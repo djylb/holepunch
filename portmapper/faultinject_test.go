@@ -116,7 +116,7 @@ func TestFaultPortmapRenew(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitPending(t, fc, 1)
+		waitPending(t, fc)
 		fc.Advance(30 * time.Minute)
 		testkit.WaitFor(t, "renewal panic", func() bool { return faultinject.Fired(pointRenew) == 1 })
 		noLeak(t, base) // the renewal goroutine ended after its panic
@@ -140,7 +140,7 @@ func TestFaultPortmapRenew(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitPending(t, fc, 1)
+		waitPending(t, fc)
 		fc.Advance(30 * time.Minute)
 		testkit.WaitFor(t, "failed renewal", func() bool { return faultinject.Fired(pointRenew) == 1 && fc.Pending() == 1 })
 		disarm()
@@ -160,7 +160,7 @@ func TestFaultPortmapRenew(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitPending(t, fc, 1)
+		waitPending(t, fc)
 		fc.Advance(30 * time.Minute)
 		testkit.WaitFor(t, "stalled renewal", func() bool { return faultinject.Fired(pointRenew) == 1 })
 		start := time.Now()

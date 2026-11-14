@@ -155,7 +155,7 @@ func TestPanicErrorUnwrap(t *testing.T) {
 }
 
 func TestPanicNilIsRecovered(t *testing.T) {
-	err := Safe("nil", func() { panic(nil) })
+	err := Safe("nil", func() { panic(nil) }) //nolint:govet // the nil panic itself is what the test recovers
 	if _, ok := errors.AsType[*PanicError](err); !ok {
 		t.Fatalf("Safe(panic(nil)) = %v", err)
 	}

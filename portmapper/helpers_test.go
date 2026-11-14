@@ -27,8 +27,8 @@ var loopback = netip.MustParseAddr("127.0.0.1")
 type loopNetwork struct {
 	mu          sync.Mutex
 	purposes    map[string]int
-	listenPanic bool
 	listenErr   error
+	listenPanic bool
 	outPanic    bool
 	outErr      error
 	outbound    netip.Addr
@@ -206,14 +206,14 @@ func noLeak(t *testing.T, base goroutines.Option) {
 	}
 }
 
-// waitPending waits until the fake clock has n timers armed, at most
+// waitPending waits until the fake clock has one timer armed, at most
 // testkit.WaitBound.
-func waitPending(t *testing.T, fc *clock.Fake, n int) {
+func waitPending(t *testing.T, fc *clock.Fake) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), testkit.WaitBound(t))
 	defer cancel()
-	if err := fc.WaitPending(ctx, n); err != nil {
-		t.Fatalf("waiting for %d timers: %v", n, err)
+	if err := fc.WaitPending(ctx, 1); err != nil {
+		t.Fatalf("waiting for a timer: %v", err)
 	}
 }
 

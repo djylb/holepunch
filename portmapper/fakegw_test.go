@@ -41,11 +41,11 @@ type fakeGW struct {
 	mu            sync.Mutex
 	pcpMode       serveMode
 	natMode       serveMode
-	dropDeletes   bool
-	holdPCP       bool          // PCP requests wait for the first NAT-PMP external-address query
 	held          []heldRequest // PCP requests held by holdPCP
-	grant         uint32        // maximum granted lifetime, seconds
+	dropDeletes   bool
+	holdPCP       bool // PCP requests wait for the first NAT-PMP external-address query
 	nextExt       uint16
+	grant         uint32 // maximum granted lifetime, seconds
 	pcpActive     map[uint16]pcpEntry
 	natActive     map[uint16]uint16
 	pcpCreates    int

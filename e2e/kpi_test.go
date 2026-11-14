@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -70,7 +69,7 @@ func quant(xs []float64) quantiles {
 		return quantiles{P50: -1, P90: -1, P95: -1, Max: -1}
 	}
 	s := slices.Clone(xs)
-	sort.Float64s(s)
+	slices.Sort(s)
 	at := func(p float64) float64 {
 		i := int(math.Ceil(p*float64(len(s)))) - 1
 		return s[max(i, 0)]

@@ -1,0 +1,231 @@
+version: "2"
+
+# Every module in go.work is linted with this file (CI passes it with
+# --config); the root and standalone modules also with -tags
+# holepunch_faultinject, the only modules with such files. The set is "all linters" minus the exclusions below; each
+# exclusion states why it does not fit this code base.
+
+run:
+  timeout: 10m
+  tests: true
+
+linters:
+  default: all
+  disable:
+    # Whitespace / layout style that the code base does not follow; gofmt is
+    # the layout authority.
+    - wsl
+    - wsl_v5
+    - nlreturn
+    - lll
+    - godox
+    # Short identifiers (b, n, p, st) are idiomatic in framing code.
+    - varnamelen
+    # Zero values are the documented defaults of every config struct.
+    - exhaustruct
+    - exhaustruct_v5
+    # Errors cross internal layers verbatim on purpose; wrapping happens at
+    # the public boundary where it carries information.
+    - wrapcheck
+    # No import allowlist; the go.mod require set is the dependency policy.
+    - depguard
+    - gomodguard
+    - gomodguard_v2
+    # Package-level sentinel errors, lookup tables and registries.
+    - gochecknoglobals
+    # Suite registration uses init in the registry pattern.
+    - gochecknoinits
+    # White-box tests live in the package they test.
+    - testpackage
+    # Many tests are timing- or goroutine-leak-sensitive and run serially by
+    # design.
+    - paralleltest
+    # Protocol constants (varint bounds, frame sizes, key lengths) are
+    # self-describing at their use site.
+    - mnd
+    # Size/complexity thresholds: state machines and frame parsers are long
+    # by nature; review, not a counter, decides when to split.
+    - funlen
+    - gocognit
+    - gocyclo
+    - cyclop
+    - nestif
+    - maintidx
+    # `if err := f(); err != nil` is the project style.
+    - noinlineerr
+    # JSON field names are the wire protocol's, fixed by its test vectors.
+    - tagliatelle
+    # Clock, Timer, Network and Planner are interfaces by design.
+    - ireturn
+    # Named results document multi-value returns and are used by defers.
+    - nonamedreturns
+    # Methods are grouped by topic, not by exportedness.
+    - funcorder
+    # Embedded-field blank-line rule is pure layout.
+    - embeddedstructfieldcheck
+    # One-off errors that no caller matches stay errors.New/fmt.Errorf;
+    # sentinels exist where callers use errors.Is.
+    - err113
+    # Repeated literals are mostly test names and protocol labels.
+    - goconst
+    # Interface params mirror the stdlib (io, net) which leaves them unnamed.
+    - inamedparam
+    # Conn/Listener store the context that bounds their lifetime.
+    - containedctx
+    # Reports every lock-release epilogue (unlock -> doAction) as needing a
+    # caller context; those paths deliberately detach from the caller.
+    - contextcheck
+    # README examples are compile-checked; they open sockets and have no
+    # deterministic output.
+    - testableexamples
+    # Duplicate-code detection flags table-driven tests.
+    - dupl
+    # Every unchecked assertion is an invariant (sync.Pool with New, maps
+    # holding one type, framing checked at construction); a failure is a
+    # programming error and the panic is the intended outcome. Same reason
+    # for errcheck check-type-assertions and revive unchecked-type-assertion.
+    - forcetypeassert
+
+  settings:
+    errcheck:
+      # See forcetypeassert above.
+      check-type-assertions: false
+      # `_ = x.Close()` is the explicit, reviewed way to discard an error.
+      check-blank: false
+    exhaustive:
+      default-signifies-exhaustive: true
+      # Switches over message types and session states handle the cases
+      # that matter at that point on purpose; a switch that must cover every
+      # value says so with //exhaustive:enforce.
+      explicit-exhaustive: true
+    gomoddirectives:
+      # Workspace modules point at their siblings.
+      replace-local: true
+    govet:
+      enable-all: true
+      disable:
+        # Field order groups related state; struct sizes are checked with the
+        # standalone fieldalignment tool when layout matters.
+        - fieldalignment
+        # Shadowing err in a nested scope is idiomatic Go.
+        - shadow
+    gocritic:
+      enable-all: true
+      disabled-checks:
+        # Config/value structs are passed by value as part of the API; hot
+        # paths were profiled separately.
+        - hugeParam
+        - rangeValCopy
+        # Locals named url/context in narrow scopes do not use the import.
+        - importShadow
+        # Covered by revive confusing-results policy below (named results are
+        # not required).
+        - unnamedResult
+    gosec:
+      excludes:
+        # math/rand draws only spread: retry and pacing jitter, padding
+        # lengths, round seeds, simulation; every secret (tokens, keys,
+        # cookies) comes from crypto/rand.
+        - G404
+        # Integer conversions are bounded by the wire encoding (varints,
+        # length prefixes) that is validated before conversion.
+        - G115
+    thelper:
+      tb:
+        # Helpers take `t testing.TB` throughout; the name carries nothing.
+        name: false
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    revive:
+      enable-all-rules: true
+      rules:
+        # Thresholds and magic-number counting; see the disabled complexity
+        # linters above.
+        - name: add-constant
+          disabled: true
+        - name: line-length-limit
+          disabled: true
+        - name: cognitive-complexity
+          disabled: true
+        - name: cyclomatic
+          disabled: true
+        - name: function-length
+          disabled: true
+        - name: argument-limit
+          disabled: true
+        - name: function-result-limit
+          disabled: true
+        - name: max-public-structs
+          disabled: true
+        # errcheck covers unchecked errors; explicit `_ =` is allowed.
+        - name: unhandled-error
+          disabled: true
+        # Case order follows the protocol, not default placement rules.
+        - name: enforce-switch-style
+          disabled: true
+        # Receivers are named consistently even when unused.
+        - name: unused-receiver
+          disabled: true
+        # Boolean options are part of established APIs.
+        - name: flag-parameter
+          disabled: true
+        # Inline anonymous structs group related fields.
+        - name: nested-structs
+          disabled: true
+        # Named results are not required (see gocritic unnamedResult).
+        - name: confusing-results
+          disabled: true
+        # Exported wrapper + unexported worker pairs (Pipe/pipe) are the
+        # project convention.
+        - name: confusing-naming
+          disabled: true
+        # Locals named url/context in narrow scopes do not use the import.
+        - name: import-shadowing
+          disabled: true
+        # Time values are typed (time.Time/Duration); suffixes add nothing.
+        - name: epoch-naming
+          disabled: true
+        # Command mains and the goroutine check's TestMain exit deliberately.
+        - name: deep-exit
+          disabled: true
+        # Benchmarks and allocation tests measure the heap and must force a
+        # collection.
+        - name: call-to-gc
+          disabled: true
+        # Test helpers take t first, then ctx (Go convention).
+        - name: context-as-argument
+          arguments:
+            - allow-types-before: "*testing.T,testing.TB,*testing.B"
+        # See forcetypeassert above.
+        - name: unchecked-type-assertion
+          disabled: true
+
+  exclusions:
+    generated: strict
+    rules:
+      # Test-only code: fixtures read from paths, tools are spawned,
+      # loopback TLS skips verification, servers are short-lived.
+      - path: _test\.go$
+        linters: [gosec, noctx]
+      # Test-vector builders would need capacities that drift with the
+      # tables.
+      - path: _test\.go$
+        linters: [prealloc]
+      # Command-line tools print their results on stdout.
+      - path: (^|/)cmd/
+        linters: [forbidigo]
+      # The KPI aggregator is a test tool that reads and writes report files
+      # named on its command line.
+      - path: ^e2e/kpiagg/
+        linters: [gosec, forbidigo]
+      # Doc comments are required on the public API; internal packages
+      # document where it helps.
+      - path: (^|/)internal/
+        text: "^exported:"
+        linters: [revive]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

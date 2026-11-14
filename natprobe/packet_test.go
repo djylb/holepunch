@@ -87,7 +87,7 @@ func TestReplyLengthRule(t *testing.T) {
 	for i := range 3000 {
 		plain := 24 + i%200 // wire 69 … 268
 		pkt := c.probe(probetest.Probe{Obs: 0, Extra: true, PlainLen: plain})
-		L := len(pkt)
+		plen := len(pkt)
 		if i%250 == 249 { // the extra quota is per role: refresh it
 			r.reg.lookup(rt(1)).roles[0].extraLeft = 255
 		}
@@ -97,33 +97,33 @@ func TestReplyLengthRule(t *testing.T) {
 			total += len(o.b)
 		}
 		switch {
-		case L < 83:
+		case plen < 83:
 			if len(out) != 0 {
-				t.Fatalf("L=%d answered", L)
+				t.Fatalf("L=%d answered", plen)
 			}
-		case L < 156:
+		case plen < 156:
 			if len(out) != 1 {
-				t.Fatalf("L=%d: %d replies", L, len(out))
+				t.Fatalf("L=%d: %d replies", plen, len(out))
 			}
 			h, tl := open(t, c, out[0].b)
 			if h.FA || tl.ExtraPort != 0 {
-				t.Fatalf("L=%d: the ack declares an extra it could not send", L)
+				t.Fatalf("L=%d: the ack declares an extra it could not send", plen)
 			}
 		default:
 			if len(out) != 2 {
-				t.Fatalf("L=%d: %d replies", L, len(out))
+				t.Fatalf("L=%d: %d replies", plen, len(out))
 			}
 			if len(out[0].b) < 83 || len(out[1].b) < 73 {
-				t.Fatalf("L=%d lengths %d %d", L, len(out[0].b), len(out[1].b))
+				t.Fatalf("L=%d lengths %d %d", plen, len(out[0].b), len(out[1].b))
 			}
-			if L == 268 {
+			if plen == 268 {
 				ackLens[len(out[0].b)] = true
 				extraLens[len(out[1].b)] = true
 				pairLens[total] = true
 			}
 		}
-		if total > L {
-			t.Fatalf("reply bytes exceed the probe: %d > %d", total, L)
+		if total > plen {
+			t.Fatalf("reply bytes exceed the probe: %d > %d", total, plen)
 		}
 	}
 	if len(ackLens) < 3 || len(pairLens) < 3 || len(extraLens) < 3 {
@@ -244,7 +244,8 @@ func TestSourceRateAndUnknownRoutes(t *testing.T) {
 		t.Fatalf("unknown %d rate %d auth %d", r.stats.unknownRoute.Load(), r.stats.rateSrc.Load(), r.stats.badAuth.Load())
 	}
 	// another /32 has its own bucket; another port of the same /32 does not
-	if r.deliver(0, c.probe(probetest.Probe{}), netip.MustParseAddrPort("203.0.113.6:1")); r.stats.unknownRoute.Load() != 1025 {
+	r.deliver(0, c.probe(probetest.Probe{}), netip.MustParseAddrPort("203.0.113.6:1"))
+	if r.stats.unknownRoute.Load() != 1025 {
 		t.Fatal("another prefix limited")
 	}
 	r.deliver(0, c.probe(probetest.Probe{}), netip.MustParseAddrPort("203.0.113.5:9"))
@@ -537,10 +538,10 @@ func TestSandwichQueue(t *testing.T) {
 func TestGCRAStaleTimestampDoesNotReset(t *testing.T) {
 	r := Rate{PerSec: 512, Burst: 1024}
 	var tat int64
-	const T = int64(10 * time.Second)
+	const period = int64(10 * time.Second)
 	burst := 0
 	for range 4000 {
-		if gcra(&tat, T, r) {
+		if gcra(&tat, period, r) {
 			burst++
 		}
 	}
@@ -548,21 +549,21 @@ func TestGCRAStaleTimestampDoesNotReset(t *testing.T) {
 		t.Fatalf("burst %d, want %d", burst, r.Burst)
 	}
 	for _, back := range []time.Duration{time.Microsecond, time.Millisecond, 500 * time.Millisecond} {
-		if gcra(&tat, T-int64(back), r) {
+		if gcra(&tat, period-int64(back), r) {
 			t.Fatalf("an event stamped %v early was admitted from a full bucket", back)
 		}
 	}
 	again := 0
 	for range 4000 {
-		if gcra(&tat, T, r) {
+		if gcra(&tat, period, r) {
 			again++
 		}
 	}
 	if again != 0 {
-		t.Fatalf("%d admitted again at T: the bucket was reset", again)
+		t.Fatalf("%d admitted again at period: the bucket was reset", again)
 	}
 	// a real clock step back restarts the bucket rather than stalling it
-	if !gcra(&tat, T-int64(10*time.Minute), r) {
+	if !gcra(&tat, period-int64(10*time.Minute), r) {
 		t.Fatal("refused after a 10 min clock step back")
 	}
 }
@@ -755,11 +756,11 @@ func TestSandwichZeroAlloc(t *testing.T) {
 // overflowing, and a burst below 1 counts as 1: neither config turns the
 // bucket into one that refuses everything.
 func TestGCRAExtremeBurst(t *testing.T) {
-	const T = int64(10 * time.Second)
+	const period = int64(10 * time.Second)
 	for _, r := range []Rate{{PerSec: 1, Burst: math.MaxInt}, {PerSec: 1, Burst: math.MaxInt / 1000}, {PerSec: math.MaxInt, Burst: math.MaxInt}} {
 		var tat int64
 		for i := range 10000 {
-			if !gcra(&tat, T, r) {
+			if !gcra(&tat, period, r) {
 				t.Fatalf("%+v: event %d refused at one instant", r, i)
 			}
 		}
@@ -767,10 +768,10 @@ func TestGCRAExtremeBurst(t *testing.T) {
 	for _, burst := range []int{0, -5} {
 		var tat int64
 		r := Rate{PerSec: 1, Burst: burst}
-		if !gcra(&tat, T, r) || gcra(&tat, T, r) {
+		if !gcra(&tat, period, r) || gcra(&tat, period, r) {
 			t.Fatalf("burst %d does not admit exactly one event at once", burst)
 		}
-		if !gcra(&tat, T+int64(time.Second), r) {
+		if !gcra(&tat, period+int64(time.Second), r) {
 			t.Fatalf("burst %d: no event a second later", burst)
 		}
 	}

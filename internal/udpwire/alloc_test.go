@@ -73,7 +73,7 @@ func TestZeroAllocs(t *testing.T) {
 
 	r := newRand(13)
 	junk := make([]byte, maxProbePacket+16)
-	if a := testing.AllocsPerRun(1000, func() {
+	a := testing.AllocsPerRun(1000, func() {
 		n := r.IntN(len(junk))
 		for i := range n {
 			junk[i] = byte(r.Uint32())
@@ -81,7 +81,8 @@ func TestZeroAllocs(t *testing.T) {
 		junk[0] = B0Min + byte(r.IntN(b0Count))
 		_ = srv.Open(junk[:n], scratch, &h, &tl)
 		_ = srv.OpenProbe(junk[:n], scratch, &h, &tl)
-	}); a != 0 {
+	})
+	if a != 0 {
 		t.Errorf("garbage input: %.1f allocs/op", a)
 	}
 }

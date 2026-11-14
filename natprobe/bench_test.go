@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,6 +43,7 @@ func newBenchPath() *benchPath {
 // chunk registers a fresh session (one live session at a time) and seals n
 // probes for it, as openers when wrap is set.
 func (bp *benchPath) chunk(tb testing.TB, n int, extra, wrap bool) [][]byte {
+	tb.Helper()
 	bp.n++
 	token, route := protocol.NewToken(), protocol.NewRouteID()
 	bp.last.Close()
@@ -165,6 +167,7 @@ func BenchmarkProbeLoopback(b *testing.B) {
 const loopbackClients = 4
 
 func benchLoopback(b *testing.B, readers int) {
+	b.Helper()
 	reg := NewRegistry(RegistryConfig{ProbeBudgetPerRole: 65535, SessionRate: Rate{PerSec: 1e9, Burst: 1e9}})
 	s, err := NewServer(ServerConfig{Registry: reg, Groups: loGroup(), ReadersPerListener: readers, SourceRate: Rate{PerSec: 1e9, Burst: 1e9}})
 	if err != nil {
@@ -218,6 +221,7 @@ func BenchmarkLoopbackEcho(b *testing.B) {
 // driveLoopback sends pkts[i] from client i to to, keeping at most a window
 // of 64 datagrams unanswered, and reports the answers per second.
 func driveLoopback(b *testing.B, to netip.AddrPort, pkts [][][]byte) {
+	b.Helper()
 	const window = 64
 	type cl struct {
 		conn *net.UDPConn
@@ -259,6 +263,7 @@ func driveLoopback(b *testing.B, to netip.AddrPort, pkts [][][]byte) {
 				sent += n
 				deadline := time.Now().Add(100 * time.Millisecond)
 				for c.recv.Load() < int64(sent) && time.Now().Before(deadline) {
+					runtime.Gosched()
 				}
 			}
 		}()

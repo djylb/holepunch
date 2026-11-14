@@ -61,7 +61,7 @@ func IsMessage(b []byte) bool {
 	return n%4 == 0 && HeaderSize+n == len(b)
 }
 
-// AppendBindingRequest appends a Binding Request with transaction id id
+// AppendBindingRequest appends a Binding Request with transaction ID id
 // and no attributes to dst.
 func AppendBindingRequest(dst []byte, id TransactionID) []byte {
 	return appendHeader(dst, typeBindingRequest, 0, id)
@@ -104,7 +104,7 @@ func AppendBindingResponse(dst []byte, id TransactionID, mapped netip.AddrPort) 
 		copy(a[8:], b[:])
 	}
 	for i := range size - 4 {
-		a[8+i] ^= key[i]
+		a[8+i] ^= key[i] //nolint:gosec // G602: key holds 16 bytes and size-4 is at most 16
 	}
 	return append(dst, a[:4+size]...)
 }

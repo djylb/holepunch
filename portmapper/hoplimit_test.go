@@ -29,9 +29,10 @@ func TestMappedSocketKeepsHopLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var serr error
-	if err := rrc.Control(func(fd uintptr) {
+	err = rrc.Control(func(fd uintptr) {
 		serr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_RECVTTL, 1)
-	}); err != nil || serr != nil {
+	})
+	if err != nil || serr != nil {
 		t.Skipf("IP_RECVTTL unavailable: %v %v", err, serr)
 	}
 	cmsgType := int32(syscall.IP_TTL)
@@ -81,9 +82,10 @@ func TestMappedSocketKeepsHopLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		var serr error
-		if err := rc.Control(func(fd uintptr) {
+		err = rc.Control(func(fd uintptr) {
 			serr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_TTL, v)
-		}); err != nil || serr != nil {
+		})
+		if err != nil || serr != nil {
 			t.Fatalf("set IP_TTL: %v %v", err, serr)
 		}
 	}

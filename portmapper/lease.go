@@ -69,14 +69,15 @@ func (l *lease) renewLoop() {
 		}
 		var granted time.Duration
 		var err error
-		if perr := life.Safe(pointRenew, func() {
+		perr := life.Safe(pointRenew, func() {
 			if err = faultinject.Point(pointRenew); err != nil {
 				return
 			}
 			ctx, cancel := context.WithTimeout(l.ctx, l.m.cfg.AttemptTimeout)
 			defer cancel()
 			granted, err = l.live.renew(ctx)
-		}); perr != nil {
+		})
+		if perr != nil {
 			return
 		}
 		if err == nil && granted > 0 {

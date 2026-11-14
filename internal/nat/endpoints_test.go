@@ -79,22 +79,22 @@ func TestEndpointsVerifiedOnly(t *testing.T) {
 func TestAdmitSelfReported(t *testing.T) {
 	verified := []netip.Addr{ip("203.0.113.5")}
 	cases := []struct {
-		src  Source
 		a    string
+		src  Source
 		want bool
 	}{
-		{SourceSTUN, "203.0.113.5:1", true},
-		{SourceSTUN, "[::ffff:203.0.113.5]:1", true},
-		{SourceSTUN, "203.0.113.6:1", false},
-		{SourceSTUN, "10.0.0.1:1", false},
-		{SourcePortMap, "203.0.113.5:1", true},
-		{SourcePortMap, "10.0.0.1:1", true},
-		{SourcePortMap, "100.100.0.1:1", true},
-		{SourcePortMap, "203.0.113.6:1", false},
-		{SourcePortMap, "127.0.0.1:1", false},
-		{SourcePortMap, "203.0.113.5:0", false},
-		{SourceServer, "203.0.113.5:1", false},
-		{SourcePeer, "203.0.113.5:1", false},
+		{src: SourceSTUN, a: "203.0.113.5:1", want: true},
+		{src: SourceSTUN, a: "[::ffff:203.0.113.5]:1", want: true},
+		{src: SourceSTUN, a: "203.0.113.6:1", want: false},
+		{src: SourceSTUN, a: "10.0.0.1:1", want: false},
+		{src: SourcePortMap, a: "203.0.113.5:1", want: true},
+		{src: SourcePortMap, a: "10.0.0.1:1", want: true},
+		{src: SourcePortMap, a: "100.100.0.1:1", want: true},
+		{src: SourcePortMap, a: "203.0.113.6:1", want: false},
+		{src: SourcePortMap, a: "127.0.0.1:1", want: false},
+		{src: SourcePortMap, a: "203.0.113.5:0", want: false},
+		{src: SourceServer, a: "203.0.113.5:1", want: false},
+		{src: SourcePeer, a: "203.0.113.5:1", want: false},
 	}
 	for _, c := range cases {
 		if got := AdmitSelfReported(c.src, ap(c.a), verified); got != c.want {

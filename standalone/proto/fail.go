@@ -42,7 +42,7 @@ func (c Code) Retryable() bool {
 
 // Fail refuses a request (server → client); the server closes the stream
 // after it. A received Fail is also the error the client returns for it.
-type Fail struct {
+type Fail struct { //nolint:errname // Fail is the standalone protocol's public wire message and error type; the name is fixed
 	Code    Code   `json:"code"`
 	Message string `json:"message,omitempty"` // human readable, never a stack
 }

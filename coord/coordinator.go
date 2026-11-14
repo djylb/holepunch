@@ -42,11 +42,11 @@ type Coordinator struct {
 	randMu sync.Mutex // Config.Rand need not be safe for concurrent use
 
 	mu      sync.Mutex
-	closed  bool
 	live    int           // sessions whose Result is not delivered yet (EvClosed queued, OnResult returned)
 	drained chan struct{} // closed once closed and live == 0
-	drainOK bool
 	index   [16]indexShard
+	closed  bool
+	drainOK bool
 
 	closeOnce sync.Once
 	closeDone chan struct{}
@@ -317,7 +317,7 @@ func (c *Coordinator) housekeep(ctx context.Context) {
 
 // sweeper is the optional Sweep of a StrategyMemory (the built-in one has it).
 type sweeper interface {
-	Sweep(now time.Time, max int) int
+	Sweep(now time.Time, limit int) int
 }
 
 func (c *Coordinator) sweep() {

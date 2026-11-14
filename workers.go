@@ -35,10 +35,10 @@ type worker struct {
 	reported   map[netip.Addr]bool     // unverified family: the peer's self-reported global addresses
 	unverified bool                    // the server could not verify this family's endpoints
 	samePublic bool                    // both sides leave through the same public IP
-	allow      map[uint16]struct{}     // the peer's observed ports, exempt from the sensitive-port filter
 	lowTTL     bool
-	lowTTLOff  atomic.Bool // a socket refused a low TTL: warned once
-	hairpinOK  atomic.Bool // the hairpin self-test succeeded: the public path loops back
+	allow      map[uint16]struct{} // the peer's observed ports, exempt from the sensitive-port filter
+	lowTTLOff  atomic.Bool         // a socket refused a low TTL: warned once
+	hairpinOK  atomic.Bool         // the hairpin self-test succeeded: the public path loops back
 	primary    *udpSock
 	selfTraits protocol.Traits
 	peerTraits protocol.Traits

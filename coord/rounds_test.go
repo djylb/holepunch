@@ -133,7 +133,7 @@ func TestBudgetAudit(t *testing.T) {
 	r := newRig(t)
 	p := r.pair(SessionOptions{})
 	p.punching()
-	g1 := grantOf(p, 0)
+	g1 := grantOf(p)
 	gos := p.endRound(1, [2]simclient.Outcome{fired(uint32(g1) * 2), fired(1)})
 	if gos[0] == nil {
 		t.Fatal("no round 2")
@@ -141,7 +141,7 @@ func TestBudgetAudit(t *testing.T) {
 	if g2 := maxPackets(gos[0].Plan); g2 > g1 {
 		t.Fatalf("round 2 grant %d after violating %d", g2, g1)
 	}
-	g2 := grantOf(p, 0)
+	g2 := grantOf(p)
 	p.windowEnd(1, 2, fired(1))
 	p.windowEnd(0, 2, fired(uint32(g2)*2+1))
 	if a := expectAbort(t, p.cl[1]); a.Reason != protocol.ReasonProtocolViolation || a.Detail != detailBudgetViolation {
@@ -153,10 +153,11 @@ func TestBudgetAudit(t *testing.T) {
 	}
 }
 
-func grantOf(p *pair, r int) int {
+// grantOf is the initiator's grant of the current round.
+func grantOf(p *pair) int {
 	p.s.mu.Lock()
 	defer p.s.mu.Unlock()
-	return p.s.st.rounds.cur.granted[r]
+	return p.s.st.rounds.cur.granted[0]
 }
 
 func maxPackets(rp *protocol.RoundPlan) int {
@@ -529,7 +530,7 @@ func TestMappings(t *testing.T) {
 // middle — and charged when sent; the audit pays the packets beyond the
 // grant from that credit, whichever round they were sent in.
 func TestPushCharge(t *testing.T) {
-	_, s := testSession(t)
+	s := testSession(t)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := &s.st
@@ -654,7 +655,7 @@ type armedClock struct {
 func (c armedClock) Now() time.Time {
 	now := c.Fake.Now()
 	if c.arm.CompareAndSwap(true, false) {
-		c.Fake.Advance(2 * time.Millisecond)
+		c.Advance(2 * time.Millisecond)
 		return now.Add(time.Millisecond)
 	}
 	return now

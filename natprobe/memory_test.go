@@ -163,7 +163,7 @@ func TestMemoryLRUBound(t *testing.T) {
 	}
 }
 
-func TestMemoryConcurrent(t *testing.T) {
+func TestMemoryConcurrent(_ *testing.T) {
 	mem := NewTraitsMemory(TraitsMemoryConfig{MaxEntries: 256})
 	var wg sync.WaitGroup
 	for g := range 8 {

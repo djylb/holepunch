@@ -13,6 +13,7 @@ import (
 // scheduler and reader each run on their own goroutine. With delay > 0 every
 // packet waits on the core link and is delivered by the scheduler goroutine.
 func benchPath(b *testing.B, delay time.Duration, opts ...Option) {
+	b.Helper()
 	const maxInflight = 1 << 15
 	n := NewNetwork(append([]Option{WithCoreLink(LinkConfig{Delay: delay})}, opts...)...)
 	defer func() { _ = n.Close() }()

@@ -44,11 +44,11 @@ type Server struct {
 	live      []bool   // by config group: started (an optional group may not)
 	skipped   int      // optional groups not started
 
-	wildcard      atomic.Bool
 	deadListeners atomic.Int64
 	serverPanics  atomic.Uint64 // panics outside the readers: sandwich sinks run by AttachSandwichSink
 	closeTimeouts atomic.Uint64
 	lastPanicLog  atomic.Int64
+	wildcard      atomic.Bool
 
 	closeOnce sync.Once
 	closeErr  error

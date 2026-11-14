@@ -91,7 +91,8 @@ func (c *Conn) readFrames() error {
 		}
 		if !accept {
 			c.discarded.Add(1)
-			if discarded++; discarded > MaxDiscarded {
+			discarded++
+			if discarded > MaxDiscarded {
 				return fmt.Errorf("%w: %d frames, last %v", ErrTooManyUnknown, discarded, t)
 			}
 			continue
@@ -170,11 +171,12 @@ func (c *Conn) fill(buf []byte, first bool) error {
 			n   int
 			err error
 		)
-		if perr := life.Safe("ctl-read:read", func() {
+		perr := life.Safe("ctl-read:read", func() {
 			if err = faultinject.Point("ctl.read"); err == nil {
 				n, err = c.nc.Read(buf[off:])
 			}
-		}); perr != nil {
+		})
+		if perr != nil {
 			return perr
 		}
 		if n < 0 || n > len(buf)-off {
@@ -195,7 +197,8 @@ func (c *Conn) fill(buf []byte, first bool) error {
 			}
 			return err
 		case n == 0:
-			if empty++; empty >= maxEmptyReads {
+			empty++
+			if empty >= maxEmptyReads {
 				return io.ErrNoProgress
 			}
 		default:

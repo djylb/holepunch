@@ -61,7 +61,7 @@ func parseNATPMPExternal(b []byte) (netip.Addr, bool, error) {
 	if !ok || err != nil {
 		return netip.Addr{}, false, err
 	}
-	return netip.AddrFrom4([4]byte(b[8:12])), true, nil
+	return netip.AddrFrom4([4]byte(b[8:12])), true, nil //nolint:gosec // G602: natpmpHeader checked the length of b
 }
 
 func buildNATPMPMap(internalPort, suggestedPort uint16, lifetime uint32) []byte {
@@ -84,7 +84,7 @@ func parseNATPMPMap(b []byte, internalPort uint16) (external uint16, lifetime ui
 	if binary.BigEndian.Uint16(b[8:10]) != internalPort {
 		return 0, 0, false, nil
 	}
-	return binary.BigEndian.Uint16(b[10:12]), binary.BigEndian.Uint32(b[12:16]), true, nil
+	return binary.BigEndian.Uint16(b[10:12]), binary.BigEndian.Uint32(b[12:16]), true, nil //nolint:gosec // G602: natpmpHeader checked the length of b
 }
 
 // natpmpProbe is a gateway that answered the external address request, the
@@ -124,8 +124,8 @@ type natpmpMapping struct {
 	open     opener
 	server   netip.AddrPort
 	client   netip.Addr
-	port     uint16 // internal port
 	external netip.AddrPort
+	port     uint16 // internal port
 	lifetime uint32 // requested lifetime, seconds
 }
 

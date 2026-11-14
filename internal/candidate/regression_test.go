@@ -19,7 +19,7 @@ import (
 func readying(t *testing.T, m *Manager, base time.Time, loc, rem netip.AddrPort) time.Time {
 	t.Helper()
 	m.Success(base, loc, rem, protocol.FamilyUDP4, 40*time.Millisecond)
-	for ms := 0; ms <= 400; ms++ {
+	for ms := range 401 {
 		now := base.Add(time.Duration(ms) * time.Millisecond)
 		for _, a := range m.Tick(now) {
 			if a.Kind == SendNominate && m.Phase() == PhaseNominating {

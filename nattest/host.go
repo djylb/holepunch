@@ -36,16 +36,16 @@ type Host struct {
 	prefixes []netip.Prefix
 	inert    bool // created after Network.Close
 
-	mu        sync.RWMutex           // guards the fields below
-	ports     [2]map[uint16]*binding // [0] IPv4, [1] IPv6
-	conns     map[*conn]struct{}
-	pipes     map[*PipeConn]struct{}
-	rng       *rand.Rand // ephemeral ports
-	bindFail  map[string]*failRule
-	writeFail map[string]*failRule
+	anyWriteFail atomic.Bool            // len(writeFail) > 0, read without mu on every write
+	mu           sync.RWMutex           // guards the fields below
+	ports        [2]map[uint16]*binding // [0] IPv4, [1] IPv6
+	conns        map[*conn]struct{}
+	pipes        map[*PipeConn]struct{}
+	rng          *rand.Rand // ephemeral ports
+	bindFail     map[string]*failRule
+	writeFail    map[string]*failRule
 
-	anyWriteFail atomic.Bool // len(writeFail) > 0, read without mu on every write
-	stats        hostCounters
+	stats hostCounters
 }
 
 // binding is what is bound to one port of one family: a wildcard socket, or

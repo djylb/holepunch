@@ -141,8 +141,8 @@ func roundInput(cl api.Classification, initTr, respTr protocol.Traits, round int
 
 // chain runs the planner for up to n rounds, feeding each decision's actual
 // granted Budget back into the next round's Prev (so the escalation guard sees
-// the real class). class is the RoundClass to report for each round.
-func chain(p DefaultPlanner, cl api.Classification, a, b protocol.Traits, n int, allowExtreme bool, class api.RoundClass, mut func(*api.RoundInput)) []api.RoundDecision {
+// the real class). Every round reports api.RoundNoContact.
+func chain(p DefaultPlanner, cl api.Classification, a, b protocol.Traits, n int, allowExtreme bool, mut func(*api.RoundInput)) []api.RoundDecision {
 	var prev []api.RoundOutcome
 	var out []api.RoundDecision
 	for round := 1; round <= n; round++ {
@@ -157,7 +157,7 @@ func chain(p DefaultPlanner, cl api.Classification, a, b protocol.Traits, n int,
 		if dec.Stop != "" {
 			break
 		}
-		prev = append(prev, api.RoundOutcome{Round: round, Variant: dec.Variant, Class: class, Rescue: dec.Rescue, Budget: dec.Budget})
+		prev = append(prev, api.RoundOutcome{Round: round, Variant: dec.Variant, Class: api.RoundNoContact, Rescue: dec.Rescue, Budget: dec.Budget})
 		if dec.Final {
 			break
 		}

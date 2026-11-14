@@ -105,7 +105,7 @@ func TestPredictSeveralSteps(t *testing.T) {
 // The consecutive-run <= 3 constraint is HARD, including dense small sets
 // (predict step 1 with narrow spans, and pools whose size equals the count).
 func TestConsecutiveRunDenseHard(t *testing.T) {
-	for s := 0; s < iterations(5000); s++ {
+	for s := range iterations(5000) {
 		seed := [8]byte{byte(s), byte(s >> 8), byte(s >> 16), 7}
 		for _, span := range []int{4, 5, 6, 7, 8, 9, 12, 16, 32, 48} {
 			p := ExpandPredict(40000, []int16{1}, span, ExpandInput{Seed: seed})

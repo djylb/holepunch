@@ -224,12 +224,13 @@ func (s *Server) open(g *life.Group, name, network string, laddr netip.AddrPort,
 	if !g.Own(name, pc) {
 		return nil, 0, errServerClosed
 	}
-	if perr := life.Safe("natprobe/listen", func() {
+	perr := life.Safe("natprobe/listen", func() {
 		if rb, ok := pc.(interface{ SetReadBuffer(int) error }); ok && readBuffer > 0 {
 			_ = rb.SetReadBuffer(readBuffer)
 		}
 		port = netaddr.AddrPortOf(pc.LocalAddr()).Port()
-	}); perr != nil {
+	})
+	if perr != nil {
 		if g.Disown(pc) {
 			_ = life.Safe("natprobe/close-failed", func() { _ = pc.Close() })
 		}

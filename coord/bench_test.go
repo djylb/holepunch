@@ -66,6 +66,7 @@ func park(tb testing.TB, c *Coordinator, n int) []parkedSession {
 }
 
 func ctxTB(tb testing.TB) context.Context {
+	tb.Helper()
 	c, cancel := context.WithTimeout(context.Background(), testkit.WaitBound(tb))
 	tb.Cleanup(cancel)
 	return c
@@ -84,6 +85,7 @@ func serverReads(ps []parkedSession) (reads, deadlines int64) {
 }
 
 func unpark(tb testing.TB, c *Coordinator, ps []parkedSession) {
+	tb.Helper()
 	for _, p := range ps {
 		p.s.Abort(protocol.ReasonCanceled, "")
 		<-p.s.Done()
@@ -99,7 +101,8 @@ func unpark(tb testing.TB, c *Coordinator, ps []parkedSession) {
 // bounds: at most five goroutines per session on the server side (two per
 // link in controlwire and the session goroutine), one timer per session, no
 // read returning and no read deadline set while idle.
-func checkIdle(tb testing.TB, n int, idle time.Duration) (goroutinesPerSession float64, heapPerSession float64) {
+func checkIdle(tb testing.TB, n int, idle time.Duration) (goroutinesPerSession, heapPerSession float64) {
+	tb.Helper()
 	// The longest ready timeout keeps the first parked sessions from ending
 	// (and reading) while the last are parked, on a slow or loaded machine.
 	c, err := New(Config{NoObserver: true, Limits: Limits{NewSessions: Rate{PerSec: -1}, MaxPending: -1},

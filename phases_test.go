@@ -33,7 +33,7 @@ func TestStartWaitTimeout(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	fc := fakeClock(t)
-	so := newSolo(t, w, nil, func(o *Options) { o.Clock = fc })
+	so := newSolo(t, w, func(o *Options) { o.Clock = fc })
 	if err := fc.WaitPending(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestStartWaitTimeout(t *testing.T) {
 func TestVersionMismatchWritesNothing(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	if _, err := so.srvEnd.Write(rawFrame(2, byte(wiretype.PunchStart), []byte("{}"))); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestVersionMismatchWritesNothing(t *testing.T) {
 func TestControlVersionInStart(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	ps := w.startFor(so.s, so.role, testTimeouts(), nil)
 	ps.Control.Version = 2
 	body, err := json.Marshal(ps)
@@ -91,7 +91,7 @@ func TestControlVersionInStart(t *testing.T) {
 func TestInvalidStart(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	ps := w.startFor(so.s, so.role, testTimeouts(), nil)
 	ps.Token = protocol.Token{}
 	body, err := json.Marshal(ps)
@@ -116,7 +116,7 @@ func TestInvalidStart(t *testing.T) {
 func TestNoObservers(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	ps := w.startFor(so.s, so.role, testTimeouts(), nil)
 	ps.Probe.Observers = nil
 	so.open().send(ps)
@@ -135,7 +135,7 @@ func TestNoObservers(t *testing.T) {
 func TestProbeNoAnswer(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	ps := w.startFor(so.s, so.role, testTimeouts(), nil)
 	for i := range ps.Probe.Observers {
 		ps.Probe.Observers[i].Addr = netipAP("192.0.2.200", 3478+i)
@@ -156,7 +156,7 @@ func TestProbeNoAnswer(t *testing.T) {
 func TestBindFailure(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	so.host.FailBinds("", -1)
 	so.start(testTimeouts())
 	pr := so.punchResult()
@@ -170,7 +170,7 @@ func TestBindFailure(t *testing.T) {
 func TestSummaryWaitTimeout(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	to.SummaryWaitMs = 1000
 	began := time.Now()
@@ -202,7 +202,7 @@ func TestAbortBeforeSummary(t *testing.T) {
 		{protocol.RoleServer, "made_up", protocol.ReasonAbortedByServer},
 	} {
 		w := newWorld(t)
-		so := newSolo(t, w, nil, nil)
+		so := newSolo(t, w, nil)
 		so.start(testTimeouts())
 		so.report()
 		so.link.send(protocol.Abort{SessionID: so.s.sid, By: c.by, Reason: c.code, Detail: "d", RetryAfterMs: 1500})
@@ -217,7 +217,7 @@ func TestAbortBeforeSummary(t *testing.T) {
 func TestNoCommonFamily(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	so.start(to)
 	_, self := so.report()
@@ -238,7 +238,7 @@ func TestNoCommonFamily(t *testing.T) {
 func TestGoWaitTimeout(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	to.GoWaitMs = 500
 	so.start(to)
@@ -257,7 +257,7 @@ func TestGoWaitTimeout(t *testing.T) {
 func TestControlCutBeforePunching(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	so.start(testTimeouts())
 	so.report()
 	so.srvEnd.Cut()
@@ -271,7 +271,7 @@ func TestControlCutBeforePunching(t *testing.T) {
 func TestCallerClosesControl(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	so.start(testTimeouts())
 	so.report()
 	_ = so.cli.Close()
@@ -285,7 +285,7 @@ func TestCallerClosesControl(t *testing.T) {
 func TestCallerCancel(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	so.start(testTimeouts())
 	so.report()
 	so.cancel()
@@ -315,8 +315,9 @@ func TestProtocolViolations(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			w := newWorld(t)
-			so := newSolo(t, w, nil, nil)
+			so := newSolo(t, w, nil)
 			so.start(testTimeouts())
 			so.report()
 			c.do(so)
@@ -347,7 +348,7 @@ func TestGoPlanPlacement(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			w := newWorld(t)
-			so := newSolo(t, w, nil, nil)
+			so := newSolo(t, w, nil)
 			to := testTimeouts()
 			so.start(to)
 			_, self := so.report()
@@ -384,7 +385,7 @@ func TestGoPlanPlacement(t *testing.T) {
 func TestGoAnchorUpdate(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	so.start(to)
 	_, self := so.report()
@@ -437,7 +438,7 @@ func TestGoWindow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			w := newWorld(t)
-			so := newSolo(t, w, nil, nil)
+			so := newSolo(t, w, nil)
 			to := testTimeouts()
 			so.start(to)
 			_, self := so.report()
@@ -477,7 +478,7 @@ func TestGoWindow(t *testing.T) {
 func TestBadMagic(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	if _, err := so.srvEnd.Write([]byte("GET / HTTP/1.1\r\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +494,7 @@ func TestBadMagic(t *testing.T) {
 func TestPunchingSilentPeerAttribution(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	to.GoWaitMs = 500
 	so.start(to)
@@ -527,7 +528,7 @@ func TestPunchingSilentPeerAttribution(t *testing.T) {
 func TestControlCutWhilePunching(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	so.start(to)
 	_, self := so.report()
@@ -567,7 +568,7 @@ func TestControlCutWhilePunching(t *testing.T) {
 func TestAbortWhilePunching(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	so.start(to)
 	_, self := so.report()
@@ -591,7 +592,7 @@ func TestAbortWhilePunching(t *testing.T) {
 func TestAbortAfterFatalKeepsUDPBlocked(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	so.start(to)
 	_, self := so.report()

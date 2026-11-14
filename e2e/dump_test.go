@@ -57,6 +57,7 @@ const maxDumpProgress = 100
 
 // dump writes the failure file of a run and returns its path.
 func (cr *cellRun) dump(t testing.TB, violations []string, ablationName string) (string, error) {
+	t.Helper()
 	r := cr.r
 	d := failureDump{Cell: cr.c.name, Seed: cr.seed, Ablation: ablationName, Violations: violations, Metrics: cr.m}
 	if r.resOK {
@@ -100,7 +101,7 @@ func (cr *cellRun) dump(t testing.TB, violations []string, ablationName string) 
 	} else {
 		d.Network = nb.Bytes()
 	}
-	b, err := json.MarshalIndent(d, "", "  ")
+	b, err := json.MarshalIndent(d, "", "  ") //nolint:musttag // the dump keys are the Go field names
 	if err != nil {
 		return "", err
 	}
@@ -115,6 +116,7 @@ func (cr *cellRun) dump(t testing.TB, violations []string, ablationName string) 
 // dumpNote writes the failure dump of a run with violations and returns the
 // line that points to it, or why it could not be written.
 func (cr *cellRun) dumpNote(t testing.TB, violations []string, ablationName string) string {
+	t.Helper()
 	p, err := cr.dump(t, violations, ablationName)
 	if err != nil {
 		return fmt.Sprintf("failure dump: %v", err)

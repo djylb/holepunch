@@ -53,11 +53,11 @@ type Group struct {
 	cancel context.CancelCauseFunc
 
 	mu      sync.Mutex
-	closed  bool
 	running int
 	idle    chan struct{} // set by Close while goroutines run; closed by the last one to exit
 	owned   []owned
 	leaked  int
+	closed  bool
 
 	closeOnce sync.Once
 	closeDone chan struct{}
@@ -207,16 +207,16 @@ func (g *Group) shutdown(join time.Duration) error {
 	g.cancel(errClosed)
 
 	var first error
-	for i := len(list) - 1; i >= 0; i-- {
-		o := list[i]
+	for _, o := range slices.Backward(list) {
 		var err error
 		// errors.Is runs the resource's own Is and Unwrap methods: both stay
 		// inside the recover boundary.
-		if perr := Safe("close:"+o.name, func() {
+		perr := Safe("close:"+o.name, func() {
 			if err = o.c.Close(); errors.Is(err, net.ErrClosed) {
 				err = nil
 			}
-		}); perr != nil {
+		})
+		if perr != nil {
 			err = perr
 		}
 		if err != nil && first == nil {

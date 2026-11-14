@@ -26,7 +26,6 @@ type link struct {
 	conn *controlwire.Conn
 	in   chan controlwire.Frame
 	quit chan struct{} // closed by close; releases a reader blocked on in
-	once sync.Once
 
 	// Write instants of the frames that carry RTT samples, stored by
 	// the writing goroutine right before the frame is written, as session
@@ -35,16 +34,17 @@ type link struct {
 	markSummary atomic.Int64
 	markGo      [protocol.MaxRound + 1]atomic.Int64
 	markPing    [pingsPerLink + 1]atomic.Int64
+	once        sync.Once
 
 	// Guarded by the session mutex.
 	dead      bool // failed or closed: nothing more is sent or handled
+	insecure  bool
 	frames    bucket
 	assistIn  bucket
 	relayTo   bucket // peer_seen forwarded to this link
 	progress  int
 	ping      pingState
 	attachAt  time.Duration
-	insecure  bool
 	probe     *protocol.ProbeSpec // AttachOptions.Probe, normalized
 	readyFams []protocol.Family
 }

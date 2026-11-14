@@ -72,11 +72,11 @@ func TestBudgetConstants(t *testing.T) {
 }
 
 func randBudget(r *rand.Rand) Budget {
-	pick := func(max int) int {
+	pick := func(n int) int {
 		if r.IntN(4) == 0 {
 			return 0 // unset
 		}
-		return r.IntN(max) + 1
+		return r.IntN(n) + 1
 	}
 	tiers := []BirthdayTier{"", BirthdayOff, BirthdayConservative, BirthdayBalanced, BirthdayAggressive, "bogus"}
 	return Budget{

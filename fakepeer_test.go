@@ -93,9 +93,10 @@ func (p *udpPeer) send(to netip.AddrPort, h udpwire.Header, t *udpwire.TLVs) {
 	_, _ = p.conn.WriteTo(pkt, net.UDPAddrFromAddrPort(to))
 }
 
-// expect returns the next packet of type typ.
-func (p *udpPeer) expect(typ udpwire.Type, d time.Duration) (peerPkt, bool) {
-	t := time.NewTimer(d)
+// expect returns the next packet of type typ, or false when none comes
+// within five seconds.
+func (p *udpPeer) expect(typ udpwire.Type) (peerPkt, bool) {
+	t := time.NewTimer(5 * time.Second)
 	defer t.Stop()
 	for {
 		select {
@@ -119,7 +120,7 @@ func (p *udpPeer) view() protocol.PeerView {
 func soloWithPeer(t *testing.T, r protocol.Role, token func(*session) protocol.Token, to protocol.Timeouts, tweak ...func(*Options)) (*solo, *udpPeer, protocol.PeerView) {
 	t.Helper()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, func(o *Options) {
+	so := newSolo(t, w, func(o *Options) {
 		for _, f := range tweak {
 			f(o)
 		}
@@ -170,18 +171,18 @@ func TestInitiatorHandoverEvidence(t *testing.T) {
 			t.Parallel()
 			so, peer, self := soloWithPeer(t, protocol.RoleInitiator, nil, testTimeouts())
 			me := clientAddr(self)
-			pk, ok := peer.expect(udpwire.TPunch, 5*time.Second)
+			pk, ok := peer.expect(udpwire.TPunch)
 			if !ok {
 				t.Fatal("no punch")
 			}
 			peer.send(pk.from, udpwire.Header{Type: udpwire.TSuccess, Round: 1, Cand: pk.h.Cand, EchoSeq: pk.h.Seq, EchoTS: pk.h.TS},
 				&udpwire.TLVs{Observed: pk.from, HasRx: true, RxCount: 1})
-			nom, ok := peer.expect(udpwire.TNominate, 5*time.Second)
+			nom, ok := peer.expect(udpwire.TNominate)
 			if !ok {
 				t.Fatal("no nominate")
 			}
 			peer.send(nom.from, udpwire.Header{Type: udpwire.TAccept, Aux: nom.h.Aux, Cand: udpwire.NoCand}, &udpwire.TLVs{HasRx: true, RxCount: 2})
-			if _, ok := peer.expect(udpwire.TReady, 5*time.Second); !ok {
+			if _, ok := peer.expect(udpwire.TReady); !ok {
 				t.Fatal("no ready")
 			}
 			c.onRdy(peer, nom.from, nom.h.Aux)
@@ -215,13 +216,13 @@ func TestHandoverTimeout(t *testing.T) {
 	to := testTimeouts()
 	to.HandoverTimeoutMs = 800
 	so, peer, _ := soloWithPeer(t, protocol.RoleInitiator, nil, to)
-	pk, ok := peer.expect(udpwire.TPunch, 5*time.Second)
+	pk, ok := peer.expect(udpwire.TPunch)
 	if !ok {
 		t.Fatal("no punch")
 	}
 	peer.send(pk.from, udpwire.Header{Type: udpwire.TSuccess, Round: 1, Cand: pk.h.Cand, EchoSeq: pk.h.Seq, EchoTS: pk.h.TS},
 		&udpwire.TLVs{Observed: pk.from, HasRx: true, RxCount: 1})
-	nom, ok := peer.expect(udpwire.TNominate, 5*time.Second)
+	nom, ok := peer.expect(udpwire.TNominate)
 	if !ok {
 		t.Fatal("no nominate")
 	}
@@ -264,17 +265,17 @@ func TestResponderHandover(t *testing.T) {
 			for range 3 {
 				peer.send(me, udpwire.Header{Type: udpwire.TPunch, Round: 1, Cand: 1}, nil)
 			}
-			if _, ok := peer.expect(udpwire.TSuccess, 5*time.Second); !ok {
+			if _, ok := peer.expect(udpwire.TSuccess); !ok {
 				t.Fatal("no success")
 			}
 			peer.send(me, udpwire.Header{Type: udpwire.TNominate, Aux: 1, Cand: udpwire.NoCand}, nil)
-			acc, ok := peer.expect(udpwire.TAccept, 5*time.Second)
+			acc, ok := peer.expect(udpwire.TAccept)
 			if !ok || acc.h.Aux != 1 {
 				t.Fatalf("accept %+v", acc)
 			}
 			if c.by == protocol.ConfirmedByReady {
 				peer.send(me, udpwire.Header{Type: udpwire.TReady, Aux: 1, Cand: udpwire.NoCand}, nil)
-				if _, ok := peer.expect(udpwire.THandoverAck, 5*time.Second); !ok {
+				if _, ok := peer.expect(udpwire.THandoverAck); !ok {
 					t.Fatal("no handover_ack")
 				}
 			} else {
@@ -316,7 +317,7 @@ func TestPeerSeenOneWay(t *testing.T) {
 	to := testTimeouts()
 	to.GoWaitMs = 500
 	so, peer, _ := soloWithPeer(t, protocol.RoleInitiator, nil, to)
-	pk, ok := peer.expect(udpwire.TPunch, 5*time.Second)
+	pk, ok := peer.expect(udpwire.TPunch)
 	if !ok {
 		t.Fatal("no punch")
 	}
@@ -365,18 +366,18 @@ func TestReadFailedNoQuiet(t *testing.T) {
 	so, peer, _ := soloWithPeer(t, protocol.RoleInitiator, nil, to, func(o *Options) {
 		o.Network = brokenReads{o.Network, &broken}
 	})
-	pk, ok := peer.expect(udpwire.TPunch, 5*time.Second)
+	pk, ok := peer.expect(udpwire.TPunch)
 	if !ok {
 		t.Fatal("no punch")
 	}
 	peer.send(pk.from, udpwire.Header{Type: udpwire.TSuccess, Round: 1, Cand: pk.h.Cand, EchoSeq: pk.h.Seq, EchoTS: pk.h.TS},
 		&udpwire.TLVs{Observed: pk.from, HasRx: true, RxCount: 1})
-	nom, ok := peer.expect(udpwire.TNominate, 5*time.Second)
+	nom, ok := peer.expect(udpwire.TNominate)
 	if !ok {
 		t.Fatal("no nominate")
 	}
 	peer.send(nom.from, udpwire.Header{Type: udpwire.TAccept, Aux: nom.h.Aux, Cand: udpwire.NoCand}, &udpwire.TLVs{HasRx: true, RxCount: 2})
-	if _, ok := peer.expect(udpwire.TReady, 5*time.Second); !ok {
+	if _, ok := peer.expect(udpwire.TReady); !ok {
 		t.Fatal("no ready")
 	}
 	broken.Store(true)

@@ -10,7 +10,7 @@ func (ps *pass) netSelector(sel *ast.SelectorExpr) {
 	if ps.fn != nil && ps.c.netimpl[ps.fn] {
 		return
 	}
-	ps.c.report(sel.Pos(), ruleNoDirectNet, "net.%s reaches the OS network directly; go through holepunch.Network or annotate the OS implementation with //holepunch:netimpl", sel.Sel.Name)
+	ps.c.reportf(sel.Pos(), ruleNoDirectNet, "net.%s reaches the OS network directly; go through holepunch.Network or annotate the OS implementation with //holepunch:netimpl", sel.Sel.Name)
 }
 
 // reachesOSNetwork reports whether the package net identifier name opens

@@ -14,6 +14,7 @@ const maxPoll = 16 * time.Millisecond
 // slows the test down instead of failing it. Without a deadline (go test
 // -timeout 0, a benchmark or a fuzz target) it is a minute.
 func WaitBound(tb testing.TB) time.Duration {
+	tb.Helper()
 	if t, ok := tb.(interface{ Deadline() (time.Time, bool) }); ok {
 		if d, ok := t.Deadline(); ok {
 			return max(time.Until(d)*9/10, time.Second)

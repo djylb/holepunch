@@ -216,13 +216,14 @@ func (c *Conn) withdraw(f *outFrame) bool {
 	defer c.qmu.Unlock()
 	q := c.queues[inf.Prio]
 	for i, x := range q {
-		if x == f {
-			copy(q[i:], q[i+1:])
-			q[len(q)-1] = nil
-			c.queues[inf.Prio] = q[:len(q)-1]
-			c.bumpProgress()
-			return true
+		if x != f {
+			continue
 		}
+		copy(q[i:], q[i+1:])
+		q[len(q)-1] = nil
+		c.queues[inf.Prio] = q[:len(q)-1]
+		c.bumpProgress()
+		return true
 	}
 	return false
 }

@@ -99,6 +99,7 @@ func (r *rig) attach(s *Session, role protocol.Role, o ...simclient.Options) *si
 }
 
 func ctx(t *testing.T) context.Context {
+	t.Helper()
 	c, cancel := context.WithTimeout(context.Background(), waitLimit(t))
 	t.Cleanup(cancel)
 	return c
@@ -295,6 +296,7 @@ func (p *pair) waitCounters(cond func(Counters) bool) {
 
 // netPipe returns both ends of a pipe, closed at the end of the test.
 func netPipe(t *testing.T) (net.Conn, net.Conn) {
+	t.Helper()
 	a, b := net.Pipe()
 	t.Cleanup(func() {
 		_ = a.Close()
@@ -365,4 +367,7 @@ func reasonOf(err error) protocol.Reason {
 // own deadlines: 30 s at most, so that a stuck case fails quickly instead
 // of using the test binary's whole deadline, and less when that deadline
 // is closer.
-func waitLimit(t testing.TB) time.Duration { return min(testkit.WaitBound(t), 30*time.Second) }
+func waitLimit(tb testing.TB) time.Duration {
+	tb.Helper()
+	return min(testkit.WaitBound(tb), 30*time.Second)
+}

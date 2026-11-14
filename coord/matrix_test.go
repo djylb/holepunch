@@ -81,7 +81,7 @@ func TestServerFaultMatrix(t *testing.T) {
 		apply func(r *rig, p *pair, fc *faultconn.Conn)
 		want  map[State]cell
 	}{
-		{"disconnect", func(r *rig, p *pair, fc *faultconn.Conn) { _ = p.cl[0].Close() }, map[State]cell{
+		{"disconnect", func(_ *rig, p *pair, _ *faultconn.Conn) { _ = p.cl[0].Close() }, map[State]cell{
 			StateBinding:    {code: protocol.ReasonPeerOffline},
 			StateProbing:    {code: protocol.ReasonPeerOffline, abort: true},
 			StateSummarized: {code: protocol.ReasonPeerOffline, abort: true},
@@ -98,7 +98,7 @@ func TestServerFaultMatrix(t *testing.T) {
 			StatePunching:   {code: protocol.ReasonControlInterrupted, abort: true},
 			StateConfirming: {success: true},
 		}},
-		{"malformed", func(r *rig, p *pair, fc *faultconn.Conn) {
+		{"malformed", func(r *rig, p *pair, _ *faultconn.Conn) {
 			nc, err := releaseIdle(r.t, p.cl[0])
 			if err != nil {
 				r.t.Fatal(err)
@@ -113,7 +113,7 @@ func TestServerFaultMatrix(t *testing.T) {
 			StatePunching:   {code: protocol.ReasonControlInterrupted, abort: true},
 			StateConfirming: {success: true},
 		}},
-		{"garbage", func(r *rig, p *pair, fc *faultconn.Conn) {
+		{"garbage", func(r *rig, p *pair, _ *faultconn.Conn) {
 			nc, err := releaseIdle(r.t, p.cl[0])
 			if err != nil {
 				r.t.Fatal(err)
@@ -127,7 +127,7 @@ func TestServerFaultMatrix(t *testing.T) {
 			StatePunching:   {code: protocol.ReasonProtocolViolation, abort: true},
 			StateConfirming: {success: true},
 		}},
-		{"bad origin", func(r *rig, p *pair, fc *faultconn.Conn) {
+		{"bad origin", func(r *rig, p *pair, _ *faultconn.Conn) {
 			send(r.t, p.cl[0], protocol.Progress{SessionID: "someone-else", Role: protocol.RoleInitiator, Stage: "x"})
 		}, map[State]cell{
 			StateBinding:    {code: protocol.ReasonProtocolViolation},
@@ -136,14 +136,14 @@ func TestServerFaultMatrix(t *testing.T) {
 			StatePunching:   {code: protocol.ReasonProtocolViolation, abort: true},
 			StateConfirming: {success: true},
 		}},
-		{"close", func(r *rig, p *pair, fc *faultconn.Conn) { _ = r.c.Close() }, map[State]cell{
+		{"close", func(r *rig, _ *pair, _ *faultconn.Conn) { _ = r.c.Close() }, map[State]cell{
 			StateBinding:    {code: protocol.ReasonServerShutdown},
 			StateProbing:    {code: protocol.ReasonServerShutdown, abort: true},
 			StateSummarized: {code: protocol.ReasonServerShutdown, abort: true},
 			StatePunching:   {code: protocol.ReasonServerShutdown},
 			StateConfirming: {success: true},
 		}},
-		{"abort", func(r *rig, p *pair, fc *faultconn.Conn) { p.s.Abort(protocol.ReasonCanceled, "x") }, map[State]cell{
+		{"abort", func(_ *rig, p *pair, _ *faultconn.Conn) { p.s.Abort(protocol.ReasonCanceled, "x") }, map[State]cell{
 			StateBinding:    {code: protocol.ReasonCanceled},
 			StateProbing:    {code: protocol.ReasonCanceled, abort: true},
 			StateSummarized: {code: protocol.ReasonCanceled, abort: true},
@@ -281,13 +281,13 @@ func TestStalledRearmsFromNow(t *testing.T) {
 	}
 }
 
-// panickyErr is a connection's write error whose Is and As methods panic:
+// panickyError is a connection's write error whose Is and As methods panic:
 // examining it runs caller code.
-type panickyErr struct{}
+type panickyError struct{}
 
-func (panickyErr) Error() string   { return "panicky" }
-func (panickyErr) Is(_ error) bool { panic("is") }
-func (panickyErr) As(_ any) bool   { panic("as") }
+func (panickyError) Error() string   { return "panicky" }
+func (panickyError) Is(_ error) bool { panic("is") }
+func (panickyError) As(_ any) bool   { panic("as") }
 
 // TestPanickyConnError: a link whose connection fails with an error that
 // panics when examined is lost like any other — peer_offline, the other side
@@ -296,7 +296,7 @@ func (panickyErr) As(_ any) bool   { panic("as") }
 func TestPanickyConnError(t *testing.T) {
 	r := newRig(t)
 	p, fc := r.matrixPair(StateProbing)
-	fc.FailWrites(panickyErr{})
+	fc.FailWrites(panickyError{})
 	pingNow(r, p)
 	if a := expectAbort(t, p.cl[1]); a.By != protocol.RoleInitiator || a.Reason != protocol.ReasonPeerOffline {
 		t.Fatalf("abort %+v", a)

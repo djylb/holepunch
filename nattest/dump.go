@@ -27,9 +27,9 @@ var evNames = [...]string{"", "send", "nat_out", "nat_in", "hairpin", "deliver",
 // packet, which is recycled.
 type logEvent struct {
 	t        time.Duration
-	kind     evKind
 	at       string // host, NAT or "core"
 	src, dst netip.AddrPort
+	kind     evKind
 	size     int32
 	ttl      int16
 	b0       int16 // first payload byte, -1 if empty

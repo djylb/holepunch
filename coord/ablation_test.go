@@ -183,7 +183,7 @@ func TestProbeSpecSources(t *testing.T) {
 	calls := 0
 	r := newRig(t, func(c *Config) {
 		c.DefaultProbe = def
-		c.Probe = func(role protocol.Role, opts *SessionOptions) (protocol.ProbeSpec, error) {
+		c.Probe = func(_ protocol.Role, opts *SessionOptions) (protocol.ProbeSpec, error) {
 			calls++
 			switch opts.Labels["probe"] {
 			case "fail":

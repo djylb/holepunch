@@ -109,7 +109,7 @@ func (r *rig) register(t *testing.T, id string) (*Host, *signal) {
 
 // link returns the session end of a control link whose client end is
 // drained, so that the coordinator's writes never block.
-func link(t *testing.T) (server net.Conn, client net.Conn) {
+func link(t *testing.T) net.Conn {
 	t.Helper()
 	a, b := net.Pipe()
 	go func() { _, _ = io.Copy(io.Discard, b) }()
@@ -117,7 +117,7 @@ func link(t *testing.T) (server net.Conn, client net.Conn) {
 		_ = a.Close()
 		_ = b.Close()
 	})
-	return a, b
+	return a
 }
 
 var insecure = coord.AttachOptions{Security: protocol.ControlSecurityInsecureForTesting}
@@ -177,8 +177,8 @@ func TestOpenJoinAttach(t *testing.T) {
 		t.Fatalf("pending %d", snap.Pending)
 	}
 
-	dial, _ := link(t)
-	host, _ := link(t)
+	dial := link(t)
+	host := link(t)
 	if err := s.Attach(protocol.RoleInitiator, dial, insecure); err != nil {
 		t.Fatal(err)
 	}
@@ -475,13 +475,11 @@ func TestCloseRevokesAndIsIdempotent(t *testing.T) {
 	h2, s2 := r.register(t, "b")
 	var wg sync.WaitGroup
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := r.b.Close(); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if s1.revocations() != 1 || s2.revocations() != 1 {

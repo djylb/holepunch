@@ -143,7 +143,7 @@ func TestRefreshWaitBound(t *testing.T) {
 // TestRefreshNotAsked: no registration means no refresh; nothing is sent
 // and the round goes on.
 func TestRefreshNotAsked(t *testing.T) {
-	_, s := testSession(t)
+	s := testSession(t)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := decision{ok: true}
@@ -231,7 +231,7 @@ func TestRefreshRound1Go(t *testing.T) {
 
 	g0, g1 := expect[protocol.PunchGo](t, p.cl[0]), expect[protocol.PunchGo](t, p.cl[1])
 	if g1.Plan != nil {
-		t.Fatalf("the responder's plan did not change, yet its go carries one")
+		t.Fatal("the responder's plan did not change, yet its go carries one")
 	}
 	if g0.Plan == nil {
 		t.Fatal("the initiator's go carries no anchor update")

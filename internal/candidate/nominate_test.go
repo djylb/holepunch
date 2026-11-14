@@ -32,6 +32,7 @@ type handshake struct {
 }
 
 func newHandshake(t *testing.T) *handshake {
+	t.Helper()
 	return &handshake{
 		t:     t,
 		init:  NewManager(Config{Role: protocol.RoleInitiator}),
@@ -136,7 +137,7 @@ func TestNominateResendsBeforeRoll(t *testing.T) {
 	m.Success(base, loc, a, protocol.FamilyUDP4, 40*time.Millisecond)
 	m.Success(base, loc, b, protocol.FamilyUDP4, 40*time.Millisecond)
 	sent := map[uint16]int{}
-	for ms := 0; ms <= 2000; ms++ {
+	for ms := range 2001 {
 		now := base.Add(time.Duration(ms) * time.Millisecond)
 		for _, act := range m.Tick(now) {
 			if act.Kind == SendNominate {
@@ -160,7 +161,7 @@ func TestRTONoSample(t *testing.T) {
 	loc, rem := ap("192.0.2.1:5000"), ap("203.0.113.9:40000")
 	m.Success(base, loc, rem, protocol.FamilyUDP4, 0) // no sample
 	var nomTimes []time.Duration
-	for ms := 0; ms <= 400; ms++ {
+	for ms := range 401 {
 		now := base.Add(time.Duration(ms) * time.Millisecond)
 		for _, a := range m.Tick(now) {
 			if a.Kind == SendNominate {
@@ -186,7 +187,7 @@ func TestRTOFromWinningPair(t *testing.T) {
 	m.Success(base, loc, pred, protocol.FamilyUDP4, 5*time.Millisecond)
 	m.Success(base, loc, obs, protocol.FamilyUDP4, 100*time.Millisecond)
 	var first, resend time.Duration
-	for ms := 0; ms <= 600; ms++ {
+	for ms := range 601 {
 		now := base.Add(time.Duration(ms) * time.Millisecond)
 		for _, a := range m.Tick(now) {
 			if a.Kind == SendNominate && a.Epoch == 1 {
@@ -224,7 +225,7 @@ func TestResponderNoEpochDowngrade(t *testing.T) {
 	}
 	got := r.RecvReady(base.Add(20*time.Millisecond), 2, rem, 0)
 	if count(got, Confirm) == 0 {
-		t.Errorf("ready(2) did not confirm after a stale nominate(1)")
+		t.Error("ready(2) did not confirm after a stale nominate(1)")
 	}
 }
 
@@ -233,7 +234,7 @@ func TestEpochRollNoAccept(t *testing.T) {
 	base := time.Unix(0, 0)
 	loc, rem := ap("192.0.2.1:5000"), ap("203.0.113.9:40000")
 	m.Success(base, loc, rem, protocol.FamilyUDP4, 40*time.Millisecond)
-	for ms := 0; ms <= 2000; ms++ {
+	for ms := range 2001 {
 		if m.Epoch() >= 2 {
 			break
 		}
@@ -254,7 +255,7 @@ func TestQuietHandover(t *testing.T) {
 	m.Success(base, loc, rem, protocol.FamilyUDP4, 40*time.Millisecond)
 	done := false
 	var by protocol.HandoverEvidence
-	for ms := 0; ms <= 1500; ms++ {
+	for ms := range 1501 {
 		now := base.Add(time.Duration(ms) * time.Millisecond)
 		for _, a := range m.Tick(now) {
 			if a.Kind == SendNominate && m.Phase() == PhaseNominating {
@@ -279,7 +280,7 @@ func TestHandoverTimeout(t *testing.T) {
 	loc, rem := ap("192.0.2.1:5000"), ap("203.0.113.9:40000")
 	m.Success(base, loc, rem, protocol.FamilyUDP4, 40*time.Millisecond)
 	failed := false
-	for ms := 0; ms <= 1000; ms++ {
+	for ms := range 1001 {
 		now := base.Add(time.Duration(ms) * time.Millisecond)
 		for _, a := range m.Tick(now) {
 			if a.Kind == SendNominate && m.Phase() == PhaseNominating {

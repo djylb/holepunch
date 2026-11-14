@@ -93,7 +93,7 @@ func TestHandoverZeroTouch(t *testing.T) {
 }
 
 // The server closes both control links right after the confirmations;
-// both clients still hand over over UDP.
+// both clients still hand over via UDP.
 func TestServerGoneAfterConfirm(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
@@ -298,7 +298,7 @@ func TestMultiSocketRoundAndAssists(t *testing.T) {
 func TestRoundPreemption(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	to.GoWaitMs = 500
 	so.start(to)

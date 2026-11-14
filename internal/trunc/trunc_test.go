@@ -30,7 +30,7 @@ func TestString(t *testing.T) {
 			t.Errorf("String(%q, %d) = %q, want %q", c.s, c.n, got, c.want)
 		}
 	}
-	long := strings.Repeat("日本", 100)
+	long := strings.Repeat("日本", 100) //nolint:gosmopolitan // Han text is the test data: multi-byte runes must not be cut
 	for n := range 64 {
 		got := String(long, n)
 		if len(got) > n || !utf8.ValidString(got) || !strings.HasPrefix(long, got) || n-len(got) > 2 {

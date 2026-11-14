@@ -29,6 +29,7 @@ func sealedSeeds(tb testing.TB) (peer, probe [][]byte) {
 
 // fuzzCodecs returns one codec per role of the vector session.
 func fuzzCodecs(tb testing.TB) (cs [RoleServer + 1]*Codec) {
+	tb.Helper()
 	for _, role := range []Role{RoleInitiator, RoleResponder, RoleServer} {
 		cs[role] = newCodec(tb, role)
 	}
@@ -44,6 +45,7 @@ func fuzzCodecs(tb testing.TB) (cs [RoleServer + 1]*Codec) {
 // rejected packet leaves no fields behind, whatever is accepted re-seals to
 // the same fields, and an overlapping scratch does not panic.
 func fuzzOpenCase(t *testing.T, cs [RoleServer + 1]*Codec, data []byte, mode uint8, probe bool) {
+	t.Helper()
 	recv, minLen := cs[RoleInitiator], MinPeerPacket
 	if probe {
 		recv, minLen = cs[RoleServer], MinProbePacket

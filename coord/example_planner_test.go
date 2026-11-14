@@ -42,5 +42,5 @@ func ExampleDefaultPlanner() {
 		log.Print(err)
 		return
 	}
-	defer func() { _ = co.Close() }()
+	_ = co.Close()
 }

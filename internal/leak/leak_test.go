@@ -102,7 +102,7 @@ func TestFailedAndNilListensCountAsFailed(t *testing.T) {
 		check  func(net.PacketConn, error) bool
 	}{
 		{"error", func() (net.PacketConn, error) { return nil, boom }, func(pc net.PacketConn, err error) bool { return pc == nil && errors.Is(err, boom) }},
-		{"nil", func() (net.PacketConn, error) { return nil, nil }, func(pc net.PacketConn, err error) bool { return pc == nil && err == nil }},
+		{"nil", func() (net.PacketConn, error) { return nil, nil }, func(pc net.PacketConn, err error) bool { return pc == nil && err == nil }}, //nolint:nilnil // a nil conn without an error is the case under test
 		{"typed nil", func() (net.PacketConn, error) { return typedNil, nil }, func(pc net.PacketConn, err error) bool {
 			u, ok := pc.(*net.UDPConn)
 			return ok && u == nil && err == nil

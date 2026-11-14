@@ -40,7 +40,7 @@ func ValidName(s string) bool {
 	if s == "" || len(s) > MaxNameLen {
 		return false
 	}
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		if !isAlnum(c) && c != '.' && c != '_' && c != '-' {
 			return false
@@ -68,7 +68,7 @@ func checkSessionID(field, s string) error {
 	if s == "" || len(s) > MaxNameLen {
 		return invalid(field, "want 1..%d bytes", MaxNameLen)
 	}
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if c := s[i]; !isAlnum(c) && c != '_' && c != '-' {
 			return invalid(field, "want [A-Za-z0-9_-]")
 		}
@@ -88,7 +88,7 @@ func checkSecret(field, s string, required bool) error {
 	if len(s) > MaxSecretLen {
 		return invalid(field, "%d bytes > %d", len(s), MaxSecretLen)
 	}
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if s[i] <= ' ' || s[i] > '~' {
 			return invalid(field, "want printable ASCII without spaces")
 		}
@@ -146,7 +146,7 @@ func checkCode(field string, c Code) error {
 		return invalid(field, "want [a-z][a-z0-9_]{0,31}")
 	}
 	for i := 1; i < len(s); i++ {
-		if ch := s[i]; !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '_') {
+		if ch := s[i]; (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '_' {
 			return invalid(field, "want [a-z][a-z0-9_]{0,31}")
 		}
 	}

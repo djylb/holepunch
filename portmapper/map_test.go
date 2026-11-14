@@ -64,7 +64,7 @@ func TestMapNATPMPWhenPCPUnsupported(t *testing.T) {
 	if info.Method != protocol.PortMapNATPMP || info.External != netip.AddrPortFrom(gw.ext, portOf(pc)) || info.Lease != 2*time.Minute {
 		t.Fatalf("Map() = %+v", info)
 	}
-	waitPending(t, fc, 1)
+	waitPending(t, fc)
 	fc.Advance(time.Minute) // half of the granted 120 s
 	testkit.WaitFor(t, "NAT-PMP renewal", func() bool { return gw.counts().natRenews == 1 })
 	if err := release(); err != nil {
@@ -105,7 +105,7 @@ func TestMapUPnPVariants(t *testing.T) {
 			if info != want {
 				t.Fatalf("Map() = %+v, want %+v", info, want)
 			}
-			waitPending(t, fc, 1)
+			waitPending(t, fc)
 			fc.Advance(time.Minute)
 			testkit.WaitFor(t, "UPnP renewal", func() bool { _, r, _, _ := igd.counts(); return r == 1 })
 			if err := release(); err != nil {
@@ -522,7 +522,7 @@ func TestMapListenPacketContract(t *testing.T) {
 		listen func() (net.PacketConn, error)
 		want   error
 	}{
-		{"nil conn without error", func() (net.PacketConn, error) { return nil, nil }, errNoConn},
+		{"nil conn without error", func() (net.PacketConn, error) { return nil, nil }, errNoConn}, //nolint:nilnil // a nil conn without an error is the case under test
 		{"typed nil conn", func() (net.PacketConn, error) { return (*net.UDPConn)(nil), nil }, errNoConn},
 		{"conn with error", func() (net.PacketConn, error) {
 			c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})

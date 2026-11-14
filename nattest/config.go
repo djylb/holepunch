@@ -244,13 +244,13 @@ type NATConfig struct {
 
 	Mapping   Mapping
 	Filtering Filtering
+	// PortRange bounds the external ports; the default is [1024, 65535].
+	// Calibration tests shrink it, for example to 1024 ports.
+	PortRange [2]uint16
 	PortAlloc PortAlloc
 	// PortStep is the step of Sequential and PreserveThenSequential; it may be
 	// negative. The default is 1; 2 models a NAT that keeps the port parity.
 	PortStep int
-	// PortRange bounds the external ports; the default is [1024, 65535].
-	// Calibration tests shrink it, for example to 1024 ports.
-	PortRange [2]uint16
 	// PortNoisePPS is the rate of a Poisson process of other subscribers
 	// behind the same NAT that consume external ports: it advances the
 	// Sequential cursor and occupies ports for MappingTimeout, which is what
@@ -266,12 +266,12 @@ type NATConfig struct {
 
 	// Hairpin loops packets sent to the NAT's own external endpoints back
 	// into the LAN, with the sender's external endpoint as source.
-	Hairpin bool
+	Hairpin    bool
+	ExitPolicy ExitPolicy
 	// ExternalIPs are the external addresses of the translated families. When
 	// empty, each translated family gets one automatic address; with more
 	// than one address, ExitPolicy picks per mapping.
 	ExternalIPs []netip.Addr
-	ExitPolicy  ExitPolicy
 	// MaxMappings bounds the mapping table; the least recently used mapping
 	// is evicted when it is full. It also bounds the flows that admitted
 	// inbound packets open on one endpoint-dependent mapping. The default is

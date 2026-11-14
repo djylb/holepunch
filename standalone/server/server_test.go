@@ -185,11 +185,11 @@ func (r *rig) register2(t *testing.T) {
 	expect[*proto.Registered](t, a)
 }
 
-// register registers a host and returns its link.
-func (r *rig) register(id string) (net.Conn, *proto.Registered) {
+// register registers the host "office" and returns its link.
+func (r *rig) register() (net.Conn, *proto.Registered) {
 	r.t.Helper()
 	c := r.dial()
-	send(r.t, c, &proto.Register{HostID: id, AuthToken: token})
+	send(r.t, c, &proto.Register{HostID: "office", AuthToken: token})
 	return c, expect[*proto.Registered](r.t, c)
 }
 
@@ -197,7 +197,7 @@ func (r *rig) register(id string) (net.Conn, *proto.Registered) {
 // SessionInfo and carry punch_start next.
 func TestFlow(t *testing.T) {
 	r := newRig(t, nil)
-	hl, regd := r.register("office")
+	hl, regd := r.register()
 	if regd.Credential == "" || regd.HeartbeatMs != uint32(DefaultHeartbeat/time.Millisecond) {
 		t.Fatalf("registered %+v", regd)
 	}
@@ -269,7 +269,7 @@ func TestAuthorization(t *testing.T) {
 	if st := r.s.Stats(); st.Panics != 1 || st.Refused != 5 {
 		t.Fatalf("stats %+v", st)
 	}
-	r.register("office")
+	r.register()
 	mu.Lock()
 	defer mu.Unlock()
 	if len(seen) != 3 {
@@ -291,7 +291,7 @@ func TestNoToken(t *testing.T) {
 
 func TestRefusals(t *testing.T) {
 	r := newRig(t, nil)
-	r.register("office")
+	r.register()
 	cases := []struct {
 		m    proto.Message
 		code proto.Code
@@ -325,7 +325,7 @@ func TestHeartbeats(t *testing.T) {
 			}
 		}
 	})
-	hl, regd := r.register("office")
+	hl, regd := r.register()
 	if regd.HeartbeatMs != 1000 {
 		t.Fatalf("heartbeat %d", regd.HeartbeatMs)
 	}
@@ -356,7 +356,7 @@ func TestHeartbeats(t *testing.T) {
 // TestLinkProtocolError: anything but heartbeats and reports ends a link.
 func TestLinkProtocolError(t *testing.T) {
 	r := newRig(t, nil)
-	hl, _ := r.register("office")
+	hl, _ := r.register()
 	send(t, hl, &proto.Open{HostID: "x"})
 	testkit.WaitFor(t, "the host to leave the broker", func() bool { return len(r.b.Snapshot().Hosts) == 0 })
 }
@@ -365,7 +365,7 @@ func TestLinkProtocolError(t *testing.T) {
 // over and the server closes the old link.
 func TestTakeoverRevokesLink(t *testing.T) {
 	r := newRig(t, nil)
-	old, regd := r.register("office")
+	old, regd := r.register()
 	c := r.dial()
 	send(t, c, &proto.Register{HostID: "office", AuthToken: token, Credential: regd.Credential})
 	expect[*proto.Registered](t, c)
@@ -477,7 +477,7 @@ func TestServeListenerError(t *testing.T) {
 
 func TestMaxConns(t *testing.T) {
 	r := newRig(t, func(c *Config) { c.MaxConns = 1 })
-	r.register("office")
+	r.register()
 	a, b := net.Pipe()
 	defer func() { _ = a.Close() }()
 	if err := r.s.ServeConn(b); !errors.Is(err, ErrBusy) {

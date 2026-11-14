@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 	"time"
@@ -104,7 +105,7 @@ func datagramOver(src, dst nattest.Conn, p holepunch.Path) error {
 			if err != nil {
 				break
 			}
-			if string(buf[:n]) == string(msg) {
+			if bytes.Equal(buf[:n], msg) {
 				return nil
 			}
 		}

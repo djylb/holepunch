@@ -189,44 +189,52 @@ func TestMessageViolations(t *testing.T) {
 		do     func(t *testing.T, p *pair)
 	}{
 		{"bad json", "", func(t *testing.T, p *pair) {
+			t.Helper()
 			_ = p.cl[0].SendFrame(ctx(t), wiretype.ProbeReport, []byte("{not json"))
 		}},
 		{"session", "session_mismatch", func(t *testing.T, p *pair) {
+			t.Helper()
 			rep := simclient.Report(*p.starts[0], 1, "", fam(0, simclient.OpenTraits))
 			rep.SessionID = "other"
 			send(t, p.cl[0], &rep)
 		}},
 		{"role", "role_mismatch", func(t *testing.T, p *pair) {
+			t.Helper()
 			rep := simclient.Report(*p.starts[0], 1, "", fam(0, simclient.OpenTraits))
 			rep.Role = protocol.RoleResponder
 			send(t, p.cl[0], &rep)
 		}},
-		{"duplicate report", detailDuplicate, func(t *testing.T, p *pair) {
+		{"duplicate report", detailDuplicate, func(_ *testing.T, p *pair) {
 			p.report(0)
 			p.report(0)
 		}},
 		{"early ready", detailUnexpected, func(t *testing.T, p *pair) {
+			t.Helper()
 			send(t, p.cl[0], &protocol.PunchReady{SessionID: p.s.ID(), Role: protocol.RoleInitiator,
 				Families: []protocol.FamilyReady{{Family: protocol.FamilyUDP4, Sockets: 1}}})
 		}},
 		{"early round_result", detailUnexpected, func(t *testing.T, p *pair) {
+			t.Helper()
 			rr := simclient.RoundEnd(p.s.ID(), protocol.RoleInitiator, 1, protocol.RoundWindowEnd)
 			send(t, p.cl[0], &rr)
 		}},
 		{"early success", detailUnexpected, func(t *testing.T, p *pair) {
+			t.Helper()
 			ok := simclient.Success(p.s.ID(), protocol.RoleInitiator, p.path(0, 1))
 			send(t, p.cl[0], &ok)
 		}},
-		{"report after summary", detailUnexpected, func(t *testing.T, p *pair) {
+		{"report after summary", detailUnexpected, func(_ *testing.T, p *pair) {
 			p.summaries()
 			p.report(0)
 		}},
 		{"duplicate ready", detailDuplicate, func(t *testing.T, p *pair) {
+			t.Helper()
 			sums := p.summaries()
 			send(t, p.cl[0], simclient.Ready(sums[0], protocol.RoleInitiator, 1))
 			send(t, p.cl[0], simclient.Ready(sums[0], protocol.RoleInitiator, 1))
 		}},
 		{"future round", "round", func(t *testing.T, p *pair) {
+			t.Helper()
 			p.punching()
 			rr := simclient.RoundEnd(p.s.ID(), protocol.RoleInitiator, 3, protocol.RoundWindowEnd)
 			send(t, p.cl[0], &rr)

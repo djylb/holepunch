@@ -129,11 +129,11 @@ func TestCtlCause(t *testing.T) {
 	}
 }
 
-// panicAs is a caller's error whose As method panics.
-type panicAs struct{}
+// panicAsError is a caller's error whose As method panics.
+type panicAsError struct{}
 
-func (panicAs) Error() string { return "caller cause" }
-func (panicAs) As(_ any) bool { panic("caller As") }
+func (panicAsError) Error() string { return "caller cause" }
+func (panicAsError) As(_ any) bool { panic("caller As") }
 
 // The caller's cancellation cause is the caller's code: a panic in its
 // methods while the cause is classified fails the session as internal, and
@@ -141,10 +141,10 @@ func (panicAs) As(_ any) bool { panic("caller As") }
 func TestCallerCausePanicsInClassify(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	so.start(testTimeouts())
 	so.report()
-	so.stop(panicAs{})
+	so.stop(panicAsError{})
 	e := so.wantError(so.result(5*time.Second), protocol.ReasonInternal)
 	if e.Detail != "panic:finish.classify" || e.Diagnostics == nil {
 		t.Fatalf("error %+v", e)

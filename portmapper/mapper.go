@@ -57,8 +57,8 @@ type Mapper struct {
 	cleanup     context.Context
 	stopCleanup context.CancelFunc
 
-	closeOnce sync.Once
 	closeErr  error
+	closeOnce sync.Once
 
 	mu     sync.Mutex
 	closed bool

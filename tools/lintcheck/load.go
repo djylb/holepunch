@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
@@ -11,7 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -66,7 +67,7 @@ func findModuleRoot(dir string) (string, error) {
 }
 
 func readModulePath(gomod string) (string, error) {
-	f, err := os.Open(gomod)
+	f, err := os.Open(gomod) //nolint:gosec // G304: gomod is the go.mod of the module being checked
 	if err != nil {
 		return "", err
 	}
@@ -117,7 +118,7 @@ func loadModule(root string) (*module, error) {
 		if err != nil {
 			return err
 		}
-		if p != nil {
+		if p.err != nil || len(p.files) > 0 || len(p.tests) > 0 { // a directory without Go files is no package
 			m.pkgs = append(m.pkgs, p)
 		}
 		return nil
@@ -125,7 +126,7 @@ func loadModule(root string) (*module, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(m.pkgs, func(i, j int) bool { return m.pkgs[i].rel < m.pkgs[j].rel })
+	slices.SortFunc(m.pkgs, func(a, b *pkg) int { return cmp.Compare(a.rel, b.rel) })
 	return m, nil
 }
 
@@ -156,7 +157,7 @@ func (m *module) loadPackage(dir string) (*pkg, error) {
 		}
 		af, err := parser.ParseFile(m.fset, filepath.Join(dir, name), nil, parser.ParseComments|parser.SkipObjectResolution)
 		if err != nil {
-			return &pkg{dir: dir, rel: p.rel, path: p.path, library: p.library, err: err}, nil
+			return &pkg{dir: dir, rel: p.rel, path: p.path, library: p.library, err: err}, nil //nolint:nilerr // the parse error is the package's diagnostic (pkg.err), not a load failure
 		}
 		f := newFile(af)
 		switch {
@@ -165,9 +166,6 @@ func (m *module) loadPackage(dir string) (*pkg, error) {
 		case production(af):
 			p.files = append(p.files, f)
 		}
-	}
-	if len(p.files) == 0 && len(p.tests) == 0 {
-		return nil, nil
 	}
 	p.collectDecls()
 	return p, nil
@@ -193,7 +191,7 @@ func production(f *ast.File) bool {
 	if len(free) > 16 {
 		return true // too many to enumerate; check the file rather than skip it
 	}
-	for mask := 0; mask < 1<<len(free); mask++ {
+	for mask := range 1 << len(free) {
 		ok := expr.Eval(func(tag string) bool {
 			for i, t := range free {
 				if t == tag {

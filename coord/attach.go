@@ -49,13 +49,11 @@ type connectionStater interface {
 // has not completed one.
 const tlsHandshakeTimeout = 10 * time.Second
 
-// attachProbe normalizes AttachOptions.Probe as NewSession does a role's
-// ProbeSpec and checks that role r's punch_start stays valid with it. The
-// caller holds the role's claim, so nothing writes s.starts[r] meanwhile.
+// attachProbe normalizes the non-nil AttachOptions.Probe p as NewSession
+// does a role's ProbeSpec and checks that role r's punch_start stays valid
+// with it. The caller holds the role's claim, so nothing writes s.starts[r]
+// meanwhile.
 func (s *Session) attachProbe(r int, p *protocol.ProbeSpec) (*protocol.ProbeSpec, error) {
-	if p == nil {
-		return nil, nil
-	}
 	spec := p.Clone()
 	if spec.V == 0 {
 		spec.V = protocol.ProbeSpecVersion
@@ -123,8 +121,10 @@ func (s *Session) attach(role protocol.Role, conn net.Conn, opts AttachOptions) 
 	l.insecure = insecure
 	var fx effects
 	perr := life.Safe("coord.attach", func() {
-		if l.probe, err = s.attachProbe(r, opts.Probe); err != nil {
-			return
+		if opts.Probe != nil {
+			if l.probe, err = s.attachProbe(r, opts.Probe); err != nil {
+				return
+			}
 		}
 		if err = s.completeTLS(conn, opts.Security); err == nil {
 			fx, err = s.install(l, conn)

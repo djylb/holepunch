@@ -226,14 +226,14 @@ const (
 )
 
 // slowCtlExtra is the latency the slow-control cells inject beyond the
-// suite's reference links (control ≤ ctlMax one way, UDP one way
-// ≤ two uplinks of uplinkMax): the slower control link on each of the five
+// suite's reference links (control ≤ ctlHigh one way, UDP one way
+// ≤ two uplinks of uplinkHigh): the slower control link on each of the five
 // legs before the first packet (punch_start, report, summary, ready, go),
 // and the slower UDP path on each of the four UDP round trips (two probe
 // exchanges, nominate/accept, ready/ack). The cell's time bound adds it to
 // the base + 1 s; the "+1 s" alone is below
 // the physical floor of these cells (about 2.4 s).
-const slowCtlExtra = 5*(slowCtlSlow-ctlMax) + 4*2*(2*slowUplink+slowCore-2*uplinkMax)
+const slowCtlExtra = 5*(slowCtlSlow-ctlHigh) + 4*2*(2*slowUplink+slowCore-2*uplinkHigh)
 
 // single builds two clients behind one NAT each.
 func single(a, b func() nattest.NATConfig) func(*world) [2]*side {
@@ -633,7 +633,7 @@ func upstreamPair(hairpin, pmap bool) func(*world) [2]*side {
 	return func(w *world) [2]*side {
 		c := nattest.CGNAT(profPRC(), profFC())
 		c[0].Hairpin = hairpin
-		c[0].Uplink = nattest.LinkConfig{Delay: w.delay(uplinkMin, uplinkMax)}
+		c[0].Uplink = nattest.LinkConfig{Delay: w.delay(uplinkLow, uplinkHigh)}
 		carrier := w.n.NAT(c[0])
 		var out [2]*side
 		for i := range out {

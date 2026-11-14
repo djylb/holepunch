@@ -616,7 +616,7 @@ func shapeBytes(socks []nattest.SocketStats) []string {
 		if !slices.Contains(shapePurposes, s.Purpose) {
 			continue
 		}
-		for b, n := range s.FirstByteHistogram {
+		for b, n := range &s.FirstByteHistogram {
 			hist[b] += n
 			if n > 0 && (b < udpwire.B0Min || b > udpwire.B0Max) {
 				out = append(out, fmt.Sprintf("socket %v (%s): %d packets with first byte %#x outside [%#x, %#x]",

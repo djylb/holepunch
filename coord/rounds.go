@@ -217,7 +217,7 @@ func (s *Session) startRoundLocked(now time.Duration) effects {
 	s.rearmLocked(now)
 	s.c.emit(Event{Kind: EvGo, At: s.at(now), SessionID: s.id, Round: cur.n, Labels: s.labels, Data: GoData{
 		Delay: a.delay, RTT: a.rtt, Variant: cur.name, Budget: cur.class, Granted: cur.granted,
-		Rescue: cur.rescue, Sandwich: sandwichFamilies(cur), Eager: cur.n == 1 && !(st.ready[0] && st.ready[1]),
+		Rescue: cur.rescue, Sandwich: sandwichFamilies(cur), Eager: cur.n == 1 && (!st.ready[0] || !st.ready[1]),
 	}})
 	return fx
 }

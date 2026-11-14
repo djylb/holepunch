@@ -73,7 +73,7 @@ func (f *fixture) primary(observed ...string) {
 	}
 }
 
-func (f *fixture) filter(obs uint8, extraDeclared, extraSeen, altDeclared, altSeen uint8) {
+func (f *fixture) filter(obs, extraDeclared, extraSeen, altDeclared, altSeen uint8) {
 	f.t.AddFilter(FilterEvidence{Socket: v4P, Observer: obs, ExtraDeclared: extraDeclared, ExtraSeen: extraSeen,
 		AltDeclared: altDeclared, AltSeen: altSeen})
 }

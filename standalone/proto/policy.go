@@ -85,7 +85,7 @@ func validHostName(h string) bool {
 	if len(h) > 253 {
 		return false
 	}
-	for i := 0; i < len(h); i++ {
+	for i := range len(h) {
 		c := h[i]
 		if !isAlnum(c) && c != '-' && c != '_' && c != '.' {
 			return false

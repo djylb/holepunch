@@ -92,14 +92,14 @@ func TestLowTTLHopsFromPolicy(t *testing.T) {
 	cases := []struct {
 		name          string
 		server, local []int
-		ttl           uint8
 		want          []int
+		ttl           uint8
 		caps          bool
 	}{
-		{"default set from the stage's hop", nil, nil, 7, []int{7, 4}, true},
-		{"local subset", nil, []int{4}, 7, []int{4}, true},
-		{"server set", []int{5, 9}, nil, 9, []int{9, 5}, true},
-		{"empty intersection", nil, []int{9}, 7, nil, false},
+		{name: "default set from the stage's hop", server: nil, local: nil, ttl: 7, want: []int{7, 4}, caps: true},
+		{name: "local subset", server: nil, local: []int{4}, ttl: 7, want: []int{4}, caps: true},
+		{name: "server set", server: []int{5, 9}, local: nil, ttl: 9, want: []int{9, 5}, caps: true},
+		{name: "empty intersection", server: nil, local: []int{9}, ttl: 7, want: nil, caps: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

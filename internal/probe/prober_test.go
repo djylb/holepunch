@@ -274,7 +274,8 @@ func TestSendFailures(t *testing.T) {
 	s = newSim(t, o)
 	fails := 0
 	s.writeErr = func(uint8, netip.AddrPort) error {
-		if fails++; fails == 1 {
+		fails++
+		if fails == 1 {
 			return syscall.ENETUNREACH
 		}
 		return nil

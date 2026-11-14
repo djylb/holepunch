@@ -19,7 +19,7 @@ const fuzzOps = 48
 // clients' frames, interleaved with clock steps and disconnects: no
 // panic, OnResult exactly once, everything released at the end.
 func FuzzCoordFrames(f *testing.F) {
-	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})               // report, report, ready, ready, ...
+	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})               // two reports, two readies, ...
 	f.Add([]byte{0, 1, 2, 3, 12, 13, 14, 15, 16, 17, 18, 19}) // to the confirmation
 	f.Add([]byte{0, 1, 2, 3, 20, 21, 30, 31, 40, 41, 50})
 	f.Add([]byte{60, 61, 62, 63, 64, 65, 66, 67})

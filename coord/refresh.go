@@ -30,13 +30,13 @@ import (
 
 // refreshState is an anchor refresh under way, and the round it is for.
 type refreshState struct {
-	pending bool // waiting for the probes
-	ready   bool // done waiting: the session goroutine plans the round again
+	pending bool       // waiting for the probes
+	ready   bool       // done waiting: the session goroutine plans the round again
+	want    [2][2]bool // by side and family index
 	k       int
 	gen     uint64
 	until   time.Duration // stop waiting: the latest bound still open (refreshWaitLocked)
 	cap     time.Duration // stop waiting at the latest, whatever came
-	want    [2][2]bool    // by side and family index
 	got     [2][2][2]refreshProbe
 	d       decision // the plan before the refresh, kept if nothing came
 	p       plan.Planner

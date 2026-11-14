@@ -88,7 +88,7 @@ func (c *checker) directives(p *pkg, report bool) {
 				name, rest, ok := parseDirective(cm.Text)
 				if !ok {
 					if fixed, spaced := spacedDirective(cm.Text); spaced && report {
-						c.report(cm.Pos(), ruleDirective, "a space after // makes this a plain comment, not a directive; write %s", fixed)
+						c.reportf(cm.Pos(), ruleDirective, "a space after // makes this a plain comment, not a directive; write %s", fixed)
 					}
 					continue
 				}
@@ -104,7 +104,7 @@ func (c *checker) directives(p *pkg, report bool) {
 					msg = c.registerNetImpl(p, funcs[g])
 				}
 				if msg != "" && report {
-					c.report(cm.Pos(), ruleDirective, "%s", msg)
+					c.reportf(cm.Pos(), ruleDirective, "%s", msg)
 				}
 			}
 		}

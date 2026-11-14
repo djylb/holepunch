@@ -21,12 +21,12 @@ type refineIn struct {
 // refineOut is what refining computed outside the lock.
 type refineOut struct {
 	raw          protocol.PeerView // the final report's merge without the memory: the side's evidence
-	contradicted bool              // the final report overturns a family's remembered mapping (overturns)
 	views        [2]protocol.PeerView
 	cin          plan.ClassifyInput
 	cls          plan.Classification
 	planner      plan.Planner
 	po           planOut // the strategy memory's view of the new classification (recommend)
+	contradicted bool    // the final report overturns a family's remembered mapping (overturns)
 	classified   bool
 }
 

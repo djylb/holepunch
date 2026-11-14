@@ -37,7 +37,7 @@ func tlsConfig(sess *client.Session, id *Identity) (*tls.Config, error) {
 	}
 	conf, err := id.TLSConfig(res)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTransport, err)
+		return nil, fmt.Errorf("%w: %w", ErrTransport, err)
 	}
 	return conf, nil
 }

@@ -94,7 +94,7 @@ func (rt *runtime) corrections() []protocol.TraitsUpdate {
 
 // counters is the session total.
 func (rt *runtime) counters() Counters {
-	var parts []Counters
+	parts := make([]Counters, 0, len(rt.fams))
 	for _, fs := range rt.fams {
 		parts = append(parts, fs.cnt.snapshot())
 	}

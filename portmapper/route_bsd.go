@@ -41,6 +41,8 @@ func systemGateway() (netip.Addr, error) {
 	// RouteRIB is deprecated in favour of golang.org/x/net/route, which the
 	// module does not depend on; it is frozen, and the standard library's
 	// only sysctl by MIB.
+	//nolint:staticcheck // SA1019: see above, the module must not depend on x/net
+	//lint:ignore SA1019 the module must not depend on golang.org/x/net/route; RouteRIB is frozen and is the standard library's only sysctl by MIB
 	//goland:noinspection GoDeprecation
 	rib, err := syscall.RouteRIB(syscall.NET_RT_DUMP, syscall.AF_INET)
 	if err != nil {

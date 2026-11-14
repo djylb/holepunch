@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -57,9 +58,7 @@ const maxTapEvents = 2048
 // coordinator owns it after Attach and closes it; Close closes the pipe end
 // and ends every hold.
 type tap struct {
-	pipe *nattest.PipeConn
-	// light skips decoding and logs only the milestones (load tests).
-	light  bool
+	pipe   *nattest.PipeConn
 	frames atomic.Int64
 
 	wmu  sync.Mutex // one server frame at a time; inject takes it too
@@ -79,7 +78,9 @@ type tap struct {
 	gate     chan struct{} // non-nil: reads blocked until the tap closes
 	wdl      time.Time
 
-	closed    chan struct{}
+	closed chan struct{}
+	// light skips decoding and logs only the milestones (load tests).
+	light     bool
 	closeOnce sync.Once
 }
 
@@ -92,9 +93,9 @@ func newTap(pipe *nattest.PipeConn) *tap {
 type hold struct {
 	dir       direction
 	typ       wiretype.Type
+	reachOnce sync.Once
 	pred      func(protocol.Message) bool
 	reached   chan struct{}
-	reachOnce sync.Once
 	rel       chan struct{}
 	relOnce   sync.Once
 	drop      atomic.Bool
@@ -347,7 +348,7 @@ func (t *tap) Read(b []byte) (int, error) {
 			continue
 		}
 		if t.rerr != nil {
-			if t.rerr == io.EOF && len(t.rbuf) > 0 {
+			if errors.Is(t.rerr, io.EOF) && len(t.rbuf) > 0 {
 				// a partial frame before EOF goes to the coordinator as is
 				t.ready = len(t.rbuf)
 				break

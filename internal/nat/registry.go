@@ -18,18 +18,18 @@ type Registration struct {
 // Observation is natprobe's record of one observation slot (role, socket,
 // observer).
 type Observation struct {
-	Socket, Observer uint8
-	Alt              bool           // the observer belongs to the alt (second IP) group
-	LAN              bool           // the observer is advertised on a private address: LAN evidence only
 	Observed         netip.AddrPort // latest value
 	First            netip.AddrPort // first value; ≠ Observed means drift
-	Changes          uint8          // value changes
-	Count            uint8          // accepted probes, retransmissions and keepalives included
+	FirstAt, LastAt  time.Time      // Registry clock
 	FirstSeq         uint32         // seq of the slot's first accepted probe
 	Cookie           uint32         // return-path cookie of the current Observed
-	FirstAt, LastAt  time.Time      // Registry clock
-	ExtraSent        uint8          // extra replies sent for the slot
-	AltSent          uint8          // change-IP replies sent for the slot
+	Socket, Observer uint8
+	Alt              bool  // the observer belongs to the alt (second IP) group
+	LAN              bool  // the observer is advertised on a private address: LAN evidence only
+	Changes          uint8 // value changes
+	Count            uint8 // accepted probes, retransmissions and keepalives included
+	ExtraSent        uint8 // extra replies sent for the slot
+	AltSent          uint8 // change-IP replies sent for the slot
 }
 
 // Drift is a moved mapping of a role's primary socket: the latest value of
@@ -37,9 +37,9 @@ type Observation struct {
 // the slot's first probe — a new port, or after a rebind a new IP.
 type Drift struct {
 	Family   protocol.Family
-	Observer uint8
 	Observed netip.AddrPort // the mapping now, a usable target of Family
-	Cookie   uint32         // the return-path cookie of Observed
+	Observer uint8
+	Cookie   uint32 // the return-path cookie of Observed
 }
 
 // EchoedBy reports whether the remap echo m vouches for d: the client

@@ -94,11 +94,11 @@ func TestRefreshOneProbe(t *testing.T) {
 		first     bool
 		second    bool
 		port      uint16
+		hasRate   bool
+		onAnother bool
 		at        time.Duration
 		before    int
 		after     int
-		hasRate   bool
-		onAnother bool
 	}{
 		{name: "both", first: true, second: true, port: 40003, at: r.SecondAt, before: 1, hasRate: true},
 		{name: "second only", second: true, port: 40003, at: r.SecondAt, before: 1},

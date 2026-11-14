@@ -37,7 +37,7 @@ func FuzzDecodeMessage(f *testing.F) {
 		f.Fatal(err)
 	}
 	for _, e := range manifest {
-		p, err := os.ReadFile(filepath.Join("testdata/examples", e.File))
+		p, err := os.ReadFile(filepath.Join("testdata", "examples", e.File))
 		if err != nil {
 			f.Fatal(err)
 		}

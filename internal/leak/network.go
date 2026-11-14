@@ -1,12 +1,13 @@
 package leak
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -160,7 +161,7 @@ func (t *TrackingNetwork) OpenConns() []OpenConn {
 		out = append(out, o)
 	}
 	t.mu.Unlock()
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b OpenConn) int { return cmp.Compare(a.ID, b.ID) })
 	return out
 }
 

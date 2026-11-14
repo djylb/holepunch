@@ -13,9 +13,9 @@ import (
 type sideClamp struct {
 	k, r       int // the round and the side
 	now        time.Duration
-	lim        protocol.ClassLimits // the round's class
 	families   []protocol.Family    // the classification's
 	caps       protocol.ClientCaps  // the side's
+	lim        protocol.ClassLimits // the round's class
 	sandwich   bool                 // negotiated, and the side accepted the feature
 	relayOnly  bool                 // protocol.RelayOnly
 	budgetLeft int                  // budgetLeftLocked

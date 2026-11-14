@@ -6,7 +6,6 @@ import (
 	"go/types"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -27,7 +26,7 @@ func (s lockSet) locks() []string {
 			out = append(out, k)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -465,7 +464,7 @@ func (lf *lockFlow) reportHeld(call *ast.CallExpr, held lockSet) {
 		return
 	}
 	if name := lf.ps.callbackName(call); name != "" {
-		lf.ps.c.report(call.Pos(), ruleCallbackLock, "callback %s called while holding %s (locked at %s); copy what it needs under the lock, unlock, then call", name, keys[0], lf.ps.c.where(held[keys[0]]))
+		lf.ps.c.reportf(call.Pos(), ruleCallbackLock, "callback %s called while holding %s (locked at %s); copy what it needs under the lock, unlock, then call", name, keys[0], lf.ps.c.where(held[keys[0]]))
 	}
 }
 

@@ -147,7 +147,7 @@ func TestPathConfig(t *testing.T) {
 	}
 	base := &quic.Config{
 		MaxIdleTimeout: 6 * time.Second, MaxIncomingStreams: 7,
-		GetConfigForClient: func(*quic.ClientInfo) (*quic.Config, error) { return nil, nil },
+		GetConfigForClient: func(*quic.ClientInfo) (*quic.Config, error) { return nil, nil }, //nolint:nilnil // a callback value only checked for being replaced
 	}
 	c = pathConfig(base, advice, 3*time.Second)
 	if c.MaxIdleTimeout != 6*time.Second || c.KeepAlivePeriod != 2*time.Second || c.MaxIncomingStreams != 7 || c.GetConfigForClient != nil {

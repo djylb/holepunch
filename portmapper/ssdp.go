@@ -75,7 +75,7 @@ func ssdpSearch(ctx context.Context, open opener, local, gw netip.Addr, gwPort u
 			return nil, fmt.Errorf("upnp: SSDP send: %w", sendErr)
 		}
 		var loc *url.URL
-		_, err := c.readRound(ctx, time.Now().Add(interval), buf, func(b []byte, from netip.AddrPort) (bool, error) {
+		err := c.readRound(ctx, time.Now().Add(interval), buf, func(b []byte, from netip.AddrPort) (bool, error) {
 			if gw.IsValid() && from.Addr() != gw {
 				return false, nil
 			}

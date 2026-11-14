@@ -92,6 +92,29 @@ func (k Kind) baseScore() int {
 	}
 }
 
+// Candidate is one (local, remote) pair.
+type Candidate struct {
+	Local, Remote netip.AddrPort
+	Family        protocol.Family
+	Reason        string
+	Kind          Kind
+	State         State
+	Responsive    bool
+	PeerSock      uint8
+	Described     bool
+	SuccessCount  int
+	FirstSeen     time.Time
+	LastSeen      time.Time
+	SucceededAt   time.Time
+	MinRTT        time.Duration // smallest success RTT on this pair (0 = none)
+	NomFailures   int           // epoch rolls of this pair; each doubles its rto
+	CooldownUntil time.Time
+	// Path, PeerSock and Described are the caller's description of the
+	// pair (Manager.Describe): the network it runs over and the peer's
+	// socket on it. Only the choice of extra paths reads them.
+	Path protocol.PathKind
+}
+
 // CandKind maps to the wire PathInfo.cand_kind value.
 // A candidate of unknown origin that merely responded reports as
 // peer_reflexive.
@@ -129,29 +152,6 @@ const (
 	StateConfirmed        // the pair this session confirmed
 	StateClosed           // the pair's local socket failed reading (Manager.ReadFailed); never nominated again
 )
-
-// Candidate is one (local, remote) pair.
-type Candidate struct {
-	Local, Remote netip.AddrPort
-	Family        protocol.Family
-	Kind          Kind
-	Reason        string
-	State         State
-	Responsive    bool
-	SuccessCount  int
-	FirstSeen     time.Time
-	LastSeen      time.Time
-	SucceededAt   time.Time
-	MinRTT        time.Duration // smallest success RTT on this pair (0 = none)
-	NomFailures   int           // epoch rolls of this pair; each doubles its rto
-	CooldownUntil time.Time
-	// Path, PeerSock and Described are the caller's description of the
-	// pair (Manager.Describe): the network it runs over and the peer's
-	// socket on it. Only the choice of extra paths reads them.
-	Path      protocol.PathKind
-	PeerSock  uint8
-	Described bool
-}
 
 // Score is the nomination score: base kind score plus the responsive boost.
 func (c *Candidate) Score() int {

@@ -210,9 +210,9 @@ type RoundInput struct {
 	Pair         protocol.PairFacts
 	Mode         protocol.SessionMode
 	Policy       protocol.Policy
-	AllowExtreme bool   // the coordinator allows the extreme class
 	MaxRounds    int    // rounds the session may run, the rescue round not counted
 	HandshakeMs  uint32 // the session's handshake_timeout_ms
+	AllowExtreme bool   // the coordinator allows the extreme class
 	SandwichOK   bool   // both sides negotiated the sandwich feature
 	// MemoryPromoted reports that the strategy memory moved a variant proven
 	// for the pair to the front of Order: the first round may then rise

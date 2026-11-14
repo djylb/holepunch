@@ -21,7 +21,7 @@ const fiProbeRecv = "probe.recv"
 func soloToGo(t *testing.T) *solo {
 	t.Helper()
 	w := newWorld(t)
-	so := newSolo(t, w, nil, nil)
+	so := newSolo(t, w, nil)
 	to := testTimeouts()
 	to.GoWaitMs = 500
 	so.start(to)
@@ -57,40 +57,31 @@ func wantInternal(t *testing.T, so *solo, prefix string) {
 // A panic at an injection point or in a named goroutine becomes internal
 // with the goroutine's name; nothing leaks.
 func TestFaultPanics(t *testing.T) {
+	soloStarted := func(t *testing.T) *solo {
+		t.Helper()
+		so := newSolo(t, newWorld(t), nil)
+		so.start(testTimeouts())
+		return so
+	}
 	cases := []struct {
 		point, prefix string
 		setup         func(t *testing.T) *solo
 	}{
 		{fiRoundStage, "panic:round:udp4", soloToGo},
-		{fiWaitSummary, "panic:attach", func(t *testing.T) *solo {
-			so := newSolo(t, newWorld(t), nil, nil)
-			so.start(testTimeouts())
-			return so
-		}},
+		{fiWaitSummary, "panic:attach", soloStarted},
 		{fiAssistHandle, "panic:attach", func(t *testing.T) *solo {
+			t.Helper()
 			so := soloToGo(t)
 			so.link.send(protocol.Assist{SessionID: so.s.sid, From: protocol.RoleServer, Kind: protocol.AssistPeerTargets, Round: 1,
 				Family: protocol.FamilyUDP4, Source: protocol.TargetsInject,
 				Window: &protocol.PortWindow{IP: netipAP("203.0.113.99", 0).Addr(), Lo: 4000, Hi: 4002}})
 			return so
 		}},
-		{fiReadloopPacket, "panic:udp-read", func(t *testing.T) *solo {
-			so := newSolo(t, newWorld(t), nil, nil)
-			so.start(testTimeouts())
-			return so
-		}},
+		{fiReadloopPacket, "panic:udp-read", soloStarted},
 		// the prober recovers its own panics and fails its family; with
 		// its only family failed the session carries the prober's detail
-		{fiProbeSend, "panic:probe/udp4", func(t *testing.T) *solo {
-			so := newSolo(t, newWorld(t), nil, nil)
-			so.start(testTimeouts())
-			return so
-		}},
-		{fiProbeRecv, "panic:probe/udp4", func(t *testing.T) *solo {
-			so := newSolo(t, newWorld(t), nil, nil)
-			so.start(testTimeouts())
-			return so
-		}},
+		{fiProbeSend, "panic:probe/udp4", soloStarted},
+		{fiProbeRecv, "panic:probe/udp4", soloStarted},
 	}
 	for _, c := range cases {
 		t.Run(c.point, func(t *testing.T) {
@@ -116,7 +107,7 @@ func TestFaultErrors(t *testing.T) {
 		t.Run(c.point, func(t *testing.T) {
 			disarm := faultinject.Arm(c.point, faultinject.Error(nil), 0)
 			defer disarm()
-			so := newSolo(t, newWorld(t), nil, nil)
+			so := newSolo(t, newWorld(t), nil)
 			so.start(testTimeouts())
 			so.wantFailure(so.result(10*time.Second), c.reason)
 		})
@@ -124,7 +115,7 @@ func TestFaultErrors(t *testing.T) {
 	t.Run(fiAttachReadStart, func(t *testing.T) {
 		disarm := faultinject.Arm(fiAttachReadStart, faultinject.Error(nil), 0)
 		defer disarm()
-		so := newSolo(t, newWorld(t), nil, nil)
+		so := newSolo(t, newWorld(t), nil)
 		e := so.wantError(so.result(5*time.Second), protocol.ReasonInternal)
 		if e.Diagnostics != nil {
 			t.Fatal("diagnostics before punch_start")
@@ -133,7 +124,7 @@ func TestFaultErrors(t *testing.T) {
 	t.Run(fiWaitGo, func(t *testing.T) {
 		disarm := faultinject.Arm(fiWaitGo, faultinject.Error(nil), 0)
 		defer disarm()
-		so := newSolo(t, newWorld(t), nil, nil)
+		so := newSolo(t, newWorld(t), nil)
 		so.start(testTimeouts())
 		_, self := so.report()
 		so.summary(self, fakePeer("203.0.113.99:4000"), testTimeouts())
@@ -226,7 +217,7 @@ func TestFaultHandover(t *testing.T) {
 		disarm := faultinject.Arm(fiProgressDeliver, faultinject.Panic(), 0)
 		defer disarm()
 		w := newWorld(t)
-		pr := runPair(t, w, [2]*nattest.NATConfig{prc(), prc()}, &pairScript{w: w, timeouts: testTimeouts()}, func(i int, o *Options) {
+		pr := runPair(t, w, [2]*nattest.NATConfig{prc(), prc()}, &pairScript{w: w, timeouts: testTimeouts()}, func(_ int, o *Options) {
 			o.OnProgress = func(protocol.Progress) {}
 		})
 		defer pr.closeAll()
@@ -239,7 +230,7 @@ func TestFaultHandover(t *testing.T) {
 		disarm := faultinject.Arm(fiPortmapMap, faultinject.Error(nil), 0)
 		defer disarm()
 		w := newWorld(t)
-		pr := runPair(t, w, [2]*nattest.NATConfig{prc(), prc()}, &pairScript{w: w, timeouts: testTimeouts()}, func(i int, o *Options) {
+		pr := runPair(t, w, [2]*nattest.NATConfig{prc(), prc()}, &pairScript{w: w, timeouts: testTimeouts()}, func(_ int, o *Options) {
 			o.PortMapper = &fakeMapper{ext: netipAP("198.51.100.200", 30000)}
 		})
 		defer pr.closeAll()

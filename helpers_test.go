@@ -61,15 +61,19 @@ func peerAddr(r protocol.Role, views [2]protocol.PeerView) netip.AddrPort {
 }
 
 // simHost is a public host of a fresh simulated network.
-func simHost(t testing.TB, opts ...nattest.Option) (*nattest.Network, *nattest.Host) {
+func simHost(t testing.TB) (*nattest.Network, *nattest.Host) {
 	t.Helper()
-	n := nattest.NewNetwork(opts...)
+	n := nattest.NewNetwork()
 	t.Cleanup(func() { _ = n.Close() })
-	return n, n.PublicHost(netip.IPv4Unspecified())
+	h := n.PublicHost(netip.IPv4Unspecified())
+	return n, h
 }
 
 // fakeClock returns a fake clock reporting to t.
-func fakeClock(t testing.TB) *clock.Fake { return clock.NewFake(t, time.Time{}) }
+func fakeClock(tb testing.TB) *clock.Fake {
+	tb.Helper()
+	return clock.NewFake(tb, time.Time{})
+}
 
 func netipAP(ip string, port int) netip.AddrPort {
 	return netip.AddrPortFrom(netip.MustParseAddr(ip), uint16(port))

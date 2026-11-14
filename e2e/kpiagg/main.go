@@ -24,6 +24,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -32,7 +33,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -242,11 +243,8 @@ func load(dir string) ([]kpi, error) {
 	if len(cells) == 0 {
 		return nil, fmt.Errorf("no *.kpi.json file below %s", dir)
 	}
-	sort.Slice(cells, func(i, j int) bool {
-		if cells[i].Ablation != cells[j].Ablation {
-			return cells[i].Ablation < cells[j].Ablation
-		}
-		return cells[i].Cell < cells[j].Cell
+	slices.SortFunc(cells, func(a, b kpi) int {
+		return cmp.Or(cmp.Compare(a.Ablation, b.Ablation), cmp.Compare(a.Cell, b.Cell))
 	})
 	return cells, nil
 }
@@ -285,7 +283,7 @@ func render(w io.Writer, cells []kpi, base map[string]baselineCell) {
 		for c, n := range k.Failures {
 			fails = append(fails, fmt.Sprintf("%s×%d", c, n))
 		}
-		sort.Strings(fails)
+		slices.Sort(fails)
 		pass := "yes"
 		if !k.Pass {
 			pass = "**no**"
@@ -318,7 +316,7 @@ func render(w io.Writer, cells []kpi, base map[string]baselineCell) {
 	for g := range groups {
 		names = append(names, g)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, g := range names {
 		a := groups[g]
 		p("| %s | %d | %d | %.1f%% |\n", g, a.n, a.pass, 100*a.sum/float64(a.n))
@@ -382,7 +380,7 @@ func render(w io.Writer, cells []kpi, base map[string]baselineCell) {
 			for c := range view.m {
 				names = append(names, c)
 			}
-			sort.Strings(names)
+			slices.Sort(names)
 		}
 		for _, c := range names {
 			a := view.m[c]
@@ -406,7 +404,7 @@ func renderEqualWeights(p func(string, ...any), byAbl map[string]map[string]*agg
 			names = append(names, abl)
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, abl := range names {
 		var sum float64
 		for _, a := range byAbl[abl] {

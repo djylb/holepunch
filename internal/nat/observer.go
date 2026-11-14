@@ -16,8 +16,8 @@ const maxTableObservers = 32
 
 // Observer describes one natprobe observer of the table's family.
 type Observer struct {
-	ID    uint8          // ObserverSpec.id = group*8 + port index
 	Addr  netip.AddrPort // advertised address; zero in server-side tables, which only know ids
+	ID    uint8          // ObserverSpec.id = group*8 + port index
 	Group uint8          // same group = same server public IP
 	Alt   bool           // second-IP (change-IP) group
 	Scope netaddr.Scope  // scope of the advertised address

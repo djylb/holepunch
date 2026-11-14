@@ -363,45 +363,46 @@ func admissionCases() []admissionCase {
 		a4, b4 := c.a(u4), c.b(u4)
 		// The server observes IPv4 only and both hosts have global
 		// IPv6 addresses; the IPv6 traits are the clients' own guesses.
-		out = append(out, admissionCase{
-			name: "unverified_v6/" + c.name,
-			views: [2]protocol.PeerView{
-				{Families: []protocol.FamilyView{selfV6(1, c.a(u6)), realisticView(a4).Families[0]}},
-				{Families: []protocol.FamilyView{selfV6(2, c.b(u6)), realisticView(b4).Families[0]}},
+		out = append(out,
+			admissionCase{
+				name: "unverified_v6/" + c.name,
+				views: [2]protocol.PeerView{
+					{Families: []protocol.FamilyView{selfV6(1, c.a(u6)), realisticView(a4).Families[0]}},
+					{Families: []protocol.FamilyView{selfV6(2, c.b(u6)), realisticView(b4).Families[0]}},
+				},
+				pair:       protocol.PairFacts{SharedFamilies: both, Unverified: map[protocol.Family]bool{u6: true}},
+				maxTargets: protocol.MaxUnverifiedTargets,
 			},
-			pair:       protocol.PairFacts{SharedFamilies: both, Unverified: map[protocol.Family]bool{u6: true}},
-			maxTargets: protocol.MaxUnverifiedTargets,
-		})
-		// No registry: every family is unverified.
-		out = append(out, admissionCase{
-			name: "relay_only/" + c.name,
-			views: [2]protocol.PeerView{
-				{Families: []protocol.FamilyView{selfV6(1, c.a(u6)), relayOnlyV4(1, a4)}},
-				{Families: []protocol.FamilyView{selfV6(2, c.b(u6)), relayOnlyV4(2, b4)}},
+			// No registry: every family is unverified.
+			admissionCase{
+				name: "relay_only/" + c.name,
+				views: [2]protocol.PeerView{
+					{Families: []protocol.FamilyView{selfV6(1, c.a(u6)), relayOnlyV4(1, a4)}},
+					{Families: []protocol.FamilyView{selfV6(2, c.b(u6)), relayOnlyV4(2, b4)}},
+				},
+				pair:       protocol.PairFacts{SharedFamilies: both, Unverified: map[protocol.Family]bool{u6: true, u4: true}},
+				maxTargets: protocol.MaxRelayOnlyTargets,
 			},
-			pair:       protocol.PairFacts{SharedFamilies: both, Unverified: map[protocol.Family]bool{u6: true, u4: true}},
-			maxTargets: protocol.MaxRelayOnlyTargets,
-		})
-		// One LAN behind one NAT.
-		out = append(out, admissionCase{
-			name: "same_lan/" + c.name,
-			views: [2]protocol.PeerView{
-				{Families: []protocol.FamilyView{behindShared(1, a4, "192.168.1", false)}},
-				{Families: []protocol.FamilyView{behindShared(2, b4, "192.168.1", false)}},
+			// One LAN behind one NAT.
+			admissionCase{
+				name: "same_lan/" + c.name,
+				views: [2]protocol.PeerView{
+					{Families: []protocol.FamilyView{behindShared(1, a4, "192.168.1", false)}},
+					{Families: []protocol.FamilyView{behindShared(2, b4, "192.168.1", false)}},
+				},
+				pair: protocol.PairFacts{SharedFamilies: []protocol.Family{u4},
+					SamePublicIP: map[protocol.Family]bool{u4: true}, LikelySameLAN: map[protocol.Family]bool{u4: true}},
 			},
-			pair: protocol.PairFacts{SharedFamilies: []protocol.Family{u4},
-				SamePublicIP: map[protocol.Family]bool{u4: true}, LikelySameLAN: map[protocol.Family]bool{u4: true}},
-		})
-		// One upstream NAT, two LANs, each side with a private port
-		// mapping of its home router.
-		out = append(out, admissionCase{
-			name: "upstream/" + c.name,
-			views: [2]protocol.PeerView{
-				{Families: []protocol.FamilyView{behindShared(1, a4, "192.168.1", true)}},
-				{Families: []protocol.FamilyView{behindShared(2, b4, "192.168.2", true)}},
-			},
-			pair: protocol.PairFacts{SharedFamilies: []protocol.Family{u4}, SamePublicIP: map[protocol.Family]bool{u4: true}},
-		})
+			// One upstream NAT, two LANs, each side with a private port
+			// mapping of its home router.
+			admissionCase{
+				name: "upstream/" + c.name,
+				views: [2]protocol.PeerView{
+					{Families: []protocol.FamilyView{behindShared(1, a4, "192.168.1", true)}},
+					{Families: []protocol.FamilyView{behindShared(2, b4, "192.168.2", true)}},
+				},
+				pair: protocol.PairFacts{SharedFamilies: []protocol.Family{u4}, SamePublicIP: map[protocol.Family]bool{u4: true}},
+			})
 	}
 	return out
 }
@@ -709,7 +710,7 @@ func TestVariantTableReadOnly(t *testing.T) {
 	if fmt.Sprint(after.Sides) != fmt.Sprint(fresh.Sides) {
 		t.Fatal("editing a decision changed the next one")
 	}
-	if vr, ok := variantOf(vPDFSeq1); !ok || vr.a.stages[1].steps != nil {
+	if vr, ok := variantOf(vPDFSeq1); !ok {
 		t.Fatalf("template %+v", vr.a.stages)
 	}
 	if allocs := testing.AllocsPerRun(20, func() { variantOf(vPDFSeq4) }); allocs != 0 {

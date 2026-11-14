@@ -34,16 +34,16 @@ const (
 
 // target is one (socket, observer) the prober sends to.
 type target struct {
-	kind     targetKind
 	sock     SocketHandle
+	kind     targetKind
 	sockID   uint8
+	want     want
+	acked    bool
 	obs      nat.Observer
 	key      nat.PointKey
-	want     want
 	max      int // sends allowed
 	sends    int
 	last     time.Duration
-	acked    bool
 	observed netip.AddrPort // first answer
 }
 
@@ -78,9 +78,9 @@ type stunServer struct {
 // stunTarget is one STUN server of the sub-probe.
 type stunTarget struct {
 	stunServer
-	txid   stun.TransactionID
 	sends  int
 	last   time.Duration
+	txid   stun.TransactionID
 	done   bool // it answered
 	mapped bool // its answer named an address of the family
 }

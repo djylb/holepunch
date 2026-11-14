@@ -99,7 +99,7 @@ func classifierCells() []*cell {
 	// can use, so the first two easy rounds find nothing and the third
 	// pairs fresh sockets. Degraded: the two lost rounds are the
 	// price, gated on the should thresholds with their time added.
-	lost := 1800*time.Millisecond + 2*ctlMax
+	lost := 1800*time.Millisecond + 2*ctlHigh
 	out = append(out,
 		&cell{name: "pathdep/PRCSPLIT-PRCSPLIT", group: "pathdep", class: classDegraded, base: classShould, maxMedianRound: 3,
 			world: pathDepWorld, build: splitPair(prc, prc, [2]bool{true, true}), extraTime: lost},
@@ -167,6 +167,7 @@ func checkSustained(cr *cellRun) error {
 // XOR-MAPPED-ADDRESS (RFC 8489, section 14.2), on its own public host: a third
 // party next to the server, on no route of the server's.
 func (w *world) stunServer(t testing.TB) netip.AddrPort {
+	t.Helper()
 	h := w.n.PublicHost(netip.IPv4Unspecified())
 	addr := netip.AddrPortFrom(h.Addrs()[0], 3478)
 	pc, err := h.Listen("udp4", addr)

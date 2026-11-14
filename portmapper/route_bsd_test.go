@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"net/netip"
+	"slices"
 	"syscall"
 	"testing"
 )
@@ -13,7 +14,6 @@ import (
 func v4(s string) netip.Addr { return netip.MustParseAddr(s) }
 
 func TestDefaultRouteGateway(t *testing.T) {
-	const upGW = syscall.RTF_UP | syscall.RTF_GATEWAY
 	any4 := netip.IPv4Unspecified()
 	scopedDefault := bsdRoute{flags: upGW | darwinIfScope, dst: any4, gw: v4("10.0.0.1"), hasMask: true}
 	routes := []bsdRoute{
@@ -54,10 +54,13 @@ func sockaddr4(a netip.Addr, n int, family byte) []byte {
 	return b[:n]
 }
 
+// upGW are the flags of every route message ribMsg builds.
+const upGW = syscall.RTF_UP | syscall.RTF_GATEWAY
+
 // ribMsg builds one route message: the header, then each sockaddr padded to
 // the kernel's alignment, in RTAX order.
-func ribMsg(typ byte, flags int, sas map[int][]byte) []byte {
-	msg := make([]byte, syscall.SizeofRtMsghdr)
+func ribMsg(typ byte, sas map[int][]byte) []byte {
+	var body []byte
 	var addrs uint32
 	for i := range syscall.RTAX_MAX {
 		sa, ok := sas[i]
@@ -71,11 +74,12 @@ func ribMsg(typ byte, flags int, sas map[int][]byte) []byte {
 		}
 		pad := make([]byte, step)
 		copy(pad, sa)
-		msg = append(msg, pad...)
+		body = append(body, pad...)
 	}
+	msg := slices.Concat(make([]byte, syscall.SizeofRtMsghdr), body)
 	binary.NativeEndian.PutUint16(msg, uint16(len(msg)))
 	msg[2], msg[3] = syscall.RTM_VERSION, typ
-	binary.NativeEndian.PutUint32(msg[rtmFlagsOff:], uint32(flags))
+	binary.NativeEndian.PutUint32(msg[rtmFlagsOff:], uint32(upGW))
 	binary.NativeEndian.PutUint32(msg[rtmAddrsOff:], addrs)
 	setHeaderLen(msg)
 	return msg
@@ -85,22 +89,21 @@ func ribMsg(typ byte, flags int, sas map[int][]byte) []byte {
 // messages; other message types and versions are skipped, a truncated table
 // ends the parse.
 func TestParseRIB(t *testing.T) {
-	const upGW = syscall.RTF_UP | syscall.RTF_GATEWAY
 	any4 := netip.IPv4Unspecified()
-	def := ribMsg(syscall.RTM_GET, upGW, map[int][]byte{
+	def := ribMsg(syscall.RTM_GET, map[int][]byte{
 		syscall.RTAX_DST:     sockaddr4(any4, 16, syscall.AF_INET),
 		syscall.RTAX_GATEWAY: sockaddr4(v4("192.168.1.1"), 16, syscall.AF_INET),
 		syscall.RTAX_NETMASK: {}, // an empty mask: sa_len 0
 	})
-	subnet := ribMsg(syscall.RTM_GET, upGW, map[int][]byte{
+	subnet := ribMsg(syscall.RTM_GET, map[int][]byte{
 		syscall.RTAX_DST:     sockaddr4(v4("10.1.0.0"), 16, syscall.AF_INET),
 		syscall.RTAX_GATEWAY: sockaddr4(v4("192.168.1.254"), 16, syscall.AF_INET),
 		syscall.RTAX_NETMASK: sockaddr4(v4("255.255.0.0"), 6, 0),
 	})
-	other := ribMsg(syscall.RTM_ADD, upGW, nil)
-	old := ribMsg(syscall.RTM_GET, upGW, nil)
+	other := ribMsg(syscall.RTM_ADD, nil)
+	old := ribMsg(syscall.RTM_GET, nil)
 	old[2] = syscall.RTM_VERSION + 1
-	rib := append(append(append(append([]byte{}, other...), old...), subnet...), def...)
+	rib := slices.Concat(other, old, subnet, def)
 	routes := parseRIB(append(rib, 0xff, 0xff, 0, 0)) // a length past the end
 	if len(routes) != 2 {
 		t.Fatalf("routes %+v", routes)

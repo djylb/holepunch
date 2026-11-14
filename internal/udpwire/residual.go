@@ -69,7 +69,7 @@ func (r *residualConn) ReadFrom(p []byte) (int, net.Addr, error) {
 // Dropped returns the number of residual datagrams dropped so far.
 func (r *residualConn) Dropped() uint64 { return r.dropped.Load() }
 
-// residual reports whether pkt, received from from within the window, is an
+// residual reports whether pkt, received from address from within the window, is an
 // authentic packet of the session from a confirmed path's remote.
 func (r *residualConn) residual(pkt []byte, from net.Addr) bool {
 	if r.expired.Load() {

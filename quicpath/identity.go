@@ -126,7 +126,7 @@ func (id *Identity) clientTLS(peerPin string) *tls.Config {
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS13,
 		Certificates:       []tls.Certificate{id.cert},
-		InsecureSkipVerify: true, // the pin replaces the chain verification
+		InsecureSkipVerify: true, //nolint:gosec // G402: replaced by the explicit pin verification in VerifyConnection
 		VerifyConnection:   verifyPin(peerPin),
 		ServerName:         id.alpn,
 		NextProtos:         []string{id.alpn},

@@ -72,6 +72,7 @@ type guardRig struct {
 // newGuardRig has rates high enough that no send of a test waits for
 // tokens on the fake clock.
 func newGuardRig(t *testing.T) *guardRig {
+	t.Helper()
 	b, side := bigBudget(), bigSide()
 	b.MaxPPS, side.MaxPPS = 60000, 60000
 	side.Stages = []protocol.Stage{{Kind: protocol.StageDirect, Targets: []netip.AddrPort{netipAP("198.51.100.1", 9100)}}}
@@ -337,7 +338,7 @@ func sentPorts(t *testing.T, n *nattest.Network, h *nattest.Host) map[netip.Addr
 			Src, Dst netip.AddrPort
 		}
 	}
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil { //nolint:musttag // decodes nattest.Dump by Go field names
 		t.Fatal(err)
 	}
 	own := map[netip.Addr]bool{}

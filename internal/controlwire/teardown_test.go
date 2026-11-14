@@ -119,12 +119,12 @@ func TestTerminatePanicReleasesCallers(t *testing.T) {
 	}
 }
 
-// isPanics is an error whose Is method panics: matching it with errors.Is
+// isPanicsError is an error whose Is method panics: matching it with errors.Is
 // runs code of whoever made the error.
-type isPanics struct{}
+type isPanicsError struct{}
 
-func (isPanics) Error() string   { return "is panics" }
-func (isPanics) Is(_ error) bool { panic("Is") }
+func (isPanicsError) Error() string   { return "is panics" }
+func (isPanicsError) Is(_ error) bool { panic("Is") }
 
 // TestReadEndRunsNoUserCode: the reader ends because Intercept panicked
 // with an error whose Is panics. Settling the end must not call into that
@@ -134,7 +134,7 @@ func (isPanics) Is(_ error) bool { panic("Is") }
 func TestReadEndRunsNoUserCode(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = b.Close() }()
-	c := mustConn(t, a, ConnOptions{Intercept: func(*Conn, Frame) bool { panic(isPanics{}) }})
+	c := mustConn(t, a, ConnOptions{Intercept: func(*Conn, Frame) bool { panic(isPanicsError{}) }})
 	go func() { _, _ = b.Write(frameBytes(wiretype.PunchGo, "{}")) }()
 	select {
 	case <-c.Done():

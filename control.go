@@ -67,12 +67,12 @@ type control struct {
 	sessionID   string
 	seenStart   bool
 	accepted    bool
-	early       []earlyPing
 	seenSummary bool
-	summaryWake chan<- struct{}    // notified when the summary arrives (warmWake)
-	round1      protocol.RoundPlan // probe_summary.plan.round1 as the summary carried it, before any clamp
 	maxGo       uint8
 	confirmed   bool
+	early       []earlyPing
+	summaryWake chan<- struct{}    // notified when the summary arrives (warmWake)
+	round1      protocol.RoundPlan // probe_summary.plan.round1 as the summary carried it, before any clamp
 }
 
 func newControl(rt *runtime) *control {
@@ -374,7 +374,7 @@ const (
 // link can end the session ends the wait with its failure — a control fault,
 // a punch_abort, the link's end, and ctx. When onAssist is set, a relayed
 // assist is handed to it and ends the wait too.
-func waitControl[T any](ct *control, ctx context.Context, want <-chan T, tick <-chan time.Time, onAssist func(stamped[protocol.Assist])) (v T, w woke, err error) {
+func waitControl[T any](ctx context.Context, ct *control, want <-chan T, tick <-chan time.Time, onAssist func(stamped[protocol.Assist])) (v T, w woke, err error) {
 	var assists <-chan stamped[protocol.Assist]
 	if onAssist != nil {
 		assists = ct.assistCh

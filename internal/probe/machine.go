@@ -28,7 +28,6 @@ const (
 )
 
 type runState struct {
-	firstAck bool // Spec.OnFirstAck was called
 	p        *Prober
 	codec    *udpwire.Codec
 	table    *nat.ObsTable
@@ -51,19 +50,20 @@ type runState struct {
 
 	firstSend     time.Duration
 	mappingDoneAt time.Duration // < 0 until mappingDone
-	secondTried   bool
 	secondFirst   time.Duration
-	altPhase      altPhase
 	altFirst      time.Duration
+	firstAck      bool // Spec.OnFirstAck was called
+	secondTried   bool
+	altPhase      altPhase
 	extraQuotaOut bool // QUOTA_EXHAUSTED on the ack of a WANT_EXTRA probe
 	started       bool
 	budget        int // probes to the server left
 	stunBudget    int // STUN requests left
 
 	batchOK, batchFail int         // sends to the server in the current step
-	batchForeign       bool        // the current step sent a STUN or LAN probe from the primary socket
 	failStreak         int         // consecutive steps whose sends to the server all failed
 	batches            []batchICMP // ICMP count after each step that sent
+	batchForeign       bool        // the current step sent a STUN or LAN probe from the primary socket
 	counters           Counters
 	buf                []byte
 }

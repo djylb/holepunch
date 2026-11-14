@@ -546,7 +546,7 @@ func TestMediumConfFallback(t *testing.T) {
 // In PDF×OPEN the PDF side is never a sender.
 func TestPDFOpenReceiver(t *testing.T) {
 	f := protocol.FamilyUDP4
-	a, b := openTraits(f), pdfTraits(f) // responder = PDF
+	a, b := openTraits(f), pdfTraits(f) // the responder is PDF
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
 	var prev []api.RoundOutcome
@@ -571,7 +571,7 @@ func TestExtremeGate(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	for _, dec := range chain(p, cl, a, b, 6, false, api.RoundNoContact, func(in *api.RoundInput) { in.MaxRounds = 6 }) {
+	for _, dec := range chain(p, cl, a, b, 6, false, func(in *api.RoundInput) { in.MaxRounds = 6 }) {
 		if dec.Budget == protocol.BudgetExtreme {
 			t.Fatal("extreme round reached without AllowExtreme")
 		}
@@ -742,7 +742,7 @@ func TestSprayGrantWithinPacketGrant(t *testing.T) {
 	a, b := pdfTraits(f), seqTraits(f)
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	decs := chain(p, cl, a, b, 4, false, api.RoundNoContact, func(in *api.RoundInput) {
+	decs := chain(p, cl, a, b, 4, false, func(in *api.RoundInput) {
 		if in.Round == 4 {
 			in.BudgetLeft = [2]int{100, 100}
 		}
@@ -768,7 +768,7 @@ func TestMultiSocketDirectFitsMaxPackets(t *testing.T) {
 	va := siblingView(a) // two sibling sockets of the PDF side
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	decs := chain(p, cl, a, b, 2, false, api.RoundNoContact, func(in *api.RoundInput) { in.Views[0] = va })
+	decs := chain(p, cl, a, b, 2, false, func(in *api.RoundInput) { in.Views[0] = va })
 	dec := decs[len(decs)-1]
 	if dec.Variant != vPDFRnd2 {
 		t.Fatalf("round 2 is %s", dec.VariantName)
@@ -781,7 +781,7 @@ func TestMultiSocketDirectFitsMaxPackets(t *testing.T) {
 	// A peer with a second socket gets both mappings; with a tight budget
 	// the receiver keeps its sockets and drops targets and repeats first.
 	va = apdmView(a)
-	decs = chain(p, cl, a, b, 2, false, api.RoundNoContact, func(in *api.RoundInput) {
+	decs = chain(p, cl, a, b, 2, false, func(in *api.RoundInput) {
 		in.Views[0] = va
 		if in.Round == 2 {
 			in.BudgetLeft = [2]int{3000, 70}
@@ -1120,7 +1120,7 @@ func TestNAT66BirthdayCapped(t *testing.T) {
 	a.NoNAT, b.NoNAT = protocol.TriFalse, protocol.TriFalse
 	var p DefaultPlanner
 	cl := p.Classify(classifyInput(a, b))
-	decs := chain(p, cl, a, b, 6, true, api.RoundNoContact, func(in *api.RoundInput) {
+	decs := chain(p, cl, a, b, 6, true, func(in *api.RoundInput) {
 		in.Policy.Budget.Birthday = protocol.BirthdayBalanced
 	})
 	ran := map[api.VariantID]bool{}

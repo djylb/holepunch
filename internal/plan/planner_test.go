@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,11 +105,12 @@ func expandedPackets(fs protocol.FamilySide) int {
 }
 
 func describe(fs protocol.FamilySide) string {
-	s := fmt.Sprintf("%s role=%s sockets=%d MaxPackets=%d MaxDistinct=%d stages:", fs.Family, fs.Role, fs.Sockets, fs.MaxPackets, fs.MaxDistinctPorts)
+	var b strings.Builder
+	_, _ = fmt.Fprintf(&b, "%s role=%s sockets=%d MaxPackets=%d MaxDistinct=%d stages:", fs.Family, fs.Role, fs.Sockets, fs.MaxPackets, fs.MaxDistinctPorts)
 	for _, st := range fs.Stages {
-		s += fmt.Sprintf(" %s(targets=%d rep=%d anchor=%d span=%d count=%d)", st.Kind, len(st.Targets), st.Repeats, st.Anchor, st.Span, st.Count)
+		_, _ = fmt.Fprintf(&b, " %s(targets=%d rep=%d anchor=%d span=%d count=%d)", st.Kind, len(st.Targets), st.Repeats, st.Anchor, st.Span, st.Count)
 	}
-	return s
+	return b.String()
 }
 
 // sprayCount is the new destinations of fs's generated stages: the predict

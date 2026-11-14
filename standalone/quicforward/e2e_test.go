@@ -99,12 +99,10 @@ func (e *echoTargets) dial(_ context.Context, address string) (net.Conn, error) 
 	e.dialed = append(e.dialed, address)
 	e.mu.Unlock()
 	a, b := halfPipe()
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
+	e.wg.Go(func() {
 		defer func() { _ = b.Close() }()
 		_, _ = io.Copy(b, b)
-	}()
+	})
 	return a, nil
 }
 
@@ -153,6 +151,7 @@ func startForward(t *testing.T, w *testworld.World, hostH, dialH *nattest.Host, 
 }
 
 func (r *forwardRig) stop(t *testing.T) {
+	t.Helper()
 	r.cancel()
 	for name, ch := range map[string]chan error{"Serve": r.hostDone, "Connect": r.dialDone} {
 		select {

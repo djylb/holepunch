@@ -57,13 +57,13 @@ type udpSock struct {
 	conn  net.PacketConn
 	owner *connOwner // the session group's handle on conn
 	fam   protocol.Family
-	id    uint8 // header sock value: family<<7 | index
 	local netip.AddrPort
 
 	turn     chan struct{} // the write turn: one write (and hop change) at a time
-	detached bool          // guarded by the turn
 	hop      hopCtl
-	curHop   int // guarded by the turn; 0 = the value recorded at creation
+	curHop   int   // guarded by the turn; 0 = the value recorded at creation
+	id       uint8 // header sock value: family<<7 | index
+	detached bool  // guarded by the turn
 	noLowTTL atomic.Bool
 
 	// The flow opener (opener.go): the session's, nil when it is off; the
@@ -176,9 +176,10 @@ func (s *udpSock) write(ctx context.Context, pkt []byte, to netip.AddrPort, hops
 		return false, err
 	}
 	out, wrapped := s.form(pkt, to)
-	if w, ok := s.conn.(interface {
+	w, ok := s.conn.(interface {
 		WriteToUDPAddrPort([]byte, netip.AddrPort) (int, error)
-	}); ok {
+	})
+	if ok {
 		_, err = w.WriteToUDPAddrPort(out, to)
 	} else {
 		_, err = s.conn.WriteTo(out, netaddr.UDPAddr(to))
@@ -215,9 +216,10 @@ func (s *udpSock) stopRead() {
 
 // read reads one datagram with its canonical source.
 func (s *udpSock) read(buf []byte) (int, netip.AddrPort, error) {
-	if r, ok := s.conn.(interface {
+	r, ok := s.conn.(interface {
 		ReadFromUDPAddrPort([]byte) (int, netip.AddrPort, error)
-	}); ok {
+	})
+	if ok {
 		n, from, err := r.ReadFromUDPAddrPort(buf)
 		return n, netaddr.Canon(from), err
 	}
@@ -415,9 +417,10 @@ func (p *socketPool) listen(ctx context.Context, fam protocol.Family, laddr neti
 	}
 	var conn net.PacketConn
 	var err error
-	if pe := life.Safe("network.listenpacket", func() {
+	pe := life.Safe("network.listenpacket", func() {
 		conn, err = p.netw.ListenPacket(ctx, famNetwork(fam), laddr, purpose)
-	}); pe != nil {
+	})
+	if pe != nil {
 		p.panics.Add(1)
 		return nil, pe
 	}

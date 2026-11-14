@@ -13,10 +13,10 @@ import (
 	"github.com/djylb/holepunch/standalone/proto"
 )
 
-// Backoff of Serve's re-registration: from retryMin doubling to retryMax,
-// back to retryMin after a link that lived retryReset.
+// Backoff of Serve's re-registration: from retryFirst doubling to retryMax,
+// back to retryFirst after a link that lived retryReset.
 const (
-	retryMin   = time.Second
+	retryFirst = time.Second
 	retryMax   = 30 * time.Second
 	retryReset = time.Minute
 )
@@ -76,7 +76,7 @@ func (c *Client) Serve(ctx context.Context, reg Registration, h Handler) error {
 		return ErrClosed
 	}
 	var credential string
-	backoff := retryMin
+	backoff := retryFirst
 	for {
 		start := time.Now()
 		l, regd, err := c.register(sctx, reg, credential)
@@ -84,7 +84,7 @@ func (c *Client) Serve(ctx context.Context, reg Registration, h Handler) error {
 			credential = regd.Credential
 			err = c.runLink(sctx, l, regd, reg, h)
 			if time.Since(start) >= retryReset {
-				backoff = retryMin
+				backoff = retryFirst
 			}
 		}
 		if sctx.Err() != nil {

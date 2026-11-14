@@ -183,7 +183,7 @@ func (rt *runtime) probePhase() error {
 			}
 			stopped = true
 		}
-		if _, _, early := waitControl(rt.ctl, ctx, wake, nil, nil); early != nil {
+		if _, _, early := waitControl(ctx, rt.ctl, wake, nil, nil); early != nil {
 			pcancel()
 			<-done
 			return early

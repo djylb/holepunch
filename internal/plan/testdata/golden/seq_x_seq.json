@@ -21,20 +21,20 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.3:40003"
                 ],
+                "at_ms": 0,
                 "repeats": 5
               },
               {
                 "kind": "predict",
-                "at_ms": 20,
-                "ip": "203.0.113.3",
-                "anchor": 40004,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 20,
+                "anchor": 40004,
                 "span": 16,
                 "pair": true
               }
@@ -53,20 +53,20 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.3:40003"
                 ],
+                "at_ms": 0,
                 "repeats": 5
               },
               {
                 "kind": "predict",
-                "at_ms": 20,
-                "ip": "203.0.113.3",
-                "anchor": 40004,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 20,
+                "anchor": 40004,
                 "span": 16,
                 "pair": true
               }
@@ -93,12 +93,12 @@
             "stages": [
               {
                 "kind": "predict",
-                "at_ms": 0,
-                "ip": "203.0.113.3",
-                "anchor": 40020,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 0,
+                "anchor": 40020,
                 "span": 48,
                 "ttl": 4,
                 "pair": true
@@ -118,12 +118,12 @@
             "stages": [
               {
                 "kind": "predict",
-                "at_ms": 0,
-                "ip": "203.0.113.3",
-                "anchor": 40020,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 0,
+                "anchor": 40020,
                 "span": 48,
                 "pair": true
               }
@@ -151,20 +151,20 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.3:40003"
                 ],
+                "at_ms": 0,
                 "repeats": 2
               },
               {
                 "kind": "predict",
-                "at_ms": 0,
-                "ip": "203.0.113.3",
-                "anchor": 40075,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 0,
+                "anchor": 40075,
                 "span": 128,
                 "pair": true
               }
@@ -183,20 +183,20 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.3:40003"
                 ],
+                "at_ms": 0,
                 "repeats": 2
               },
               {
                 "kind": "predict",
-                "at_ms": 0,
-                "ip": "203.0.113.3",
-                "anchor": 40075,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 0,
+                "anchor": 40075,
                 "span": 128,
                 "pair": true
               }

@@ -75,8 +75,8 @@ func (s *runState) sendSTUN(st *stunTarget, now time.Duration) {
 // panicking implementation is one failed send, after the probe.send fault
 // injection point.
 func writeProbe(h SocketHandle, b []byte, to netip.AddrPort) (err error) {
-	if err = faultinject.Point(pointSend); err != nil {
-		return err
+	if ferr := faultinject.Point(pointSend); ferr != nil {
+		return ferr
 	}
 	if perr := life.Safe("probe/write", func() { err = h.WriteTo(b, to) }); perr != nil {
 		return perr

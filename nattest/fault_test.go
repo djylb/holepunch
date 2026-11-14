@@ -31,7 +31,7 @@ func TestCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = pb.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := pb.Read(make([]byte, 1)); err != io.EOF {
+	if _, err := pb.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 		t.Fatalf("peer of a crashed host: %v", err)
 	}
 	listen(t, h, 1000) // the host restarts

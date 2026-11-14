@@ -2,6 +2,7 @@ package candidate
 
 import (
 	"net/netip"
+	"slices"
 	"time"
 
 	"github.com/djylb/holepunch/protocol"
@@ -37,13 +38,13 @@ const (
 
 // Action is one instruction returned by the state machine.
 type Action struct {
-	Kind        ActionKind
-	Epoch       uint16
 	Local       netip.AddrPort
 	Remote      netip.AddrPort
 	Family      protocol.Family
 	ConfirmedBy protocol.HandoverEvidence // HandOver: ack | upper_layer | quiet | ready
 	Reason      protocol.Reason           // Fail
+	Kind        ActionKind
+	Epoch       uint16
 	// Slot is the extra-path slot of a SendNominate or SendAccept
 	// (PATH_SLOT); 0 for the primary path.
 	Slot uint8
@@ -114,15 +115,16 @@ const (
 // actions, and it re-arms its single timer at NextDeadline after every call.
 type Manager struct {
 	cfg       Config
-	inert     bool // the role is neither initiator nor responder
-	responder bool
 	tab       *Table
-	phase     Phase
-	epoch     uint16
 	cur       *Candidate
 	firstRTT  time.Duration // RTT of the first success (collection-window estimate)
+	inert     bool          // the role is neither initiator nor responder
+	responder bool
+	phase     Phase
+	epoch     uint16
 
-	confirmed bool
+	winnerDead bool // the winning socket failed reading: quiet proves nothing
+	confirmed  bool
 
 	// timers (absolute instants; zero = inactive)
 	secondBurstAt time.Time
@@ -135,7 +137,6 @@ type Manager struct {
 	nomResends  int
 	readySent   int
 	lastReadyAt time.Time
-	winnerDead  bool // the winning socket failed reading: quiet proves nothing
 
 	// initiator: handover_acks of the current epoch
 	acks       int
@@ -145,6 +146,7 @@ type Manager struct {
 	ackAt      []time.Time
 	ackIdx     int
 	extraAcks  int
+	paths      uint8
 	adoptEpoch uint16
 	adopted    bool
 
@@ -156,7 +158,6 @@ type Manager struct {
 	room      int
 	settleAt  time.Time
 	committed []*Candidate
-	paths     uint8
 }
 
 // NewManager returns a Manager in the punching phase.
@@ -718,8 +719,7 @@ func (m *Manager) RecvUpperLayer(now time.Time, local, remote netip.AddrPort) []
 		m.confirm()
 		m.phase = PhaseConfirmed
 		m.stopResends()
-		acts := []Action{m.action(Confirm)}
-		return append(acts, m.handOver(protocol.ConfirmedByUpperLayer)...)
+		return slices.Concat([]Action{m.action(Confirm)}, m.handOver(protocol.ConfirmedByUpperLayer))
 	case PhasePunching, PhaseCollect, PhaseNominating, PhaseSettling, PhaseDone, PhaseFailed:
 		// Nothing to hand over yet, or already over.
 	}

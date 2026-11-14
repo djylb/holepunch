@@ -75,6 +75,7 @@ type wireVector struct {
 }
 
 func (v *wireVector) header(tb testing.TB) Header {
+	tb.Helper()
 	x := v.Header
 	return Header{
 		Type: typeByName(tb, x.Type), Role: roleByName(tb, x.Role),

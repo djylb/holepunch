@@ -78,8 +78,8 @@ func upnpExternal(ctx context.Context, svc *soapService) (netip.Addr, error) {
 // upnpMapping is one live UPnP port mapping, owned by its lease.
 type upnpMapping struct {
 	svc      *soapService
-	external uint16
 	internal netip.AddrPort
+	external uint16
 	lease    uint32 // seconds; 0 is a permanent mapping
 }
 

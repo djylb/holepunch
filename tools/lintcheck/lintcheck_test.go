@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -90,10 +90,10 @@ func diff(want, got map[string]int, lines map[string]string) []string {
 	}
 	for k, n := range got {
 		if want[k] != n {
-			problems = append(problems, fmt.Sprintf("unexpected: %s", lines[k]))
+			problems = append(problems, "unexpected: "+lines[k])
 		}
 	}
-	sort.Strings(problems)
+	slices.Sort(problems)
 	return problems
 }
 

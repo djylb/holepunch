@@ -45,15 +45,18 @@ func Example() {
 		Listen:   server.Listen,
 	})
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	if err := probe.Start(); err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	defer func() { _ = probe.Close() }()
 	co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: probe.ProbeSpec()})
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	defer func() { _ = co.Close() }()
 
@@ -62,7 +65,8 @@ func Example() {
 	// its end.
 	sess, err := co.NewSession(coord.SessionOptions{})
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -84,7 +88,8 @@ func Example() {
 		ends[i] = clientEnd
 		err := sess.Attach(role, serverEnd, coord.AttachOptions{Security: protocol.ControlSecurityInsecureForTesting})
 		if err != nil {
-			log.Fatal(err)
+			log.Print(err)
+			return
 		}
 		wg.Go(func() {
 			sessions[i], errs[i] = holepunch.Punch(ctx, clientEnd, holepunch.Options{
@@ -95,7 +100,8 @@ func Example() {
 	}
 	wg.Wait()
 	if err := errors.Join(errs[:]...); err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	initiator, responder := sessions[0], sessions[1]
 	defer func() { _ = initiator.Close() }()
@@ -110,13 +116,15 @@ func Example() {
 	in := responder.FilterResidual(responder.PacketConn())
 	to := net.UDPAddrFromAddrPort(initiator.Result().Path.RemoteAddr)
 	if _, err := initiator.PacketConn().WriteTo([]byte("hello"), to); err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	_ = in.SetReadDeadline(time.Now().Add(5 * time.Second))
 	buf := make([]byte, 1500)
 	nr, _, err := in.ReadFrom(buf)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	fmt.Printf("responder read %q\n", buf[:nr])
 	// Output:
@@ -146,7 +154,8 @@ func ExamplePunch() {
 	if err != nil {
 		var herr *holepunch.Error
 		if !errors.As(err, &herr) {
-			log.Fatal(err) // Punch only returns *holepunch.Error
+			log.Print(err) // Punch only returns *holepunch.Error
+			return
 		}
 		switch {
 		case herr.Advice == protocol.AdviceRelayOnly:

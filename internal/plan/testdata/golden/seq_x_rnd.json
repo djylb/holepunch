@@ -21,10 +21,10 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.4:40004"
                 ],
+                "at_ms": 0,
                 "repeats": 5
               }
             ]
@@ -42,20 +42,20 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.3:40003"
                 ],
+                "at_ms": 0,
                 "repeats": 5
               },
               {
                 "kind": "predict",
-                "at_ms": 20,
-                "ip": "203.0.113.3",
-                "anchor": 40003,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 20,
+                "anchor": 40003,
                 "span": 16
               }
             ]
@@ -81,10 +81,10 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.4:40004"
                 ],
+                "at_ms": 0,
                 "repeats": 2
               }
             ]
@@ -103,12 +103,12 @@
             "stages": [
               {
                 "kind": "predict",
-                "at_ms": 100,
-                "ip": "203.0.113.3",
-                "anchor": 40003,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 100,
+                "anchor": 40003,
                 "span": 64
               }
             ]
@@ -135,10 +135,10 @@
             "stages": [
               {
                 "kind": "direct",
-                "at_ms": 0,
                 "targets": [
                   "203.0.113.4:40004"
                 ],
+                "at_ms": 0,
                 "repeats": 2
               }
             ]
@@ -156,18 +156,18 @@
             "stages": [
               {
                 "kind": "predict",
-                "at_ms": 0,
-                "ip": "203.0.113.3",
-                "anchor": 40003,
                 "steps": [
                   1
                 ],
+                "ip": "203.0.113.3",
+                "at_ms": 0,
+                "anchor": 40003,
                 "span": 192
               },
               {
                 "kind": "random",
-                "at_ms": 0,
                 "ip": "203.0.113.3",
+                "at_ms": 0,
                 "count": 192
               }
             ]

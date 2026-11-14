@@ -3,6 +3,7 @@ package e2e
 import (
 	"fmt"
 	"hash/fnv"
+	"slices"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ func cellSeed(name string, run int) int64 {
 // with its violations; it reports nothing to t itself. dumps writes the
 // failure dump of a violating or unsuccessful run.
 func runOnce(t testing.TB, c *cell, seed int64, abl ablation.Set, dumps bool) (*cellRun, []string) {
+	t.Helper()
 	wc := worldConfig{seed: seed}
 	if c.world != nil {
 		c.world(&wc)
@@ -166,6 +168,7 @@ const modelAlpha = 0.01
 // evaluates it, and writes its kpi.json below kpi/<kpiDir> of the output
 // directory.
 func runCell(t *testing.T, c *cell, runs int, kpiDir string) cellKPI {
+	t.Helper()
 	release := acquireSlot()
 	defer release()
 	start := time.Now()
@@ -185,7 +188,7 @@ func runCell(t *testing.T, c *cell, runs int, kpiDir string) cellKPI {
 	}
 	k := kpiOf(c, full.String(), crs, time.Since(start))
 	gate, more := evaluate(c, k)
-	k.Gate, k.Problems = gate, append(problems, more...)
+	k.Gate, k.Problems = gate, slices.Concat(problems, more)
 	k.Pass = len(k.Problems) == 0
 	if dir := suite().out; dir != "" {
 		if err := writeKPI(dir+"/kpi/"+kpiDir, k); err != nil {

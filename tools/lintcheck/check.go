@@ -1,11 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/token"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 )
 
@@ -65,23 +66,14 @@ func check(mod *module, targets []*pkg) []diagnostic {
 			ps.run()
 		}
 	}
-	sort.Slice(c.diags, func(i, j int) bool {
-		a, b := c.diags[i], c.diags[j]
-		if a.pos.Filename != b.pos.Filename {
-			return a.pos.Filename < b.pos.Filename
-		}
-		if a.pos.Line != b.pos.Line {
-			return a.pos.Line < b.pos.Line
-		}
-		if a.pos.Column != b.pos.Column {
-			return a.pos.Column < b.pos.Column
-		}
-		return a.rule < b.rule
+	slices.SortFunc(c.diags, func(a, b diagnostic) int {
+		return cmp.Or(cmp.Compare(a.pos.Filename, b.pos.Filename), cmp.Compare(a.pos.Line, b.pos.Line),
+			cmp.Compare(a.pos.Column, b.pos.Column), cmp.Compare(a.rule, b.rule))
 	})
 	return c.diags
 }
 
-func (c *checker) report(pos token.Pos, rule, format string, args ...any) {
+func (c *checker) reportf(pos token.Pos, rule, format string, args ...any) {
 	c.diags = append(c.diags, diagnostic{pos: c.mod.fset.Position(pos), rule: rule, msg: fmt.Sprintf(format, args...)})
 }
 
@@ -136,9 +128,9 @@ func (ps *pass) dotImports() {
 		}
 		switch path, _ := strconv.Unquote(spec.Path.Value); path {
 		case "time":
-			ps.c.report(spec.Pos(), ruleNoSleep, "dot import of time hides time.Sleep from this check; import time by name")
+			ps.c.reportf(spec.Pos(), ruleNoSleep, "dot import of time hides time.Sleep from this check; import time by name")
 		case "net":
-			ps.c.report(spec.Pos(), ruleNoDirectNet, "dot import of net hides its OS network functions from this check; import net by name")
+			ps.c.reportf(spec.Pos(), ruleNoDirectNet, "dot import of net hides its OS network functions from this check; import net by name")
 		}
 	}
 }

@@ -106,6 +106,7 @@ type lanServerCase struct {
 }
 
 func TestServerInClientLAN(t *testing.T) {
+	t.Parallel()
 	inLAN := func(addrs ...string) func(*nattest.Network, *nattest.NAT) [2]*nattest.Host {
 		return func(_ *nattest.Network, r *nattest.NAT) [2]*nattest.Host {
 			if len(addrs) == 0 {
@@ -134,6 +135,7 @@ func TestServerInClientLAN(t *testing.T) {
 }
 
 func runLANServerCase(t *testing.T, c lanServerCase) {
+	t.Helper()
 	n := nattest.NewNetwork(nattest.WithSeed(3))
 	defer func() { _ = n.Close() }()
 	prefix := netip.MustParsePrefix(cmpOr(c.lanPrefix, "192.168.1.0/24"))

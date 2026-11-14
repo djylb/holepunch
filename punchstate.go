@@ -14,12 +14,12 @@ import (
 // roundStats is one family's evidence in the current round, the material of
 // round_result.families[].
 type roundStats struct {
-	hit        bool
 	seenFrom   []netip.AddrPort
+	hit        bool
 	peerSeenUs bool
+	drift      bool
 	recv       int
 	icmp       int
-	drift      bool
 	peerSeen   int             // peer_seen reports sent this round
 	reobserve  reobservation   // the round's re-observation probe in flight
 	remap      *protocol.Remap // the new primary mapping it showed, echoed in round_result
@@ -47,7 +47,6 @@ type punchState struct {
 	rx        atomic.Int64 // valid peer packets, session total
 
 	mu        sync.Mutex
-	round     uint8 // 1 until the first go: what arrives before it belongs to round 1
 	stats     map[protocol.Family]*roundStats
 	hit       map[netip.AddrPort]bool // remotes a valid packet came from
 	seenPairs map[pairKey]bool
@@ -56,16 +55,17 @@ type punchState struct {
 	cands     map[sockCand]netip.AddrPort
 	seenSrc   map[netip.AddrPort]bool              // every peer source of the session (attribution)
 	remapped  map[protocol.Family][]netip.AddrPort // primary mappings re-observed and reported, at most one a round
+	icmpMax   int
+	round     uint8 // 1 until the first go: what arrives before it belongs to round 1
 	anyHit    bool
 	peerSeen  bool
-	icmpMax   int
 
+	failed      bool
 	confirmAt   time.Time
 	confirmPath protocol.PathInfo
 	handedOver  *candidate.Action
 	winner      candidate.Candidate   // the confirmed pair as the handover decision left it
 	extras      []candidate.Candidate // the extra paths committed with handedOver
-	failed      bool
 
 	wake chan struct{}
 }

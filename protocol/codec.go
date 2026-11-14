@@ -95,7 +95,8 @@ func Unmarshal[T any, P interface {
 	if err := decodePayload(want, payload, &v); err != nil {
 		return v, err
 	}
-	return v, P(&v).Validate()
+	err := P(&v).Validate()
+	return v, err
 }
 
 // Decode decodes and validates the payload of a frame of type t, any of the

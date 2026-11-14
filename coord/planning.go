@@ -33,16 +33,16 @@ type planOut struct {
 	memory             StrategyMemory
 	mode               string
 	key                StrategyKey
-	hasKey             bool
 	order              []plan.VariantID
+	hasKey             bool
 	memHit, promoted   bool
-	bgOnly             bool                 // engine.BackgroundOnly by the memory's scores
-	sessionMode        protocol.SessionMode // background when offered and both reports accept it
-	stunConflicts      int                  // STUN values contradicting natprobe (MergeDiag)
+	bgOnly             bool // engine.BackgroundOnly by the memory's scores
 	// cold marks a side whose early report the warm merge could not
 	// complete: the session waits for its final report, unplanned.
-	cold [2]bool
-	term *terminal
+	cold          [2]bool
+	sessionMode   protocol.SessionMode // background when offered and both reports accept it
+	stunConflicts int                  // STUN values contradicting natprobe (MergeDiag)
+	term          *terminal
 }
 
 // planSession runs on the session goroutine when both reports are in: it
@@ -608,7 +608,8 @@ func (s *Session) applyRound1Locked(d decision, nowT time.Time) effects {
 				BackgroundOnly: st.plan.bgOnly,
 			},
 		}
-		if fx.merge(s.sendMarkedLocked(r, sum, &l.markSummary)); fx.term != nil {
+		fx.merge(s.sendMarkedLocked(r, sum, &l.markSummary))
+		if fx.term != nil {
 			return fx
 		}
 	}
@@ -723,7 +724,7 @@ func isName(s string) bool {
 	}
 	for i := 1; i < len(s); i++ {
 		c := s[i]
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
 			return false
 		}
 	}

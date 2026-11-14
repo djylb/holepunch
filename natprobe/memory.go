@@ -112,15 +112,15 @@ type memo struct {
 	key         TraitsKey
 	mapping     protocol.Mapping
 	preserving  bool
-	mappingAt   time.Duration
 	filtering   protocol.Filtering // EIF or ADF only
+	mappingAt   time.Duration
 	filteringAt time.Duration
-	hairpin     protocol.Tri
 	hairpinAt   time.Duration
+	hairpin     protocol.Tri
+	conflicts   uint8
 	step        int16
 	velocity    float32
 	allocAt     time.Duration
-	conflicts   uint8
 }
 
 // live returns the conclusions of mm learned less than ttl before now; the

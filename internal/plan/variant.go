@@ -91,7 +91,6 @@ const (
 // peer view at Round time.
 type stageTmpl struct {
 	kind    protocol.StageKind
-	steps   []int16 // predict step override; nil uses the peer's PortStep
 	atMs    uint16
 	span    uint16 // predict
 	count   uint16 // random; fresh: the sockets
@@ -125,22 +124,22 @@ type sideTmpl struct {
 
 // variant is one round template.
 type variant struct {
-	id       api.VariantID
 	name     string
 	budget   protocol.BudgetClass // template ceiling class
-	windowMs uint16               // base window; extended by extendWindow
+	id       api.VariantID
+	windowMs uint16 // base window; extended by extendWindow
 
 	// extendWindow extends the round window to the birthday floor
 	// ceil((targets−16)/MaxNewPerSec) s, so the full birthday target set can be
 	// emitted at the new-targets rate. Fixed-window rounds
 	// leave it false and clamp the grant instead.
 	extendWindow bool
-	// reqTier is the lowest BirthdayTier at which this variant may run; "" runs
-	// at any tier. A variant above the session tier is skipped.
-	reqTier protocol.BirthdayTier
 	// twoSided marks the two-sided birthday round: it also needs
 	// AllowExtreme and a handshake of at least minHandshakeMs.
-	twoSided       bool
+	twoSided bool
+	// reqTier is the lowest BirthdayTier at which this variant may run; "" runs
+	// at any tier. A variant above the session tier is skipped.
+	reqTier        protocol.BirthdayTier
 	minHandshakeMs uint32
 	// sprayer is the side whose opensBirthday gates a tiered birthday round.
 	sprayer birthdaySide
@@ -223,19 +222,23 @@ func (s sideTmpl) firstSpray() (stageTmpl, bool) {
 func sd(repeats uint8, at uint16, ttl uint8) stageTmpl {
 	return stageTmpl{kind: protocol.StageDirect, repeats: repeats, atMs: at, ttl: ttl}
 }
-func sp(span uint16, at uint16, ttl uint8, steps ...int16) stageTmpl {
-	return stageTmpl{kind: protocol.StagePredict, span: span, atMs: at, ttl: ttl, steps: steps}
+func sp(span, at uint16, ttl uint8) stageTmpl {
+	return stageTmpl{kind: protocol.StagePredict, span: span, atMs: at, ttl: ttl}
 }
-func sr(count uint16, at uint16, ttl uint8) stageTmpl {
-	return stageTmpl{kind: protocol.StageRandom, count: count, atMs: at, ttl: ttl}
+func sr(count, at uint16) stageTmpl {
+	return stageTmpl{kind: protocol.StageRandom, count: count, atMs: at}
 }
 func sro(at uint16) stageTmpl { return stageTmpl{kind: protocol.StageReplyOnly, atMs: at} }
 
+// freshRepeats is the packets a fresh-socket stage sends from, and aims at,
+// each fresh socket.
+const freshRepeats = 3
+
 // sfr is a fresh-socket stage: a side that keeps a fresh socket's
-// port binds count fresh sockets, each sending repeats packets; its peer
-// aims repeats packets at each of their ports (freshStage).
-func sfr(count uint16, repeats uint8, at uint16) stageTmpl {
-	return stageTmpl{kind: protocol.StageFresh, count: count, repeats: repeats, atMs: at}
+// port binds count fresh sockets, each sending freshRepeats packets; its peer
+// aims freshRepeats packets at each of their ports (freshStage).
+func sfr(count uint16) stageTmpl {
+	return stageTmpl{kind: protocol.StageFresh, count: count, repeats: freshRepeats}
 }
 
 func side(role protocol.SideRole, delay, sockets uint16, nominal uint32, pps uint16, st ...stageTmpl) sideTmpl {
@@ -281,9 +284,8 @@ func ladderFor(pairClass string) []api.VariantID {
 
 // variants is the variant table, indexed by VariantID. It is built once,
 // at package initialisation, and only read afterwards: variantOf hands out
-// copies, and the one slice of a template that reaches a RoundDecision (a
-// predict stage's steps) is cloned on the way out, so no caller can write
-// into it (no package-level mutable state).
+// copies and the planner only reads the templates, so no caller can write
+// into them (no package-level mutable state).
 var variants = newCatalogue()
 
 // variantOf returns the variant id, and false for an id outside the
@@ -301,7 +303,7 @@ func variantOf(id api.VariantID) (variant, bool) {
 // in the templates obey "send_delay > 0 => sender" and, in easy, the PDF
 // side (B when mixed) is never a sender.
 func newCatalogue() [numVariants]variant {
-	const L, B, H, X, BG = protocol.BudgetLight, protocol.BudgetBalanced, protocol.BudgetHeavy, protocol.BudgetExtreme, protocol.BudgetBackground
+	const lgt, bal, hvy, ext, bgd = protocol.BudgetLight, protocol.BudgetBalanced, protocol.BudgetHeavy, protocol.BudgetExtreme, protocol.BudgetBackground
 	const both, send, recv = protocol.SideBoth, protocol.SideSender, protocol.SideReceiver
 	v := func(id api.VariantID, name string, bc protocol.BudgetClass, win uint16, a, b sideTmpl) variant {
 		return variant{id: id, name: name, budget: bc, windowMs: win, a: a, b: b}
@@ -309,99 +311,99 @@ func newCatalogue() [numVariants]variant {
 	var m [numVariants]variant
 	for _, x := range []variant{
 		// ---- easy: OPEN/PDF (A) × OPEN/PDF (B); B is the PDF side when mixed ----
-		v(vEasy1, "easy_r1_direct", L, 800,
+		v(vEasy1, "easy_r1_direct", lgt, 800,
 			side(both, 0, 1, 40, ladderPPS, sd(5, 0, 0)),
 			side(both, 0, 1, 40, ladderPPS, sd(5, 0, 0))),
-		v(vEasy2, "easy_r2_ttl", L, 1000,
+		v(vEasy2, "easy_r2_ttl", lgt, 1000,
 			side(send, 80, 1, 40, ladderPPS, sd(5, 80, 0)),
 			side(recv, 0, 1, 40, ladderPPS, sd(5, 0, 4))),
-		v(vEasy3, "easy_r3_ttl", L, 1200,
+		v(vEasy3, "easy_r3_ttl", lgt, 1200,
 			side(send, 200, 1, 40, ladderPPS, sd(5, 200, 0)),
 			side(recv, 0, 1, 40, ladderPPS, sd(5, 0, 7))),
-		v(vEasy4, "easy_r4_slow", L, 1500,
+		v(vEasy4, "easy_r4_slow", lgt, 1500,
 			side(send, 500, 1, 32, ladderPPS, sd(4, 500, 0)),
 			side(both, 0, 1, 32, ladderPPS, sd(4, 0, 0))),
-		v(vEasy5, "easy_r5_final", L, 3000,
+		v(vEasy5, "easy_r5_final", lgt, 3000,
 			side(send, 2000, 1, 24, ladderPPS, sd(3, 2000, 0)),
 			side(recv, 0, 1, 24, ladderPPS, sd(3, 0, 4))),
 
 		// ---- open_x_edm: OPEN (A) × SEQ/RND (B) ----
-		v(vOpenEDM1, "open_x_edm_r1", L, 800,
+		v(vOpenEDM1, "open_x_edm_r1", lgt, 800,
 			side(both, 0, 1, 1, ladderPPS, sd(1, 0, 0), sro(0)),
 			side(both, 0, 1, 6, ladderPPS, sd(6, 0, 0))),
-		v(vOpenEDM2, "open_x_edm_r2", L, 1000,
+		v(vOpenEDM2, "open_x_edm_r2", lgt, 1000,
 			side(recv, 0, 1, 1, ladderPPS, sd(1, 0, 4), sro(0)),
 			side(send, 150, 1, 6, ladderPPS, sd(6, 150, 0))),
-		v(vOpenEDM3, "open_x_edm_r3", B, 1500,
+		v(vOpenEDM3, "open_x_edm_r3", bal, 1500,
 			side(both, 0, 1, 17, ladderPPS, sd(1, 0, 0), sp(16, 20, 0)),
 			side(send, 500, 1, 5, ladderPPS, sd(5, 500, 0))),
-		v(vOpenEDM4, "open_x_edm_r4_final", B, 3000,
+		v(vOpenEDM4, "open_x_edm_r4_final", bal, 3000,
 			side(both, 0, 1, 17, ladderPPS, sd(1, 0, 0), sp(16, 20, 0)),
 			side(send, 2000, 1, 4, ladderPPS, sd(4, 2000, 0))),
 
 		// ---- pdf_x_seq: PDF (A) × SEQ (B) ----
-		v(vPDFSeq1, "pdf_x_seq_r1", B, 800,
+		v(vPDFSeq1, "pdf_x_seq_r1", bal, 800,
 			side(both, 0, 1, 19, ladderPPS, sd(3, 0, 0), sp(16, 20, 0)),
 			side(both, 0, 1, 6, ladderPPS, sd(6, 0, 0))),
-		v(vPDFSeq2, "pdf_x_seq_r2", B, 1200,
+		v(vPDFSeq2, "pdf_x_seq_r2", bal, 1200,
 			side(send, 100, 1, 48, ladderPPS, sp(48, 100, 0)),
 			side(recv, 0, 1, 6, ladderPPS, sd(6, 0, 4))),
-		v(vPDFSeq3, "pdf_x_seq_r3", H, 1500,
+		v(vPDFSeq3, "pdf_x_seq_r3", hvy, 1500,
 			side(both, 0, 1, 128, ladderPPS, sp(128, 0, 0)),
 			side(both, 0, 8, 16, ladderPPS, sd(2, 0, 0))),
-		v(vPDFSeq4, "pdf_x_seq_r4_birthday", H, 3000,
-			side(both, 0, 1, 384, ladderBirthdayPPS, sp(128, 0, 0), sr(256, 0, 0)),
+		v(vPDFSeq4, "pdf_x_seq_r4_birthday", hvy, 3000,
+			side(both, 0, 1, 384, ladderBirthdayPPS, sp(128, 0, 0), sr(256, 0)),
 			side(both, 0, 32, 64, ladderPPS, sd(2, 0, 0))),
-		v(vPDFSeq5, "pdf_x_seq_r5_birthday", X, 3000,
-			side(both, 0, 1, 512, ladderBirthdayPPS, sr(512, 0, 0)),
+		v(vPDFSeq5, "pdf_x_seq_r5_birthday", ext, 3000,
+			side(both, 0, 1, 512, ladderBirthdayPPS, sr(512, 0)),
 			side(both, 0, 64, 128, ladderPPS, sd(2, 0, 0))),
 
 		// ---- pdf_x_rnd: PDF (A) × RND (B); default stops after r3 ----
-		v(vPDFRnd1, "pdf_x_rnd_r1", B, 800,
+		v(vPDFRnd1, "pdf_x_rnd_r1", bal, 800,
 			side(both, 0, 1, 10, ladderPPS, sd(5, 0, 0)),
 			side(both, 0, 1, 6, ladderPPS, sd(6, 0, 0))),
-		v(vPDFRnd2, "pdf_x_rnd_r2_birthday", H, 2500,
-			side(both, 0, 1, 384, ladderBirthdayPPS, sp(16, 0, 0), sr(368, 0, 0)),
+		v(vPDFRnd2, "pdf_x_rnd_r2_birthday", hvy, 2500,
+			side(both, 0, 1, 384, ladderBirthdayPPS, sp(16, 0, 0), sr(368, 0)),
 			side(both, 0, 32, 64, ladderPPS, sd(2, 0, 0))),
-		v(vPDFRnd3, "pdf_x_rnd_r3", H, 2500,
-			side(both, 0, 1, 127, ladderPPS, sr(127, 0, 0)),
+		v(vPDFRnd3, "pdf_x_rnd_r3", hvy, 2500,
+			side(both, 0, 1, 127, ladderPPS, sr(127, 0)),
 			side(both, 0, 32, 64, ladderPPS, sd(2, 0, 0))),
-		v(vPDFRnd4, "pdf_x_rnd_r4_birthday", X, 3500,
-			side(both, 0, 1, 768, ladderBirthdayPPS, sr(768, 0, 0)),
+		v(vPDFRnd4, "pdf_x_rnd_r4_birthday", ext, 3500,
+			side(both, 0, 1, 768, ladderBirthdayPPS, sr(768, 0)),
 			side(both, 0, 64, 128, ladderPPS, sd(2, 0, 0))),
 
 		// ---- seq_x_seq ----
-		v(vSeqSeq1, "seq_x_seq_r1", B, 800,
+		v(vSeqSeq1, "seq_x_seq_r1", bal, 800,
 			side(both, 0, 1, 19, ladderPPS, sd(3, 0, 0), sp(16, 20, 0)),
 			side(both, 0, 1, 19, ladderPPS, sd(3, 0, 0), sp(16, 20, 0))),
-		v(vSeqSeq2, "seq_x_seq_r2", B, 1200,
+		v(vSeqSeq2, "seq_x_seq_r2", bal, 1200,
 			side(recv, 0, 1, 48, ladderPPS, sp(48, 0, 4)),
 			side(both, 0, 1, 48, ladderPPS, sp(48, 0, 0))),
-		v(vSeqSeq3, "seq_x_seq_r3", H, 1500,
+		v(vSeqSeq3, "seq_x_seq_r3", hvy, 1500,
 			side(both, 0, 8, 144, ladderPPS, sd(2, 0, 0), sp(128, 0, 0)),
 			side(both, 0, 8, 144, ladderPPS, sd(2, 0, 0), sp(128, 0, 0))),
 
 		// ---- seq_x_rnd: SEQ (A) × RND (B) ----
-		v(vSeqRnd1, "seq_x_rnd_r1", B, 800,
+		v(vSeqRnd1, "seq_x_rnd_r1", bal, 800,
 			side(both, 0, 1, 5, ladderPPS, sd(5, 0, 0)),
 			side(both, 0, 1, 19, ladderPPS, sd(3, 0, 0), sp(16, 20, 0))),
-		v(vSeqRnd2, "seq_x_rnd_r2", H, 1200,
+		v(vSeqRnd2, "seq_x_rnd_r2", hvy, 1200,
 			side(both, 0, 16, 32, ladderPPS, sd(2, 0, 0)),
 			side(send, 100, 1, 64, ladderPPS, sp(64, 100, 0))),
-		v(vSeqRnd3, "seq_x_rnd_r3", H, 3000,
+		v(vSeqRnd3, "seq_x_rnd_r3", hvy, 3000,
 			side(both, 0, 32, 64, ladderPPS, sd(2, 0, 0)),
-			side(both, 0, 1, 384, ladderBirthdayPPS, sp(192, 0, 0), sr(192, 0, 0))),
+			side(both, 0, 1, 384, ladderBirthdayPPS, sp(192, 0, 0), sr(192, 0))),
 
 		// ---- rnd_x_rnd; r3 is the two-sided birthday, extreme only ----
-		v(vRndRnd1, "rnd_x_rnd_r1", L, 800,
+		v(vRndRnd1, "rnd_x_rnd_r1", lgt, 800,
 			side(both, 0, 1, 5, ladderPPS, sd(5, 0, 0)),
 			side(both, 0, 1, 5, ladderPPS, sd(5, 0, 0))),
-		v(vRndRnd2, "rnd_x_rnd_r2", B, 1200,
+		v(vRndRnd2, "rnd_x_rnd_r2", bal, 1200,
 			side(both, 0, 8, 48, ladderPPS, sd(2, 0, 0), sp(32, 0, 0)),
 			side(both, 0, 8, 48, ladderPPS, sd(2, 0, 0), sp(32, 0, 0))),
-		v(vRndRnd3, "rnd_x_rnd_r3_birthday_both", X, 3000,
-			side(both, 0, 16, 256, ladderBirthdayPPS, sr(256, 0, 0)),
-			side(both, 0, 16, 256, ladderBirthdayPPS, sr(256, 0, 0))),
+		v(vRndRnd3, "rnd_x_rnd_r3_birthday_both", ext, 3000,
+			side(both, 0, 16, 256, ladderBirthdayPPS, sr(256, 0)),
+			side(both, 0, 16, 256, ladderBirthdayPPS, sr(256, 0))),
 
 		// ---- fresh sockets: pdf_x_pres and pres_x_pres ----
 		// Both sides carry the same template: the side keeping fresh ports
@@ -409,12 +411,12 @@ func newCatalogue() [numVariants]variant {
 		// pres_r1 fits balanced's 8 sockets, pres_r2 heavy's 32. Both
 		// primaries also punch each other as plain hole punching would,
 		// D(3).
-		v(vPres1, "pres_r1", B, 1500,
-			side(both, 0, 1, 24, ladderPPS, sd(3, 0, 0), sfr(7, 3, 0)),
-			side(both, 0, 1, 24, ladderPPS, sd(3, 0, 0), sfr(7, 3, 0))),
-		v(vPres2, "pres_r2", H, 2500,
-			side(both, 0, 1, 75, ladderPPS, sd(3, 0, 0), sfr(24, 3, 0)),
-			side(both, 0, 1, 75, ladderPPS, sd(3, 0, 0), sfr(24, 3, 0))),
+		v(vPres1, "pres_r1", bal, 1500,
+			side(both, 0, 1, 24, ladderPPS, sd(3, 0, 0), sfr(7)),
+			side(both, 0, 1, 24, ladderPPS, sd(3, 0, 0), sfr(7))),
+		v(vPres2, "pres_r2", hvy, 2500,
+			side(both, 0, 1, 75, ladderPPS, sd(3, 0, 0), sfr(24)),
+			side(both, 0, 1, 75, ladderPPS, sd(3, 0, 0), sfr(24))),
 
 		// ---- slow birthday: pdf_x_rnd of a Background session ----
 		// The RND side opens up to 120 sockets, 16 a second, each keeping
@@ -424,8 +426,8 @@ func newCatalogue() [numVariants]variant {
 		// 4 s on, when half the sockets are open: P ≈ 1 − e^(−K·M/64512)
 		// ≈ 85% in 45 s. 120 sockets, not the class's 128: the header's
 		// socket index leaves 121 for round sockets.
-		v(vPDFRndSlow, "pdf_x_rnd_slow", BG, 45000,
-			slow(side(both, 0, 1, slowSpray, slowPPS, sr(slowSpray, slowStartMs, 0)), slowNPS, 0),
+		v(vPDFRndSlow, "pdf_x_rnd_slow", bgd, 45000,
+			slow(side(both, 0, 1, slowSpray, slowPPS, sr(slowSpray, slowStartMs)), slowNPS, 0),
 			slow(side(both, 0, slowSockets, slowSockets*3, slowPPS, sd(3, 0, 0)), 0, slowOpen)),
 	} {
 		m[x.id] = x
@@ -464,7 +466,7 @@ func newCatalogue() [numVariants]variant {
 
 	// rescue round: the side that saw a packet becomes sender to the
 	// real seen_from source (d=80); the silent side is a low-TTL receiver.
-	m[vRescue] = variant{id: vRescue, name: "rescue", budget: L, windowMs: 1500,
+	m[vRescue] = variant{id: vRescue, name: "rescue", budget: lgt, windowMs: 1500,
 		a: side(send, 80, 1, 24, ladderPPS, sd(3, 80, 0)),
 		b: side(recv, 0, 1, 24, ladderPPS, sd(3, 0, 4))}
 	return m

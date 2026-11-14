@@ -306,11 +306,12 @@ func (t *ObsTable) STUNConflicts() int {
 // p (STUNConflicts) and reports whether one of them saw another port of a
 // public IP natprobe saw: a path-dependent mapping.
 func (t *ObsTable) stunConflictsLocked(p SocketMeta, scope netaddr.Scope) (n int, otherPort bool) {
-	var server []netip.AddrPort
-	for _, s := range t.firstValuesLocked(p.ID, scope) {
+	first, alt := t.firstValuesLocked(p.ID, scope), t.crossRowsLocked(p.ID, scope, SourceServerAlt)
+	server := make([]netip.AddrPort, 0, len(first)+len(alt))
+	for _, s := range first {
 		server = append(server, s.Observed)
 	}
-	for _, x := range t.crossRowsLocked(p.ID, scope, SourceServerAlt) {
+	for _, x := range alt {
 		server = append(server, x.Observed)
 	}
 	if len(server) == 0 {

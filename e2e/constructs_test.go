@@ -104,7 +104,7 @@ func (w *world) load(r *run, nat *nattest.NAT, i, pps int, afterProbe bool) {
 	}
 	ctx := r.ctx[i]
 	w.helpers.Go(func() {
-		begin, end := (<-chan frameEvent)(nil), summary
+		var begin, end <-chan frameEvent = nil, summary
 		if afterProbe {
 			begin, end = summary, nil
 		}

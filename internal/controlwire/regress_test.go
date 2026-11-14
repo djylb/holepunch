@@ -37,7 +37,8 @@ func TestWritePanicWakesWaiters(t *testing.T) {
 				rc.OnWrite(func([]byte) { <-gate; panic("user conn Write bug") })
 			case "SetWriteDeadline":
 				rc.OnSetWriteDeadline(func(time.Time) {
-					if probes++; probes > 1 { // the first call is NewConn's probe
+					probes++
+					if probes > 1 { // the first call is NewConn's probe
 						<-gate
 						panic("user conn SetWriteDeadline bug")
 					}
@@ -408,7 +409,7 @@ func TestWriteFrameEndedContextLeavesLinkUsable(t *testing.T) {
 		t.Fatalf("idle writer: Err = %v after WriteFrame calls with an ended ctx", err)
 	}
 
-	c, peer, release := stalledConn(t, SideClient)
+	c, peer, release := stalledConn(t)
 	for i := range 32 {
 		ctx := &lateCtx{Context: expired}
 		if err := c.WriteFrame(ctx, Frame{Type: wiretype.RoundResult, Payload: []byte("late")}); !errors.Is(err, context.DeadlineExceeded) {

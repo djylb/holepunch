@@ -37,13 +37,13 @@ const (
 
 // candEvent is a packet fact for the nomination goroutine.
 type candEvent struct {
-	kind          candEventKind
 	local, remote netip.AddrPort
 	fam           protocol.Family
-	epoch         uint16
 	rtt           time.Duration
-	ckind         candidate.Kind
 	at            time.Time
+	kind          candEventKind
+	epoch         uint16
+	ckind         candidate.Kind
 	peerSock      uint8 // the header sock of the peer's packet
 	slot, paths   uint8 // PATH_SLOT and PATHS of a handshake packet
 }
@@ -228,8 +228,9 @@ func (n *nominator) perform(ctx context.Context, acts []candidate.Action) {
 // first ready, the responder's at Confirm — for the read loops: their
 // upper-layer datagrams are handover evidence too.
 func (n *nominator) noteExtras() {
-	var ks []pairKey
-	for _, c := range n.mgr.Extras() {
+	extras := n.mgr.Extras()
+	ks := make([]pairKey, 0, len(extras))
+	for _, c := range extras {
 		k := pairKey{c.Local, c.Remote}
 		ks = append(ks, k)
 		n.raise(k, c.Family, candidate.StateConfirmed)

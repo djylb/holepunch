@@ -59,7 +59,7 @@ func FuzzIntercept(f *testing.F) {
 	}
 	f.Cleanup(func() { _ = conn.Close() })
 	go func() { _, _ = io.Copy(io.Discard, b) }()
-	f.Fuzz(func(t *testing.T, typ uint8, payload []byte, accepted bool) {
+	f.Fuzz(func(_ *testing.T, typ uint8, payload []byte, accepted bool) {
 		ct := newControl(&runtime{})
 		if accepted {
 			ct.sessionID, ct.accepted, ct.seenStart, ct.seenSummary = "fuzz", true, true, true

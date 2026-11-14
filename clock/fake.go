@@ -96,7 +96,7 @@ func (f *Fake) AdvanceTo(target time.Time) int {
 	fired := 0
 	for {
 		if fired == maxFiresPerAdvance {
-			f.report("clock: %d timers fired in one advance; a zero-delay timer probably re-arms itself", fired)
+			f.reportf("clock: %d timers fired in one advance; a zero-delay timer probably re-arms itself", fired)
 			break
 		}
 		t, due, ok := f.popDue(target)
@@ -266,13 +266,13 @@ func (f *Fake) notifyLocked() {
 func (f *Fake) run(fn func(), due time.Time) {
 	defer func() {
 		if r := recover(); r != nil {
-			f.report("clock: AfterFunc callback due at %v panicked: %v\n%s", due, r, debug.Stack())
+			f.reportf("clock: AfterFunc callback due at %v panicked: %v\n%s", due, r, debug.Stack())
 		}
 	}()
 	fn()
 }
 
-func (f *Fake) report(format string, args ...any) {
+func (f *Fake) reportf(format string, args ...any) {
 	if f.r != nil {
 		f.r.Errorf(format, args...)
 	}

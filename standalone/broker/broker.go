@@ -56,9 +56,9 @@ type Broker struct {
 	now       func() time.Time
 
 	mu       sync.Mutex
-	closed   bool
 	hosts    map[string]*Host
 	sessions map[string]*Session
+	closed   bool
 
 	closeOnce sync.Once
 	closeErr  error

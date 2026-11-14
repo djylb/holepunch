@@ -72,6 +72,7 @@ func TestExportedAPI(t *testing.T) {
 // has a doc comment (a grouped constant may share its group's comment or
 // carry a line comment).
 func exportedNames(t *testing.T, fset *token.FileSet, d ast.Decl) []string {
+	t.Helper()
 	var out []string
 	switch d := d.(type) {
 	case *ast.FuncDecl:

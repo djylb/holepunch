@@ -256,6 +256,7 @@ func v6Host(i int) simclient.Family {
 // v4OnlyServer is a rig with a registry whose probe specs have IPv4
 // observers only.
 func v4OnlyServer(t *testing.T, opts ...rigOpt) *rig {
+	t.Helper()
 	return newRig(t, append([]rigOpt{withRegistry(natprobe.NewRegistry(natprobe.RegistryConfig{})), func(c *Config) {
 		c.DefaultProbe = protocol.ProbeSpec{Observers: []protocol.ObserverSpec{{ID: 0, Addr: mustAP("192.0.2.9:3000")}}}
 	}}, opts...)...)

@@ -51,7 +51,7 @@ type upnpServiceDesc struct {
 
 // fetchDescription downloads and parses the device description at loc.
 func fetchDescription(ctx context.Context, hc *http.Client, loc *url.URL) (*upnpDescription, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loc.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loc.String(), http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (s *soapService) externalIP(ctx context.Context) (string, error) {
 // mappingArgs are the arguments of AddPortMapping and AddAnyPortMapping, in
 // the order the specification lists them: some gateways read them by
 // position.
-func mappingArgs(ext uint16, internalPort uint16, client string, lease uint32) [][2]string {
+func mappingArgs(ext, internalPort uint16, client string, lease uint32) [][2]string {
 	return [][2]string{
 		{"NewRemoteHost", ""},
 		{"NewExternalPort", strconv.Itoa(int(ext))},

@@ -12,7 +12,7 @@ func (ps *pass) goStmt(g *ast.GoStmt) {
 	if ps.p.rel == lifePackage && fn != nil && fn.Name.Name == "Go" && receiverType(fn) == "Group" {
 		return
 	}
-	ps.c.report(g.Go, ruleNoBareGo, "go statement outside (*life.Group).Go; start goroutines with life.Group.Go")
+	ps.c.reportf(g.Go, ruleNoBareGo, "go statement outside (*life.Group).Go; start goroutines with life.Group.Go")
 }
 
 // receiverType returns the base type name of fd's receiver, "" for a

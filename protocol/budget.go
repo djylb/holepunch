@@ -254,12 +254,10 @@ func (c BudgetClass) Rank() int {
 		return 1
 	case BudgetBalanced:
 		return 2
-	case BudgetHeavy:
+	case BudgetHeavy, BudgetBackground:
 		return 3
 	case BudgetExtreme:
 		return 4
-	case BudgetBackground:
-		return 3
 	}
 	return 0
 }

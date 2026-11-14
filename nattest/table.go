@@ -23,8 +23,8 @@ const (
 type mapKey struct {
 	in    netip.AddrPort
 	rip   netip.Addr
-	rport uint16
 	exit  netip.Addr
+	rport uint16
 	path  uint8
 }
 
@@ -35,6 +35,33 @@ type pathRule struct {
 	mapping   Mapping
 	filtering Filtering
 	proxy     bool
+}
+
+// natFam is the state of one address family of a NAT device. It is guarded
+// by NAT.mu, except the fields that addressing reads under Network.topo:
+// mode, lanPrefix and site never change, nextLAN changes only under topo.
+type natFam struct {
+	v6        bool
+	mode      famMode
+	mapping   Mapping
+	filtering Filtering
+	alloc     PortAlloc
+	routes    []pathRule // NATConfig.Routes, path k at k-1
+	step      int
+	lo, hi    int
+
+	ext       []netip.Addr // external addresses (modeTranslate)
+	lanPrefix netip.Prefix // LAN of modeTranslate and modeNPT
+	site      netip.Prefix // public /64 of modeNPT, and of modeIdentity on the core
+	nextLAN   uint64
+
+	byKey  map[mapKey]*mapEntry
+	byExt  map[netip.AddrPort]*mapEntry
+	used   map[netip.Addr]*portBitmap // external ports held by mappings
+	cursor map[netip.Addr]int         // Sequential cursor per external IP
+	rr     int                        // RoundRobin position
+
+	noise portNoise
 }
 
 // rule returns the translation of path k of the family.
@@ -83,33 +110,6 @@ type mapEntry struct {
 	aliases []mapKey
 
 	elem *list.Element // position in NAT.lru
-}
-
-// natFam is the state of one address family of a NAT device. It is guarded
-// by NAT.mu, except the fields that addressing reads under Network.topo:
-// mode, lanPrefix and site never change, nextLAN changes only under topo.
-type natFam struct {
-	v6        bool
-	mode      famMode
-	mapping   Mapping
-	filtering Filtering
-	alloc     PortAlloc
-	routes    []pathRule // NATConfig.Routes, path k at k-1
-	step      int
-	lo, hi    int
-
-	ext       []netip.Addr // external addresses (modeTranslate)
-	lanPrefix netip.Prefix // LAN of modeTranslate and modeNPT
-	site      netip.Prefix // public /64 of modeNPT, and of modeIdentity on the core
-	nextLAN   uint64
-
-	byKey  map[mapKey]*mapEntry
-	byExt  map[netip.AddrPort]*mapEntry
-	used   map[netip.Addr]*portBitmap // external ports held by mappings
-	cursor map[netip.Addr]int         // Sequential cursor per external IP
-	rr     int                        // RoundRobin position
-
-	noise portNoise
 }
 
 func (f *natFam) isExternal(a netip.Addr) bool {

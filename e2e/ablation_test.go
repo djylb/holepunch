@@ -3,6 +3,7 @@ package e2e
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -171,6 +172,7 @@ type ablationStat struct {
 
 // ablationRun runs a cell under an ablation set, quietly (no gates, no dumps).
 func ablationRun(t *testing.T, c *cell, abl ablation.Set, runs int) ablationStat {
+	t.Helper()
 	release := acquireSlot()
 	defer release()
 	start := time.Now()
@@ -266,7 +268,7 @@ type ablationJob struct {
 // correction configurations and Plain, the NoRefresh gate cell under full
 // and NoRefresh. A run is named cell@configuration;
 // HOLEPUNCH_E2E_CELLS selects among those names.
-func ablationJobs() (jobs []ablationJob, v4 []*cell, misclass []*cell) {
+func ablationJobs() (jobs []ablationJob, v4, misclass []*cell) {
 	byName := map[string]*cell{}
 	for _, c := range append(cells(), ablationConstructs()...) {
 		byName[c.name] = c
@@ -372,6 +374,7 @@ const memoriesPerSequence = 5
 // memorySequences runs n sequences of five sessions, each sequence on one
 // world (one coordinator, so one strategy memory and one traits memory).
 func memorySequences(t *testing.T, p memoryPair, abl ablation.Set, n int) [][]memRun {
+	t.Helper()
 	release := acquireSlot()
 	defer release()
 	var out [][]memRun
@@ -450,7 +453,7 @@ func combos() (names []string, cellsOf map[string][]string) {
 // gates that failed: the combination gate when every cell it needs ran, and
 // each threshold
 // that is not report only and whose runs ran.
-func ablationReport(res *ablationResults, v4 []*cell, misclass []*cell, runs int) (string, []string) {
+func ablationReport(res *ablationResults, v4, misclass []*cell, runs int) (string, []string) {
 	var b strings.Builder
 	var failed []string
 	p := func(format string, args ...any) { _, _ = fmt.Fprintf(&b, format, args...) }
@@ -700,7 +703,7 @@ func ablationReport(res *ablationResults, v4 []*cell, misclass []*cell, runs int
 			ok: best >= 0 && best <= 0.5})
 	}
 	sb := get(repScan, full).k.ScanBans
-	put(threshold{mech: "scan bans", cell: repScan, rule: "ScanBans == 0 (full)", ran: ran(repScan, full), measured: fmt.Sprintf("%d", sb), ok: sb == 0})
+	put(threshold{mech: "scan bans", cell: repScan, rule: "ScanBans == 0 (full)", ran: ran(repScan, full), measured: strconv.FormatUint(sb, 10), ok: sb == 0})
 
 	// NoAssistRelay on the misclassified burst. Under one-way loss the next
 	// round hits without the relay too, so that cell is reported only.
@@ -786,9 +789,9 @@ func plainGate(b *strings.Builder, res *ablationResults, v4, misclass []*cell, r
 	var failed []string
 	slack := plainSlack(runs)
 	full, plain := ablation.Set{}, ablation.Plain()
-	_, _ = fmt.Fprintf(b, "## Never worse than plain punching\n\n")
+	_, _ = fmt.Fprint(b, "## Never worse than plain punching\n\n")
 	_, _ = fmt.Fprintf(b, "Every ordered IPv4 cell and every deliberately misclassified cell: full successes ≥ Plain successes − %d (%d runs). A cell whose full or Plain runs did not run is NOT RUN.\n\n", slack, runs)
-	_, _ = fmt.Fprintf(b, "| cell | full | plain | full − plain | verdict |\n|---|---:|---:|---:|---|\n")
+	_, _ = fmt.Fprint(b, "| cell | full | plain | full − plain | verdict |\n|---|---:|---:|---:|---|\n")
 	var worse, behind, judged int
 	for _, c := range append(slices.Clone(v4), misclass...) {
 		f, okF := res.get(c.name, full)

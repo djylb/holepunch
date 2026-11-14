@@ -37,9 +37,10 @@ type reqConn struct {
 func (m *Mapper) openRequest(ctx context.Context, local netip.Addr) (*reqConn, error) {
 	var pc net.PacketConn
 	var err error
-	if perr := life.Safe("Network.ListenPacket", func() {
+	perr := life.Safe("Network.ListenPacket", func() {
 		pc, err = m.cfg.Network.ListenPacket(ctx, "udp4", netip.AddrPortFrom(local, 0), purposePortmap)
-	}); perr != nil {
+	})
+	if perr != nil {
 		return nil, perr
 	}
 	if err == nil && !life.IsNil(pc) {

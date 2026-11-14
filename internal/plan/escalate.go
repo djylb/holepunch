@@ -151,7 +151,8 @@ func oneWaySeer(prev []api.RoundOutcome, fam protocol.Family) (seer, from int, o
 		for s := range 2 {
 			heard[s] = heard[s] || fr.Heard[s]
 			if fr.Heard[s] && !fr.Heard[1-s] {
-				if n[s]++; n[s] == oneWayRounds {
+				n[s]++
+				if n[s] == oneWayRounds {
 					at[s] = k + 1
 				}
 			}
@@ -249,7 +250,8 @@ func escalationPoint(prev []api.RoundOutcome, fam protocol.Family) (int, bool) {
 			streak = 0
 			continue
 		}
-		if streak++; streak == noContactRounds {
+		streak++
+		if streak == noContactRounds {
 			return k + 1, true
 		}
 	}

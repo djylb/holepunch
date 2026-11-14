@@ -132,11 +132,12 @@ func (s *Session) Close() error {
 			var cerr error
 			// The conn and its error are the Network's: both are inspected
 			// inside the boundary.
-			if p := life.Safe("session.close", func() {
+			p := life.Safe("session.close", func() {
 				if cerr = c.Close(); errors.Is(cerr, net.ErrClosed) {
 					cerr = nil
 				}
-			}); p != nil {
+			})
+			if p != nil {
 				cerr = p
 			}
 			errs = append(errs, cerr)
@@ -193,14 +194,6 @@ func (r Result) clone() Result {
 	return r
 }
 
-func (p Path) clone() Path {
-	if p.PortMapping != nil {
-		pm := *p.PortMapping
-		p.PortMapping = &pm
-	}
-	return p
-}
-
 // Path is one confirmed path of a session: its socket's address, the
 // peer's address on it, the kind of network between the two
 // and what the upper layer needs to keep it
@@ -215,6 +208,14 @@ type Path struct {
 	RTT         time.Duration             // the smallest UDP round trip measured on the path; 0 without a sample
 	Keepalive   KeepaliveAdvice           // keepalive advice for the upper layer on this path
 	PortMapping *protocol.PortMappingInfo // the port mapping of the path's socket, released by Session.Close (unless detached); nil without
+}
+
+func (p Path) clone() Path {
+	if p.PortMapping != nil {
+		pm := *p.PortMapping
+		p.PortMapping = &pm
+	}
+	return p
 }
 
 // Timing breaks a session's duration down by phase.

@@ -109,14 +109,13 @@ type Session struct {
 	parent context.Context
 	keys   [2]string
 	token  protocol.Token
-	wire   protocol.WireSpec
 	starts [2]protocol.PunchStart
+	wire   protocol.WireSpec
 	to     protocol.Timeouts
 	ttl    ttl
 	budget protocol.Budget      // the session budget of each side
 	offer  protocol.SessionMode // SessionOptions.Mode, in punch_start
-	ablate ablation.Set
-	handle nat.ProbeHandle // nil without natprobe (Config.NoObserver)
+	handle nat.ProbeHandle      // nil without natprobe (Config.NoObserver)
 	// regAt is the natprobe registration on session time (ProbeHandle.Registered,
 	// registeredAt): the origin of the planner's FireAt axis, the one
 	// Traits.PortAnchorMs is on. Relay-only sessions have no registration and
@@ -132,6 +131,7 @@ type Session struct {
 	wake       chan struct{} // capacity 1: work for the session goroutine
 	quit       chan struct{} // closed when the session ends
 	done       chan struct{}
+	ablate     ablation.Set
 	refs       atomic.Int32 // finish's share, the session goroutine, Attach and timer calls in flight
 	result     atomic.Pointer[Result]
 
@@ -149,11 +149,11 @@ type sessionState struct {
 	links     [2]*link
 	attaching [2]bool
 	loop      bool // the session goroutine was started
+	work      work // requests for the session goroutine
 	updated   time.Duration
 	deadline  time.Duration // the stage deadline, session time
 	expireAt  time.Duration // the defensive lifetime cap
 	deferred  *terminal     // NoEarlyAbort: an end waiting for the stage deadline
-	work      work          // requests for the session goroutine
 	rng       *rand.Rand    // round seeds and plan ids
 	quota     quota
 
@@ -184,9 +184,7 @@ type sessionState struct {
 
 // planState is the session plan and the planning under way.
 type planState struct {
-	gen      uint64 // changes invalidate planning done outside the lock (planTicket)
-	planning bool   // the planner runs outside the lock
-	planned  bool
+	gen      uint64       // changes invalidate planning done outside the lock (planTicket)
 	planner  plan.Planner // switches to the default planner after a panic
 	cls      plan.Classification
 	cin      plan.ClassifyInput // kept for a fallback classification
@@ -195,6 +193,8 @@ type planState struct {
 	rawViews [2]protocol.PeerView // merged without the traits memory: this session's own evidence
 	pviews   [2]protocol.PeerView // the planner's views: the wire views and the endpoints admitted since
 	memory   StrategyMemory       // nil once disabled for the session
+	planning bool                 // the planner runs outside the lock
+	planned  bool
 	memKey   StrategyKey
 	hasKey   bool
 	memHit   bool
@@ -278,9 +278,9 @@ type sandwichState struct {
 // roundState is the round under way.
 type roundState struct {
 	n          int
-	variant    plan.VariantID
 	name       string
 	class      protocol.BudgetClass
+	variant    plan.VariantID
 	rescue     bool
 	final      bool
 	window     time.Duration
@@ -288,15 +288,15 @@ type roundState struct {
 	goAt       time.Duration
 	deadline   time.Duration
 	plans      [2]protocol.RoundPlan
-	reanchored [2]bool // round 1's plan of the side was re-aimed after its summary: the go carries it
 	results    [2]*protocol.RoundResult
 	granted    [2]int
+	reanchored [2]bool            // round 1's plan of the side was re-aimed after its summary: the go carries it
 	sandwich   [2][2]bool         // the sandwich probe runs, per side and family
+	evaluating bool               // ended; the next round is being decided
 	targets    [2]int             // peer_targets sent to each side
 	pushed     [2][2]int          // their targets and window ports, per side and family
 	assists    [2][2]int          // peer_seen accepted per side and family
 	families   []plan.FamilyRound // the decision's families, as the outcome returns them
-	evaluating bool               // ended; the next round is being decided
 }
 
 // work is what the session goroutine has to do besides frames.

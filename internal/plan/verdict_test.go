@@ -89,7 +89,7 @@ func TestSummaryVerdictNeedsMeasuredHigh(t *testing.T) {
 			if c.name == "two-sided birthday reachable" {
 				return // the ladder goes on to the two-sided birthday when the round input allows extreme
 			}
-			decs := chain(p, cl, rndTraits(f), rndTraits(f), 6, false, api.RoundNoContact, nil)
+			decs := chain(p, cl, rndTraits(f), rndTraits(f), 6, false, nil)
 			if len(decs) != CheapRounds || !decs[CheapRounds-1].Final {
 				t.Fatalf("ladder %v", decs)
 			}

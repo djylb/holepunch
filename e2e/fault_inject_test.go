@@ -31,11 +31,11 @@ type injectCase struct {
 	// progress gives the clients an OnProgress, so that progress.deliver is
 	// hit.
 	progress bool
+	// onClose: the point lies on Coordinator.Close.
+	onClose bool
 	// late makes the responder join late, so that the coordinator's timer
 	// fires while it waits.
 	late time.Duration
-	// onClose: the point lies on Coordinator.Close.
-	onClose bool
 }
 
 // injectOutcome is what a panic at a point does to a session.
@@ -174,13 +174,13 @@ func checkOutcome(want injectOutcome, r *run) error {
 					return fmt.Errorf("%s: internal with detail %q, want panic:<goroutine>", roles[i], o.herr.Detail)
 				}
 			}
-			return fmt.Errorf("outcomes %q (%v) / %q (%v), want a client internal of its own with detail panic:<goroutine>",
+			return fmt.Errorf("outcomes %q (%w) / %q (%w), want a client internal of its own with detail panic:<goroutine>",
 				out[0].reason(), out[0].err, out[1].reason(), out[1].err)
 		}
 	case serverInternal:
 		for i, o := range out {
 			if o.reason() != protocol.ReasonInternal {
-				return fmt.Errorf("%s: outcome %q (%v), want internal", roles[i], o.reason(), o.err)
+				return fmt.Errorf("%s: outcome %q (%w), want internal", roles[i], o.reason(), o.err)
 			}
 		}
 	case linkLost:
@@ -211,6 +211,7 @@ func checkOutcome(want injectOutcome, r *run) error {
 
 // runInject runs one point and returns its violations.
 func runInject(t *testing.T, ic injectCase, seed int64) (v []string) {
+	t.Helper()
 	faultinject.Reset()
 	defer faultinject.Reset()
 	disarm := faultinject.Arm(ic.point, faultinject.Panic(), 1)
@@ -264,7 +265,7 @@ func runInject(t *testing.T, ic injectCase, seed int64) (v []string) {
 	err = w.close()
 	if ic.want == closeReported {
 		var reported bool
-		if err, reported = takeClosePanic(err, ic.point); !reported {
+		if reported, err = takeClosePanic(err, ic.point); !reported {
 			add("Coordinator.Close did not return the panic at %s", ic.point)
 		}
 	}
@@ -284,21 +285,21 @@ func runInject(t *testing.T, ic injectCase, seed int64) (v []string) {
 // that returned exactly the *life.PanicError of point, and reports whether
 // there was one; every other failure is returned, so that a Close that also
 // timed out still fails the case.
-func takeClosePanic(err error, point string) (rest error, found bool) {
+func takeClosePanic(err error, point string) (found bool, rest error) {
 	errs := []error{err}
 	if j, ok := err.(interface{ Unwrap() []error }); ok {
 		errs = j.Unwrap()
 	}
 	var others []error
 	for _, e := range errs {
-		pe, ok := errors.Unwrap(e).(*life.PanicError)
+		pe, ok := errors.AsType[*life.PanicError](errors.Unwrap(e))
 		if !found && ok && pe.Where() == point {
 			found = true
 			continue
 		}
 		others = append(others, e)
 	}
-	return errors.Join(others...), found
+	return found, errors.Join(others...)
 }
 
 // injectBound bounds a session with an injected panic: the e2e session cap

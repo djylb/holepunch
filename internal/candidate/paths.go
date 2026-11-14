@@ -103,7 +103,7 @@ func duplicateOfAny(c *Candidate, held []*Candidate) bool {
 // held returns the primary path and the extra paths, the set a new extra
 // path must differ from.
 func (m *Manager) held() []*Candidate {
-	out := []*Candidate{m.cur}
+	out := append(make([]*Candidate, 0, 1+len(m.extras)), m.cur)
 	for _, x := range m.extras {
 		out = append(out, x.c)
 	}

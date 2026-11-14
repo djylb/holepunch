@@ -4,7 +4,6 @@ package faultinject_test
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -30,6 +29,7 @@ var documentedPoints = []string{
 
 // fresh resets the registry before and after a test.
 func fresh(t *testing.T) {
+	t.Helper()
 	faultinject.Reset()
 	t.Cleanup(faultinject.Reset)
 }
@@ -61,7 +61,8 @@ func TestUnarmedPointOnlyCounts(t *testing.T) {
 func TestNthFiresOnce(t *testing.T) {
 	fresh(t)
 	_ = faultinject.Point("probe.bind") // hits before Arm do not count towards nth
-	defer faultinject.Arm("probe.bind", faultinject.Error(nil), 3)()
+	disarm := faultinject.Arm("probe.bind", faultinject.Error(nil), 3)
+	defer disarm()
 	for i := 1; i <= 5; i++ {
 		err := faultinject.Point("probe.bind")
 		if want := i == 3; (err != nil) != want {
@@ -94,15 +95,17 @@ func TestNonPositiveNthFiresEveryTimeUntilDisarmed(t *testing.T) {
 func TestErrorReturnsGivenErrorUnchanged(t *testing.T) {
 	fresh(t)
 	want := errors.New("bind refused")
-	defer faultinject.Arm("probe.bind", faultinject.Error(want), 1)()
-	if err := faultinject.Point("probe.bind"); err != want {
+	disarm := faultinject.Arm("probe.bind", faultinject.Error(want), 1)
+	defer disarm()
+	if err := faultinject.Point("probe.bind"); !errors.Is(err, want) {
 		t.Fatalf("Point = %v, want the armed error itself", err)
 	}
 }
 
 func TestPanicWrapsErrInjected(t *testing.T) {
 	fresh(t)
-	defer faultinject.Arm("coord.finish.notify", faultinject.Panic(), 1)()
+	disarm := faultinject.Arm("coord.finish.notify", faultinject.Panic(), 1)
+	defer disarm()
 	defer func() {
 		err, ok := recover().(error)
 		if !ok || !errors.Is(err, faultinject.ErrInjected) || !strings.Contains(err.Error(), "coord.finish.notify") {
@@ -115,7 +118,8 @@ func TestPanicWrapsErrInjected(t *testing.T) {
 
 func TestPanicDoesNotPoisonRegistry(t *testing.T) {
 	fresh(t)
-	defer faultinject.Arm("ctl.read", faultinject.Panic(), 1)()
+	disarm := faultinject.Arm("ctl.read", faultinject.Panic(), 1)
+	defer disarm()
 	func() {
 		defer func() { _ = recover() }()
 		_ = faultinject.Point("ctl.read")
@@ -134,7 +138,8 @@ func TestPanicDoesNotPoisonRegistry(t *testing.T) {
 
 func TestCloseConn(t *testing.T) {
 	fresh(t)
-	defer faultinject.Arm("ctl.read", faultinject.CloseConn(), 1)()
+	disarm := faultinject.Arm("ctl.read", faultinject.CloseConn(), 1)
+	defer disarm()
 	err := faultinject.Point("ctl.read")
 	for _, target := range []error{faultinject.ErrCloseConn, faultinject.ErrInjected, net.ErrClosed} {
 		if !errors.Is(err, target) {
@@ -151,7 +156,7 @@ func TestStallUntilDisarm(t *testing.T) {
 	disarm := faultinject.Arm("wait.go", faultinject.Stall(0), 1)
 	done := make(chan error, 1)
 	go func() { done <- faultinject.Point("wait.go") }()
-	waitFired(t, "wait.go", 1) // otherwise disarm may come first and nothing stalls
+	waitFired(t, "wait.go") // otherwise disarm may come first and nothing stalls
 	select {
 	case err := <-done:
 		t.Fatalf("stalled point returned %v before disarm", err)
@@ -170,7 +175,8 @@ func TestStallUntilDisarm(t *testing.T) {
 
 func TestStallForDuration(t *testing.T) {
 	fresh(t)
-	defer faultinject.Arm("ctl.write", faultinject.Stall(30*time.Millisecond), 1)()
+	disarm := faultinject.Arm("ctl.write", faultinject.Stall(30*time.Millisecond), 1)
+	defer disarm()
 	start := time.Now()
 	if err := faultinject.Point("ctl.write"); err != nil {
 		t.Fatalf("Point = %v", err)
@@ -188,7 +194,7 @@ func TestDisarmCutsTimedStallShort(t *testing.T) {
 		_ = faultinject.Point("ctl.write")
 		close(done)
 	}()
-	waitFired(t, "ctl.write", 1)
+	waitFired(t, "ctl.write")
 	disarm()
 	select {
 	case <-done:
@@ -205,7 +211,7 @@ func TestRearmReplacesAndReleases(t *testing.T) {
 		_ = faultinject.Point("round.stage")
 		close(done)
 	}()
-	waitFired(t, "round.stage", 1)
+	waitFired(t, "round.stage")
 	second := faultinject.Arm("round.stage", faultinject.Error(nil), 0)
 	defer second()
 	select {
@@ -227,7 +233,7 @@ func TestResetReleasesAndClears(t *testing.T) {
 		_ = faultinject.Point("wait.summary")
 		close(done)
 	}()
-	waitFired(t, "wait.summary", 1)
+	waitFired(t, "wait.summary")
 	faultinject.Reset()
 	select {
 	case <-done:
@@ -295,9 +301,7 @@ func TestConcurrentHitsAreCountedExactly(t *testing.T) {
 	var everyErrs, onceErrs atomic.Int32
 	var wg sync.WaitGroup
 	for range 200 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if faultinject.Point("readloop.packet") != nil {
 				everyErrs.Add(1)
 			}
@@ -305,16 +309,15 @@ func TestConcurrentHitsAreCountedExactly(t *testing.T) {
 				onceErrs.Add(1)
 			}
 			_ = faultinject.Point("probe.recv")
-		}()
+		})
 	}
 	wg.Wait()
 	if everyErrs.Load() != 200 || onceErrs.Load() != 1 || faultinject.Hits("probe.recv") != 200 {
 		t.Fatalf("every-call fired %d, one-shot fired %d, unarmed hits %d", everyErrs.Load(), onceErrs.Load(), faultinject.Hits("probe.recv"))
 	}
 	for range 4 {
-		wg.Add(2)
-		go func() { defer wg.Done(); every() }()
-		go func() { defer wg.Done(); once() }()
+		wg.Go(every)
+		wg.Go(once)
 	}
 	wg.Wait()
 	if err := faultinject.Point("readloop.packet"); err != nil {
@@ -322,7 +325,7 @@ func TestConcurrentHitsAreCountedExactly(t *testing.T) {
 	}
 }
 
-func waitFired(t *testing.T, name string, n int) {
+func waitFired(t *testing.T, name string) {
 	t.Helper()
-	testkit.WaitFor(t, fmt.Sprintf("%s to fire %d times", name, n), func() bool { return faultinject.Fired(name) >= n })
+	testkit.WaitFor(t, name+" to fire", func() bool { return faultinject.Fired(name) >= 1 })
 }

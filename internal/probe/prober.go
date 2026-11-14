@@ -79,8 +79,9 @@ type Result struct {
 type Prober struct {
 	spec        Spec
 	clk         clock.Clock
-	role        udpwire.Role
 	primary     SocketHandle
+	active      atomic.Bool // Run or Hairpin is consuming the inbox
+	role        udpwire.Role
 	primaryID   uint8
 	siblings    []sibling
 	openSecond  func() (SocketHandle, error)
@@ -92,7 +93,6 @@ type Prober struct {
 	inbox chan inbound
 	wake  chan struct{}
 
-	active   atomic.Bool // Run or Hairpin is consuming the inbox
 	ran      atomic.Bool
 	finished atomic.Bool
 	hairpin  atomic.Bool // the hairpin self-test started; it runs once
@@ -112,10 +112,10 @@ type sibling struct {
 type inbound struct {
 	stun   bool
 	sock   uint8
+	txid   stun.TransactionID
 	from   netip.AddrPort
 	h      udpwire.Header
 	t      udpwire.TLVs
-	txid   stun.TransactionID
 	mapped netip.AddrPort
 	at     time.Time
 }
@@ -198,9 +198,9 @@ func socketMeta(h SocketHandle, f protocol.Family, k protocol.SocketKind) (m nat
 }
 
 // Deliver hands the prober a probe-class reply (probe_ack, probe_extra,
-// probe_alt, hairpin) that the read pump of socket sock received from from at
-// time at, after Open, CheckRole and the server SeqWindow accepted it. It
-// copies h and t, never blocks and reports whether the packet was queued:
+// probe_alt, hairpin) that the read pump of socket sock received from the
+// address from at time at, after Open, CheckRole and the server SeqWindow
+// accepted it. It copies h and t, never blocks and reports whether the packet was queued:
 // not when the type is not probe class, nothing is probing, or the inbox is
 // full.
 func (p *Prober) Deliver(sock uint8, from netip.AddrPort, h *udpwire.Header, t *udpwire.TLVs, at time.Time) bool {

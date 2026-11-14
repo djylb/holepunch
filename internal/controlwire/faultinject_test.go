@@ -41,8 +41,7 @@ func TestFaultReadPanic(t *testing.T) {
 	defer disarm()
 	c := mustConn(t, a, ConnOptions{})
 	<-c.Done()
-	var perr *life.PanicError
-	if !errors.As(c.Err(), &perr) {
+	if _, ok := errors.AsType[*life.PanicError](c.Err()); !ok {
 		t.Fatalf("Err = %v", c.Err())
 	}
 }

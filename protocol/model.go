@@ -57,8 +57,8 @@ type ProbeSpec struct {
 
 // ObserverSpec is one natprobe observer.
 type ObserverSpec struct {
+	Addr  netip.AddrPort `json:"addr"` // literal ip:port
 	ID    uint8          `json:"id"`
-	Addr  netip.AddrPort `json:"addr"`  // literal ip:port
 	Group uint8          `json:"group"` // same group = same server public IP
 	Alt   bool           `json:"alt,omitempty"`
 }
@@ -105,10 +105,10 @@ type SocketReport struct {
 
 // RowReport is one (socket, observer) observation.
 type RowReport struct {
+	Observed netip.AddrPort `json:"a,omitzero"` // the value in the ack (the server overrides it)
+	FirstSeq uint32         `json:"tx"`         // seq of the row's first probe
+	SentMs   uint32         `json:"s"`          // relative to the probe start
 	Observer uint8          `json:"o"`
-	Observed netip.AddrPort `json:"a,omitzero"`    // the value in the ack (the server overrides it)
-	FirstSeq uint32         `json:"tx"`            // seq of the row's first probe
-	SentMs   uint32         `json:"s"`             // relative to the probe start
 	RTTMs    uint16         `json:"rtt,omitempty"` // 0 = no ack
 	Cookie   uint32         `json:"c,omitempty"`   // COOKIE of the row's latest ack; 0 = no ack
 }
@@ -244,7 +244,6 @@ type PairFacts struct {
 type PlanSpec struct {
 	ID        string    `json:"id"`               // 1..64 B of [A-Za-z0-9_-]
 	PairClass string    `json:"pair_class"`       // diagnostic name, e.g. "pdf_x_seq"
-	RoundsMax uint8     `json:"rounds_max"`       // 1..6 (<= timeouts.max_rounds; rescue not counted)
 	Ladder    []string  `json:"ladder,omitempty"` // informative; <= 16 names
 	Budget    Budget    `json:"budget"`           // this side's session budget
 	Round1    RoundPlan `json:"round1"`           // the first round, for pre-binding
@@ -252,7 +251,8 @@ type PlanSpec struct {
 	// it and both clients accepted it.
 	Mode SessionMode `json:"mode,omitempty"`
 	// Advice is what to do should the session fail.
-	Advice Advice `json:"advice,omitempty"`
+	Advice    Advice `json:"advice,omitempty"`
+	RoundsMax uint8  `json:"rounds_max"` // 1..6 (<= timeouts.max_rounds; rescue not counted)
 	// BackgroundOnly: the server's strategy memory saw this pair of exits
 	// connect only through the slow birthday of a Background session; the
 	// caller may go to the relay and Background at once.
@@ -333,11 +333,11 @@ const (
 // Stage is one stage of a round.
 type Stage struct {
 	Kind    StageKind        `json:"kind"`
-	AtMs    uint16           `json:"at_ms"`             // relative to firing
 	Targets []netip.AddrPort `json:"targets,omitempty"` // direct: <= 16
-	IP      netip.Addr       `json:"ip,omitzero"`       // predict / random target IP
-	Anchor  uint16           `json:"anchor,omitempty"`  // predict start port
 	Steps   []int16          `json:"steps,omitempty"`   // predict steps, <= 3, may be negative
+	IP      netip.Addr       `json:"ip,omitzero"`       // predict / random target IP
+	AtMs    uint16           `json:"at_ms"`             // relative to firing
+	Anchor  uint16           `json:"anchor,omitempty"`  // predict start port
 	Span    uint16           `json:"span,omitempty"`    // predict ports, <= 4096
 	Count   uint16           `json:"count,omitempty"`   // random ports, <= 4096
 	Lo      uint16           `json:"lo,omitempty"`      // random range low (optional)
@@ -419,8 +419,8 @@ type FamilyOutcome struct {
 // the server can verify the mapping as it verifies the probe's: only
 // a client that receives at Observed can know it.
 type Remap struct {
-	Observer uint8          `json:"o"`
 	Observed netip.AddrPort `json:"a"`
+	Observer uint8          `json:"o"`
 	Cookie   uint32         `json:"c"`
 }
 
@@ -481,13 +481,13 @@ type PathInfo struct {
 	Family      Family           `json:"family"`
 	Local       netip.AddrPort   `json:"local"`
 	Remote      netip.AddrPort   `json:"remote"`
-	Round       uint8            `json:"round"`
 	Epoch       uint16           `json:"epoch"`
+	Round       uint8            `json:"round"`
 	Sock        uint8            `json:"sock"`
 	Cand        uint16           `json:"cand"`
+	RTTMs       uint16           `json:"rtt_ms"` // UDP path RTT
 	CandKind    CandKind         `json:"cand_kind"`
 	Kind        PathKind         `json:"kind"`                   // the network the path runs over
-	RTTMs       uint16           `json:"rtt_ms"`                 // UDP path RTT
 	ConfirmedBy HandoverEvidence `json:"confirmed_by,omitempty"` // punch_result only
 }
 

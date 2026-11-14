@@ -101,7 +101,7 @@ func TestHTTPDialEndsWithRequest(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://192.0.2.1:5000/rootDesc.xml", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://192.0.2.1:5000/rootDesc.xml", http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}

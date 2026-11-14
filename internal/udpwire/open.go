@@ -125,8 +125,8 @@ func overlaps(a, b []byte) bool {
 	if len(a) == 0 || len(b) == 0 {
 		return false
 	}
-	pa := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
-	pb := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
+	pa := uintptr(unsafe.Pointer(unsafe.SliceData(a))) //nolint:gosec // G103: only the addresses are compared; nothing is dereferenced
+	pb := uintptr(unsafe.Pointer(unsafe.SliceData(b))) //nolint:gosec // G103: only the addresses are compared; nothing is dereferenced
 	return pa < pb+uintptr(len(b)) && pb < pa+uintptr(len(a))
 }
 

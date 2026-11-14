@@ -191,6 +191,7 @@ func userFaults() []userFault {
 
 // runUserFault runs one user-code case and returns its violations.
 func runUserFault(t *testing.T, uf userFault, seed int64) []string {
+	t.Helper()
 	fired := new(atomic.Int32)
 	wc := worldConfig{seed: seed}
 	if uf.server != nil {

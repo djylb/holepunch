@@ -63,7 +63,7 @@ func TestSessionMode(t *testing.T) {
 // session of a pair with a random side, from any round; otherwise it is
 // held to heavy, and heavy's own rule applies.
 func TestBackgroundClassGuard(t *testing.T) {
-	_, s := testSession(t)
+	s := testSession(t)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := &s.st

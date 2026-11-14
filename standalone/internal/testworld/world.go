@@ -117,7 +117,8 @@ func New(t testing.TB, o Options) *World {
 	})
 	w.ClientTLS = &tls.Config{
 		MinVersion: tls.VersionTLS13, ServerName: ServerName,
-		InsecureSkipVerify: true, VerifyConnection: tlsid.VerifyPin(pin),
+		InsecureSkipVerify: true, //nolint:gosec // G402: the test world pins the server key in VerifyConnection instead
+		VerifyConnection:   tlsid.VerifyPin(pin),
 	}
 	return w
 }

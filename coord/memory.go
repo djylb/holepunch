@@ -328,8 +328,8 @@ func (m *memory) len() int {
 
 // Sweep drops expired entries, scanning at most max entries from the least
 // recently used end of the shards, and returns how many it dropped.
-func (m *memory) Sweep(now time.Time, max int) int {
-	removed, budget := 0, max
+func (m *memory) Sweep(now time.Time, limit int) int {
+	removed, budget := 0, limit
 	for i := range m.shards {
 		sh := &m.shards[i]
 		sh.mu.Lock()

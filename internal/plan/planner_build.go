@@ -313,8 +313,8 @@ type sprayReq struct {
 // budget is split (phase 1).
 type sideBuild struct {
 	role        protocol.SideRole
-	sendDelayMs uint16
 	sockets     int // the template's sockets after the single-socket rule
+	sendDelayMs uint16
 	maxPPS      uint16
 	newPerSec   uint16 // the template's cap on new destinations a second, 0 for none
 	openPerSec  uint16 // the template's socket pacing (FamilySide.OpenPerSec)
@@ -371,10 +371,7 @@ func buildSideTemplate(in input, fp familyPlan, tmpl sideTmpl, vr variant, isSpr
 			if blocked || !sprayIP.IsValid() || pred.anchor == 0 {
 				continue
 			}
-			steps := slices.Clone(st.steps) // the template is shared and read-only
-			if len(steps) == 0 {
-				steps = pred.steps
-			}
+			steps := pred.steps
 			want := max(int(st.span), pred.minSpan)
 			if pairedFamily(in, fp) {
 				want = int(st.span) // the peer's own span, not a spread of timing error (pairSeqWindows)
@@ -787,13 +784,13 @@ func deref(st *protocol.Stage) protocol.Stage {
 
 // ensureMinSockets gives each active family at least one socket, as long as the
 // shared cap allows (it always does: cap >= 2 and at most two families).
-func ensureMinSockets(grant []int, builds [][2]sideBuild, role, cap int) {
+func ensureMinSockets(grant []int, builds [][2]sideBuild, role, limit int) {
 	used := 0
 	for _, g := range grant {
 		used += g
 	}
 	for fi := range grant {
-		if grant[fi] == 0 && builds[fi][role].active && used < cap {
+		if grant[fi] == 0 && builds[fi][role].active && used < limit {
 			grant[fi] = 1
 			used++
 		}
@@ -803,13 +800,13 @@ func ensureMinSockets(grant []int, builds [][2]sideBuild, role, cap int) {
 // allocate splits a shared cap over per-family requests, giving each an even
 // share first (remainder to the earlier families) and then handing any leftover
 // to families that still want more, so the sum never exceeds cap.
-func allocate(reqs []int, cap int) []int {
+func allocate(reqs []int, limit int) []int {
 	n := len(reqs)
 	out := make([]int, n)
-	if n == 0 || cap <= 0 {
+	if n == 0 || limit <= 0 {
 		return out
 	}
-	share, rem := cap/n, cap%n
+	share, rem := limit/n, limit%n
 	used := 0
 	for i := range reqs {
 		base := share
@@ -820,10 +817,10 @@ func allocate(reqs []int, cap int) []int {
 		used += out[i]
 	}
 	for i := range reqs {
-		if used >= cap {
+		if used >= limit {
 			break
 		}
-		if add := min(reqs[i]-out[i], cap-used); add > 0 {
+		if add := min(reqs[i]-out[i], limit-used); add > 0 {
 			out[i] += add
 			used += add
 		}

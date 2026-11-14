@@ -20,6 +20,7 @@ import (
 // newMem returns a strategy memory on a fake clock; the memory reads only
 // its Now.
 func newMem(t *testing.T, cfg StrategyMemoryConfig) (*memory, *clock.Fake) {
+	t.Helper()
 	clk := clock.NewFake(t, time.Time{})
 	cfg.Clock = clk
 	return NewStrategyMemory(cfg).(*memory), clk

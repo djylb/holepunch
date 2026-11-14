@@ -309,19 +309,19 @@ func TestWrongLANGuessNeverConfirms(t *testing.T) {
 		t.Fatal("no ready")
 	}
 	so.link.send(protocol.PunchGo{SessionID: so.s.sid, Round: 1, DelayMs: 5, WindowMs: r1.WindowMs})
-	pk, ok := peer.expect(udpwire.TPunch, 5*time.Second)
+	pk, ok := peer.expect(udpwire.TPunch)
 	if !ok {
 		t.Fatal("no punch")
 	}
 	time.Sleep(100 * time.Millisecond) // let the stranger's answers arrive first
 	peer.send(pk.from, udpwire.Header{Type: udpwire.TSuccess, Round: 1, Cand: pk.h.Cand, EchoSeq: pk.h.Seq, EchoTS: pk.h.TS},
 		&udpwire.TLVs{Observed: pk.from, HasRx: true, RxCount: 1})
-	nom, ok := peer.expect(udpwire.TNominate, 5*time.Second)
+	nom, ok := peer.expect(udpwire.TNominate)
 	if !ok {
 		t.Fatal("no nominate")
 	}
 	peer.send(nom.from, udpwire.Header{Type: udpwire.TAccept, Aux: nom.h.Aux, Cand: udpwire.NoCand}, &udpwire.TLVs{HasRx: true, RxCount: 2})
-	if _, ok := peer.expect(udpwire.TReady, 5*time.Second); !ok {
+	if _, ok := peer.expect(udpwire.TReady); !ok {
 		t.Fatal("no ready")
 	}
 	for range 3 {

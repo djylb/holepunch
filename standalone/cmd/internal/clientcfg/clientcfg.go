@@ -116,7 +116,7 @@ func clientTLS(caFile, pin, serverName string) (*tls.Config, error) {
 		tc.InsecureSkipVerify = true // the pin replaces the chain verification
 		tc.VerifyConnection = tlsid.VerifyPin(p)
 	case caFile != "":
-		pem, err := os.ReadFile(caFile)
+		pem, err := os.ReadFile(caFile) //nolint:gosec // G304: the CA file is the one the user named with the flag
 		if err != nil {
 			return nil, err
 		}

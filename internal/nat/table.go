@@ -57,9 +57,9 @@ type Row struct {
 	FirstSent time.Duration  // first probe of the point, relative to the probe start; < 0 unknown
 	FirstSeen time.Duration  // first time this value was seen (server-side tables: since Register)
 	LastSeen  time.Duration  // latest time this value was seen
-	Changes   uint8          // server-side tables: value changes natprobe recorded at the point
 	RTT       time.Duration  // minimum RTT (server and STUN sources); 0 unknown
 	Cookie    uint32         // COOKIE of the latest answer (report field c)
+	Changes   uint8          // server-side tables: value changes natprobe recorded at the point
 	Verified  bool           // server-side tables: recorded by natprobe and its cookie echoed
 }
 
@@ -165,7 +165,7 @@ func (t *ObsTable) NoteSent(k PointKey, seq uint32, at time.Duration) {
 	t.appendLocked(Row{Key: k, FirstSeq: seq, FirstSent: at, FirstSeen: -1, LastSeen: -1})
 }
 
-// Record adds an answer at point k carrying observed, received at at
+// Record adds an answer at point k carrying observed, received at time at
 // (relative to the probe start) with round-trip time rtt (0 unknown) and
 // cookie (probe_ack only), and reports whether the point now holds two or
 // more different values (drift). A value that is not a unicast address

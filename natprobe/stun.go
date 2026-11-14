@@ -55,7 +55,7 @@ func ResolveSTUN(ctx context.Context, lookup LookupFunc, servers []string) ([]ne
 			err = errors.New("port 0")
 		}
 		if err != nil {
-			res[i].err = fmt.Errorf("natprobe: STUN server %q: %v", server, err)
+			res[i].err = fmt.Errorf("natprobe: STUN server %q: %w", server, err)
 			continue
 		}
 		ports[i] = uint16(port)

@@ -130,6 +130,7 @@ func envCount(name string) (int, error) {
 // (removed with the test; the path is printed with each dump). Dumps never go
 // into the source tree.
 func failureDir(t testing.TB) string {
+	t.Helper()
 	if out := suite().out; out != "" {
 		return filepath.Join(out, "failures")
 	}

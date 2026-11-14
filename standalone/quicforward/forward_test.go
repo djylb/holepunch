@@ -156,6 +156,7 @@ func TestDialStopsWhenSocketClosed(t *testing.T) {
 // connection closed, while the host never accepts it.
 func TestPinMismatch(t *testing.T) {
 	impostor := func(t *testing.T) *quicforward.Identity {
+		t.Helper()
 		id, err := quicforward.NewIdentity()
 		if err != nil {
 			t.Fatal(err)
@@ -251,7 +252,9 @@ func TestStreamPolicy(t *testing.T) {
 	}()
 	defer func() {
 		cancel()
-		<-served
+		if err := <-served; err != nil {
+			t.Logf("serve returned: %v", err)
+		}
 		targets.wg.Wait()
 	}()
 	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
@@ -312,7 +315,9 @@ func TestTargetUnreachable(t *testing.T) {
 	}()
 	defer func() {
 		cancel()
-		<-served
+		if err := <-served; err != nil {
+			t.Logf("serve returned: %v", err)
+		}
 	}()
 	testkit.WaitFor(t, "the host to register", func() bool { return len(w.Broker.Snapshot().Hosts) == 1 })
 	id, _ := identities(t)
@@ -472,7 +477,9 @@ func TestConnectReopens(t *testing.T) {
 	host2, done2 := serveHost()
 	defer func() {
 		_ = host2.Close()
-		<-done2
+		if err := <-done2; err != nil {
+			t.Logf("serve returned: %v", err)
+		}
 	}()
 	testkit.WaitFor(t, "a round trip through the new host", func() bool {
 		c := ln.dial(t)

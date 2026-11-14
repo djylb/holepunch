@@ -73,11 +73,11 @@ func withV6(c nattest.NATConfig, fw nattest.Filtering) nattest.NATConfig {
 
 // worldConfig configures the server side of a cell.
 type worldConfig struct {
-	seed     int64
-	serverV6 bool // the server also observes IPv6
+	seed int64
 	// timeouts are the coordinator's protocol timeouts; zero takes the
 	// suite's shortened ones (e2eTimeouts).
 	timeouts protocol.Timeouts
+	serverV6 bool // the server also observes IPv6
 	// defaultTimeouts replaces the timeouts with the library's defaults,
 	// and the suite's BindTimeout with the coordinator's, for the
 	// default-timeout comparison: round 3 and beyond, and the
@@ -410,8 +410,8 @@ type side struct {
 // Uplink delays of the client NATs (10–40 ms on the control
 // links, a few to 20 ms on the NAT uplinks).
 const (
-	uplinkMin = 5 * time.Millisecond
-	uplinkMax = 20 * time.Millisecond
+	uplinkLow  = 5 * time.Millisecond
+	uplinkHigh = 20 * time.Millisecond
 )
 
 // behind builds a client behind nested NAT devices, outermost first (at
@@ -419,7 +419,7 @@ const (
 func (w *world) behind(cfgs []nattest.NATConfig, lan ...netip.Addr) *side {
 	outer := cfgs[0]
 	if outer.Uplink == (nattest.LinkConfig{}) {
-		outer.Uplink = nattest.LinkConfig{Delay: w.delay(uplinkMin, uplinkMax)}
+		outer.Uplink = nattest.LinkConfig{Delay: w.delay(uplinkLow, uplinkHigh)}
 	}
 	nat := w.n.NAT(outer)
 	chain := []*nattest.NAT{nat}

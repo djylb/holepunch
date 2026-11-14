@@ -118,6 +118,7 @@ func TestBackgroundEscalation(t *testing.T) {
 
 // escalate runs the sequences of one pair.
 func escalate(t *testing.T, name string, p [2]profile, runs int) escalationStat {
+	t.Helper()
 	release := acquireSlot()
 	defer release()
 	start := time.Now()

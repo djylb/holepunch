@@ -128,11 +128,11 @@ const (
 // Guarded by sender.mu, except direct, which is read-only.
 type roundMeter struct {
 	fam        protocol.Family
-	round      uint8
 	maxPackets int // the grant of planned packets and follow-ups; 0 = none
 	maxPorts   int // distinct ports per peer IP of grant-drawing packets; 0 = no limit
 	granted    int // packets drawn on the grant
 	sent       int // initiated packets of every quota (round_result.sent)
+	round      uint8
 	budgetHit  bool
 	pps        bucket
 	newT       bucket
@@ -194,6 +194,43 @@ type meterCount struct {
 	sent          int
 	distinctPorts int
 	budgetHit     bool
+}
+
+// sender is the only UDP write path of the library: every packet — punch,
+// reply, handshake, probe — passes its gate,
+// is sealed with the session codec and written under the socket's write
+// turn with a 100 ms deadline. It holds no goroutine and no timer of its
+// own; a send waiting for tokens waits on the caller's goroutine and ctx.
+// Each family's packets pass its lane one at a time, so that the run guard
+// (runs.go) sees them in the order they leave.
+type sender struct {
+	codec *udpwire.Codec
+	clk   clock.Clock
+	pace  *pacer
+	cnt   [2]*famCounters // by Family.Index
+	host  sendHost
+	hits  *punchState // the remotes that answered, which the run guard knows
+	lanes [2]*lane    // by Family.Index
+
+	mu         sync.Mutex
+	budget     protocol.Budget // the session budget; zero until the summary
+	initiated  int
+	handshakes int
+	pps        bucket
+	newT       bucket
+	targets    map[netip.AddrPort]struct{}
+	perIP      map[netip.Addr]*ipPorts
+	marks      []classMark
+	replyAt    map[replyKey]time.Time
+	replyKept  int         // reply times left by the last sweep
+	recent     []time.Time // initiated sends within the last second, for PeakPPS
+	peakPPS    int
+	failSince  time.Time // first write failure since the last success
+	lastOK     time.Time
+	stopped    bool // local Confirm: initiation over
+	everFailed bool
+
+	pool sync.Pool
 }
 
 // meterStats returns what the round meter m counted so far.
@@ -312,43 +349,6 @@ type classMark struct {
 type replyKey struct {
 	sock uint8
 	to   netip.AddrPort
-}
-
-// sender is the only UDP write path of the library: every packet — punch,
-// reply, handshake, probe — passes its gate,
-// is sealed with the session codec and written under the socket's write
-// turn with a 100 ms deadline. It holds no goroutine and no timer of its
-// own; a send waiting for tokens waits on the caller's goroutine and ctx.
-// Each family's packets pass its lane one at a time, so that the run guard
-// (runs.go) sees them in the order they leave.
-type sender struct {
-	codec *udpwire.Codec
-	clk   clock.Clock
-	pace  *pacer
-	cnt   [2]*famCounters // by Family.Index
-	host  sendHost
-	hits  *punchState // the remotes that answered, which the run guard knows
-	lanes [2]*lane    // by Family.Index
-
-	mu         sync.Mutex
-	budget     protocol.Budget // the session budget; zero until the summary
-	initiated  int
-	handshakes int
-	stopped    bool // local Confirm: initiation over
-	pps        bucket
-	newT       bucket
-	targets    map[netip.AddrPort]struct{}
-	perIP      map[netip.Addr]*ipPorts
-	marks      []classMark
-	replyAt    map[replyKey]time.Time
-	replyKept  int         // reply times left by the last sweep
-	recent     []time.Time // initiated sends within the last second, for PeakPPS
-	peakPPS    int
-	failSince  time.Time // first write failure since the last success
-	lastOK     time.Time
-	everFailed bool
-
-	pool sync.Pool
 }
 
 // sendHost is what the sender asks the session about: whether a

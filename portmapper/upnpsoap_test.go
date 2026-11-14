@@ -54,7 +54,7 @@ func TestSOAPRequest(t *testing.T) {
 	var body []byte
 	reply := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		action, ctype = r.Header.Get("SOAPAction"), r.Header.Get("Content-Type")
+		action, ctype = r.Header.Get("SoapAction"), r.Header.Get("Content-Type")
 		body, _ = io.ReadAll(r.Body)
 		_, _ = io.WriteString(w, reply)
 	}))
@@ -71,6 +71,8 @@ func TestSOAPRequest(t *testing.T) {
 	if err := svc.addPortMapping(context.Background(), 40000, 40001, "192.168.1.2", 3600); err != nil {
 		t.Fatal(err)
 	}
+	//nolint:staticcheck // SA1008: sent is the client-side header as written; the raw "SOAPAction" spelling is what the test pins
+	//lint:ignore SA1008 sent is the client-side header as written: the raw "SOAPAction" spelling is what the test pins
 	if action != `"`+urnWANIP1+`#AddPortMapping"` || !strings.HasPrefix(ctype, "text/xml") || len(sent["SOAPAction"]) != 1 {
 		t.Fatalf("SOAPAction %q, Content-Type %q", action, ctype)
 	}

@@ -42,8 +42,9 @@ func TestAssistRewrite(t *testing.T) {
 		got.Window != nil || got.Source != "" || got.Remote != pubR || got.Cand != 4097 {
 		t.Fatalf("forwarded %+v", got)
 	}
-	if raw, err = json.Marshal(&protocol.Assist{SessionID: p.s.ID(), Role: protocol.RoleInitiator, Kind: protocol.AssistPeerTargets,
-		Round: 1, Family: protocol.FamilyUDP4, Targets: []netip.AddrPort{pubR}}); err != nil {
+	raw, err = json.Marshal(&protocol.Assist{SessionID: p.s.ID(), Role: protocol.RoleInitiator, Kind: protocol.AssistPeerTargets,
+		Round: 1, Family: protocol.FamilyUDP4, Targets: []netip.AddrPort{pubR}})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := p.cl[0].SendFrame(ctx(t), wiretype.Assist, raw); err != nil {
@@ -147,8 +148,9 @@ func TestInject(t *testing.T) {
 		t.Fatalf("bad role: %v", err)
 	}
 	p.punching()
-	if err := p.s.Inject(protocol.RoleInitiator, protocol.Assist{Family: protocol.FamilyUDP4,
-		Targets: []netip.AddrPort{mustAP("8.8.8.8:53")}}); !invalidArgument(err) {
+	err := p.s.Inject(protocol.RoleInitiator, protocol.Assist{Family: protocol.FamilyUDP4,
+		Targets: []netip.AddrPort{mustAP("8.8.8.8:53")}})
+	if !invalidArgument(err) {
 		t.Fatalf("third-party target: %v", err)
 	}
 	if err := p.s.Inject(protocol.RoleInitiator, protocol.Assist{Family: "x"}); !invalidArgument(err) {
@@ -324,7 +326,7 @@ func TestLatePortMap(t *testing.T) {
 // has one queued is dropped, and drift is pushed only for a side's verified
 // IPs.
 func TestLatePortMapOnce(t *testing.T) {
-	_, s := testSession(t)
+	s := testSession(t)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u4 := protocol.FamilyUDP4
@@ -376,7 +378,7 @@ func TestSandwichAdjacent(t *testing.T) {
 // echoed the slot's cookie for that very value, and never a private one;
 // what the peer has in its summary, or was pushed before, is not pushed.
 func TestDriftVerification(t *testing.T) {
-	_, s := testSession(t)
+	s := testSession(t)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := &s.st

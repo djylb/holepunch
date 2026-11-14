@@ -46,12 +46,10 @@ func SideMappings(fs protocol.FamilySide, sent func(netip.AddrPort) int) (direct
 			}
 		case protocol.StagePredict:
 			spray += int(st.Span)
-		case protocol.StageRandom:
+		case protocol.StageRandom, protocol.StageFreshPeer:
 			spray += int(st.Count)
 		case protocol.StageFresh:
 			direct += int(st.Count) * max(len(st.Targets), 1)
-		case protocol.StageFreshPeer:
-			spray += int(st.Count)
 		}
 	}
 	return direct, spray

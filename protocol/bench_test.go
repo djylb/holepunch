@@ -7,6 +7,7 @@ import (
 )
 
 func benchFrame(b *testing.B, m Message) controlwire.Frame {
+	b.Helper()
 	f, err := marshalFrame(m)
 	if err != nil {
 		b.Fatal(err)

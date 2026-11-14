@@ -42,8 +42,8 @@ func famBit(v6 bool) uint8 {
 type conn struct {
 	h       *Host
 	purpose string
-	fams    uint8      // famV4 | famV6
 	ip      netip.Addr // bound address; invalid for a wildcard
+	fams    uint8      // famV4 | famV6
 	port    uint16
 	rec     *socketRecord
 

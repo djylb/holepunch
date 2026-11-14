@@ -723,6 +723,7 @@ func (fc *faultCell) heal() {
 
 // runFault runs one cell and returns its violations.
 func runFault(t *testing.T, row *faultRow, ph phase, exp faultExpect, seed int64) []string {
+	t.Helper()
 	fc := &faultCell{row: row, ph: ph, exp: exp, h: newCellHelpers()}
 	if row.peerTarget || ph == phResponderDone {
 		fc.target = 1 - observed

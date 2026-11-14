@@ -98,7 +98,7 @@ func TestPipeCloseGivesEOF(t *testing.T) {
 		t.Fatal(got)
 	}
 	_ = b.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := b.Read(make([]byte, 1)); err != io.EOF {
+	if _, err := b.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 		t.Fatalf("want EOF, got %v", err)
 	}
 	if _, err := b.Write([]byte("x")); !errors.Is(err, syscall.EPIPE) {
@@ -141,13 +141,13 @@ func TestPipeCut(t *testing.T) {
 		go func() { _, err := b.Read(make([]byte, 4)); done <- err }()
 		synctest.Wait()
 		a.Cut()
-		if err := <-done; err != io.EOF {
+		if err := <-done; !errors.Is(err, io.EOF) {
 			t.Fatalf("blocked read after Cut: %v", err)
 		}
 		if _, err := a.Write([]byte("x")); !errors.Is(err, syscall.ECONNRESET) {
 			t.Fatalf("write after Cut: %v", err)
 		}
-		if _, err := b.Read(make([]byte, 1)); err != io.EOF {
+		if _, err := b.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 			t.Fatal(err)
 		}
 		a.Cut() // idempotent
@@ -187,7 +187,7 @@ func TestPipeSetDelayAndCrash(t *testing.T) {
 	readN(t, b, 1)
 	h.Crash()
 	clk.Advance(100 * time.Millisecond)
-	if _, err := b.Read(make([]byte, 1)); err != io.EOF {
+	if _, err := b.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 		t.Fatalf("peer of a crashed host: %v", err)
 	}
 	if _, err := a.Write([]byte("x")); !isClosedErr(err) {
@@ -270,7 +270,7 @@ func TestPipeEveryBlockedReaderWakes(t *testing.T) {
 		synctest.Wait()
 		_ = a.Close()
 		for range readers {
-			if err := <-got; err != io.EOF {
+			if err := <-got; !errors.Is(err, io.EOF) {
 				t.Fatalf("a reader missed the EOF: %v", err)
 			}
 		}

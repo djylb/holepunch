@@ -149,19 +149,23 @@ func TestGatewayCache(t *testing.T) {
 		t.Fatal("first lookup")
 	}
 	fc.Advance(gatewayTTL - time.Second)
-	if lookup(); calls.Load() != 1 {
+	lookup()
+	if calls.Load() != 1 {
 		t.Fatal("cached entry not used")
 	}
 	fc.Advance(2 * time.Second)
-	if lookup(); calls.Load() != 2 {
+	lookup()
+	if calls.Load() != 2 {
 		t.Fatal("expired entry reused")
 	}
 	m.invalidateGateway(netip.MustParseAddr("10.9.9.9"))
-	if lookup(); calls.Load() != 2 {
+	lookup()
+	if calls.Load() != 2 {
 		t.Fatal("invalidating another address dropped the entry")
 	}
 	m.invalidateGateway(addr)
-	if lookup(); calls.Load() != 3 {
+	lookup()
+	if calls.Load() != 3 {
 		t.Fatal("invalidate did not drop the entry")
 	}
 

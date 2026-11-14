@@ -30,9 +30,9 @@ type solo struct {
 	role   protocol.Role
 }
 
-func newSolo(t *testing.T, w *world, cfg *nattest.NATConfig, tweak func(o *Options)) *solo {
+func newSolo(t *testing.T, w *world, tweak func(o *Options)) *solo {
 	t.Helper()
-	return newSoloOn(t, w, w.host(cfg), tweak)
+	return newSoloOn(t, w, w.host(nil), tweak)
 }
 
 // newSoloOn is newSolo on a given host.
@@ -63,14 +63,13 @@ func (so *solo) open() *srvLink {
 }
 
 // start sends punch_start (and ping#1) with the given timeouts.
-func (so *solo) start(to protocol.Timeouts) protocol.PunchStart { return so.startWith(to, nil) }
+func (so *solo) start(to protocol.Timeouts) { so.startWith(to, nil) }
 
 // startWith is start with the server's policy pol.
-func (so *solo) startWith(to protocol.Timeouts, pol *protocol.Policy) protocol.PunchStart {
+func (so *solo) startWith(to protocol.Timeouts, pol *protocol.Policy) {
 	ps := so.w.startFor(so.s, so.role, to, pol)
 	so.open().send(ps)
 	so.link.send(protocol.Ping{Seq: 1})
-	return ps
 }
 
 // report waits for the client's probe_report and merges it.

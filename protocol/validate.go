@@ -291,7 +291,7 @@ func (m PunchResult) Validate() error {
 	switch {
 	case len(m.ExtraPaths) > 0 && !m.OK:
 		return violation("extra_paths", "only when ok")
-	case len(m.ExtraPaths) > MaxPaths-1:
+	case len(m.ExtraPaths) >= MaxPaths:
 		return violation("extra_paths", "%d > %d", len(m.ExtraPaths), MaxPaths-1)
 	}
 	for i, p := range m.ExtraPaths {
@@ -844,7 +844,7 @@ func checkID(path, s string) error {
 	if len(s) < 1 || len(s) > MaxSessionID {
 		return violation(path, "%d bytes, want 1..%d", len(s), MaxSessionID)
 	}
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if c := s[i]; !nameChar(rune(c)) && (c < 'A' || c > 'Z') && c != '-' {
 			return violation(path, "byte %q outside [A-Za-z0-9_-]", c)
 		}
@@ -899,7 +899,7 @@ func CheckTransportMode(mode string) error {
 // count towards the total.
 func checkMeta(path string, meta map[string]string, maxKeys int) error {
 	for k, v := range meta {
-		if len(k) == 0 || len(k) > maxName {
+		if k == "" || len(k) > maxName {
 			return violation(path, "key of %d bytes", len(k))
 		}
 		if len(v) > maxMetaValue {
@@ -967,8 +967,8 @@ func checkDistinctFamily[T any](path string, fam Family, earlier []T, familyOf f
 }
 
 // isName reports whether s matches [a-z][a-z0-9_]{0,max-1}.
-func isName(s string, max int) bool {
-	if len(s) < 1 || len(s) > max || s[0] < 'a' || s[0] > 'z' {
+func isName(s string, limit int) bool {
+	if len(s) < 1 || len(s) > limit || s[0] < 'a' || s[0] > 'z' {
 		return false
 	}
 	for i := 1; i < len(s); i++ {

@@ -58,9 +58,9 @@ type PunchStart struct {
 	SessionID string      `json:"session_id"` // 1..64 bytes of [A-Za-z0-9_-]
 	Role      Role        `json:"role"`       // the receiver's role; the peer's is Role.Peer()
 	Token     Token       `json:"token"`      // base64url of 32 random bytes
-	Wire      WireSpec    `json:"wire"`
-	Control   ControlSpec `json:"control"` // version == frame major; features offered
+	Control   ControlSpec `json:"control"`    // version == frame major; features offered
 	Probe     ProbeSpec   `json:"probe"`
+	Wire      WireSpec    `json:"wire"`
 	Timeouts  Timeouts    `json:"timeouts"`
 	Policy    *Policy     `json:"policy,omitempty"` // this side's ceiling; the client may only tighten
 	// Mode is the server's offer: background
@@ -227,13 +227,13 @@ const (
 type PunchResult struct {
 	SessionID  string         `json:"session_id"`
 	Role       Role           `json:"role"`
-	OK         bool           `json:"ok"`
 	Reason     Reason         `json:"code,omitempty"`        // required when !ok
 	Phase      Phase          `json:"phase"`                 // the client phase at the end
 	Detail     string         `json:"detail,omitempty"`      // <= 256 B, human readable, no key material
 	Path       *PathInfo      `json:"path,omitempty"`        // required when ok, with confirmed_by
 	ExtraPaths []PathInfo     `json:"extra_paths,omitempty"` // only when ok: the other paths handed over with Path, <= MaxPaths-1, each with confirmed_by
 	Stats      Stats          `json:"stats"`
+	OK         bool           `json:"ok"`
 	Timing     Timing         `json:"timing"`
 	Traits     []TraitsUpdate `json:"traits,omitempty"` // <= 2: corrections of this side's traits
 	Warn       []Warning      `json:"warn,omitempty"`   // <= 8

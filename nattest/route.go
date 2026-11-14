@@ -42,7 +42,7 @@ func newPacket(b []byte) *packet {
 	// data copies b into the pooled array, which b cannot alias: a pooled
 	// array belongs to one packet and leaves the package only as the
 	// payload a Classifier inspects, which it must not keep.
-	p.data = append(p.buf[:0], b...)
+	p.data = append(p.buf[:0], b...) //nolint:gocritic // p.data deliberately aliases the pooled p.buf array; p.buf is kept only while within maxPooledPayload
 	if cap(p.data) <= maxPooledPayload {
 		p.buf = p.data[:0]
 	}

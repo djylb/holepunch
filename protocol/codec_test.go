@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,7 +43,7 @@ func TestWireExamples(t *testing.T) {
 	seen := map[MessageType]bool{}
 	for _, e := range manifest {
 		t.Run(e.File, func(t *testing.T) {
-			payload, err := os.ReadFile(filepath.Join("testdata/examples", e.File))
+			payload, err := os.ReadFile(filepath.Join("testdata", "examples", e.File))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -465,8 +466,8 @@ func TestLogValueRedacts(t *testing.T) {
 	start, report, summary := msgs[0].(PunchStart), msgs[3].(ProbeReport), msgs[4].(ProbeSummary)
 	tokenText, _ := start.Token.MarshalText()
 	routeText, _ := start.Wire.RouteID.MarshalText()
-	secrets := []string{string(tokenText), string(routeText), fmt.Sprintf("%x", start.Token[:]),
-		fmt.Sprintf("%x", start.Wire.RouteID[:]), base64.StdEncoding.EncodeToString(report.Transport.Data), base64.StdEncoding.EncodeToString(summary.Transport.PeerData)}
+	secrets := []string{string(tokenText), string(routeText), hex.EncodeToString(start.Token[:]),
+		hex.EncodeToString(start.Wire.RouteID[:]), base64.StdEncoding.EncodeToString(report.Transport.Data), base64.StdEncoding.EncodeToString(summary.Transport.PeerData)}
 	var jsonBuf, textBuf bytes.Buffer
 	slog.New(slog.NewJSONHandler(&jsonBuf, nil)).Info("x", "start", start, "report", report, "summary", summary,
 		"token", start.Token, "route", start.Wire.RouteID, "wire", start.Wire)
@@ -487,7 +488,7 @@ func TestLogValueRedacts(t *testing.T) {
 			}
 		}
 	}
-	prefix := fmt.Sprintf("%x", start.Wire.RouteID[:2])
+	prefix := hex.EncodeToString(start.Wire.RouteID[:2])
 	if !strings.Contains(jsonBuf.String(), `"route":"`+prefix+`"`) || !strings.Contains(jsonBuf.String(), testSession) {
 		t.Fatalf("log output lacks the route prefix or session:\n%s", jsonBuf.String())
 	}

@@ -95,7 +95,8 @@ func (rd *reader) loop(ctx context.Context) {
 				continue
 			}
 			rd.st.readErrs.Add(1)
-			if failures++; failures >= readErrorBurst {
+			failures++
+			if failures >= readErrorBurst {
 				failures = 0
 				if !pause(ctx, readErrorPause) {
 					return

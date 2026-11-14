@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -171,7 +172,7 @@ func TestPortPreserveOutsideRange(t *testing.T) {
 
 func TestPortSequentialStep(t *testing.T) {
 	for _, step := range []int{1, 2, -1, -2, 7} {
-		t.Run(fmt.Sprint(step), func(t *testing.T) {
+		t.Run(strconv.Itoa(step), func(t *testing.T) {
 			n := newNet(t)
 			nat := n.NAT(SymmetricSeq(step))
 			c := listen(t, nat.Host(), 5555)

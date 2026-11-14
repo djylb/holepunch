@@ -56,7 +56,7 @@ func (c *reqConn) exchange(ctx context.Context, server netip.AddrPort, req []byt
 		}
 		out = unanswered
 		isAnswer := false
-		_, err := c.readRound(ctx, time.Now().Add(interval), buf, func(b []byte, from netip.AddrPort) (bool, error) {
+		err := c.readRound(ctx, time.Now().Add(interval), buf, func(b []byte, from netip.AddrPort) (bool, error) {
 			if from != server {
 				return false, nil
 			}
@@ -82,28 +82,40 @@ func noAnswer(ctx context.Context, out outcome) error {
 }
 
 // readRound reads datagrams until match is done or fails, the socket fails,
-// the deadline passes or ctx ends; the last two return (false, nil).
-func (c *reqConn) readRound(ctx context.Context, deadline time.Time, buf []byte, match func([]byte, netip.AddrPort) (bool, error)) (bool, error) {
-	if err := c.pc.SetReadDeadline(deadline); err != nil {
-		if ctx.Err() != nil {
-			return false, nil // the end of ctx closed the socket: not a socket failure
-		}
-		return false, err
+// the deadline passes or ctx ends; the last two are not failures and
+// return nil, as does a done match.
+func (c *reqConn) readRound(ctx context.Context, deadline time.Time, buf []byte, match func([]byte, netip.AddrPort) (bool, error)) error {
+	err := c.pc.SetReadDeadline(deadline)
+	if roundEnded(ctx, err, false) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	for {
 		n, addr, err := c.pc.ReadFrom(buf)
-		if err != nil {
-			// The end of ctx closed the socket, or the deadline passed:
-			// neither is a socket failure, the caller retransmits or reports
-			// the end of ctx.
-			var ne net.Error
-			if ctx.Err() != nil || errors.As(err, &ne) && ne.Timeout() {
-				return false, nil
-			}
-			return false, err
+		if roundEnded(ctx, err, true) {
+			return nil
 		}
-		if done, err := match(buf[:n], netaddr.Unmap(netaddr.AddrPortOf(addr))); done || err != nil {
-			return done, err
+		if err != nil {
+			return err
+		}
+		if done, merr := match(buf[:n], netaddr.Unmap(netaddr.AddrPortOf(addr))); done || merr != nil {
+			return merr
 		}
 	}
+}
+
+// roundEnded reports whether the socket error err is no failure of the
+// socket but the end of the round: ctx ended and closed the socket or, when
+// timeout is set, the read deadline passed. The caller then retransmits or
+// reports the end of ctx. A nil err is no end.
+func roundEnded(ctx context.Context, err error, timeout bool) bool {
+	return err != nil && (ctx.Err() != nil || timeout && isTimeout(err))
+}
+
+// isTimeout reports whether err is a network timeout.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }

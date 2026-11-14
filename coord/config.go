@@ -76,15 +76,15 @@ type Config struct {
 	// Targets says whether the clients may aim at addresses the server
 	// could not verify; see TargetPolicy.
 	Targets TargetPolicy
+	// Timeouts are the protocol timeouts of the sessions (zero fields:
+	// protocol.DefaultTimeouts); summary_wait_ms is computed per link.
+	Timeouts protocol.Timeouts
 	// Probe builds each role's ProbeSpec; nil uses DefaultProbe.
 	Probe ProbeFunc
 	// DefaultProbe is the ProbeSpec used when Probe is nil and the session
 	// options give none: normally natprobe.Server.ProbeSpec of the server
 	// whose Registry this is. Its zero V is ProbeSpecVersion.
 	DefaultProbe protocol.ProbeSpec
-	// Timeouts are the protocol timeouts of the sessions (zero fields:
-	// protocol.DefaultTimeouts); summary_wait_ms is computed per link.
-	Timeouts protocol.Timeouts
 	// Policy is the default session policy; its budget is clamped to the
 	// operator ceiling (protocol.SessionBudgetLimit).
 	Policy *protocol.Policy
@@ -95,8 +95,6 @@ type Config struct {
 	TTL TTLConfig
 	// Limits are the admission, rate and frame limits.
 	Limits Limits
-	// Budget holds the extreme switch.
-	Budget BudgetConfig
 	// Planner plans the rounds; nil uses DefaultPlanner(). The coordinator
 	// does not trust it: it calls it outside every lock and inside a
 	// recover boundary, clamps every decision to the budget classes, the
@@ -118,6 +116,15 @@ type Config struct {
 	// merge and fed at the end of a session; nil uses
 	// natprobe.NewTraitsMemory with its defaults and NoMemory{} turns it off.
 	TraitsMemory natprobe.TraitsMemory
+	// Observer receives the session events, asynchronously and in order per
+	// session, from one dispatcher goroutine with a bounded queue: events
+	// that do not fit are dropped and counted. nil starts no dispatcher.
+	// Coordinator.Close joins the dispatcher, so Observer must not call Close.
+	//
+	//holepunch:callback
+	Observer func(Event)
+	// Budget holds the extreme switch.
+	Budget BudgetConfig
 	// NoWarm turns warm starts off. By default a client the TraitsMemory
 	// knows starts warm: a session with its ClientKey asks it
 	// (ProbeSpec.Warm) for an early probe_report once
@@ -131,13 +138,6 @@ type Config struct {
 	// the next round on. It needs a Registry, a TraitsMemory and the
 	// sessions' ClientKeys. Result.Warm tells how each side started.
 	NoWarm bool
-	// Observer receives the session events, asynchronously and in order per
-	// session, from one dispatcher goroutine with a bounded queue: events
-	// that do not fit are dropped and counted. nil starts no dispatcher.
-	// Coordinator.Close joins the dispatcher, so Observer must not call Close.
-	//
-	//holepunch:callback
-	Observer func(Event)
 	// ObserveProgress also turns every accepted punch_progress into an event.
 	ObserveProgress bool
 	// OnResult receives every session's Result exactly once, after all of the

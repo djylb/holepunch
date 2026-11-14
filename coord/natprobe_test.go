@@ -50,6 +50,7 @@ func (s *udpSock) WriteTo(b []byte, to netip.AddrPort) error {
 }
 
 func newUDPClient(t *testing.T, host *nattest.Host, start *protocol.PunchStart) *udpClient {
+	t.Helper()
 	role := udpwire.RoleInitiator
 	if start.Role == protocol.RoleResponder {
 		role = udpwire.RoleResponder
@@ -310,6 +311,7 @@ func TestNatprobeEndToEnd(t *testing.T) {
 }
 
 func ctxShort(t *testing.T) context.Context {
+	t.Helper()
 	c, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	t.Cleanup(cancel)
 	return c

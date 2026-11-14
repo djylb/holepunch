@@ -78,7 +78,6 @@ type Stats struct {
 // goroutine. See the package documentation for the model.
 type Conn struct {
 	nc        net.Conn
-	side      Side
 	wtimeout  time.Duration
 	maxFrames int
 	intercept func(*Conn, Frame) bool
@@ -94,6 +93,7 @@ type Conn struct {
 	readDone chan struct{} // closed when the reading goroutine has exited
 	readErr  error         // why reading ended; valid once readDone is closed
 	scratch  []byte        // buffer for discarded payloads (reading goroutine only)
+	side     Side
 
 	rmu     sync.Mutex
 	rsoft   bool          // stop at the next frame boundary
@@ -127,8 +127,8 @@ type Conn struct {
 	err      error
 
 	term struct {
-		once sync.Once
 		done chan struct{}
+		once sync.Once
 		mode termMode // which terminal operation ran
 		err  error
 	}

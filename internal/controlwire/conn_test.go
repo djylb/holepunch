@@ -132,7 +132,7 @@ func must(t testing.TB, err error) {
 
 // stalledConn returns a Conn whose writer is stuck in its first write until
 // release is closed.
-func stalledConn(t *testing.T, side Side) (c *Conn, peer net.Conn, release chan struct{}) {
+func stalledConn(t *testing.T) (c *Conn, peer net.Conn, release chan struct{}) {
 	t.Helper()
 	a, b := net.Pipe()
 	t.Cleanup(func() { _ = b.Close() })
@@ -146,18 +146,14 @@ func stalledConn(t *testing.T, side Side) (c *Conn, peer net.Conn, release chan 
 			<-release
 		}
 	})
-	c = mustConn(t, rc, ConnOptions{Side: side})
-	first := wiretype.Pong
-	if side == SideServer {
-		first = wiretype.Ping
-	}
-	must(t, c.Send(Frame{Type: first, Payload: []byte("first")}))
+	c = mustConn(t, rc, ConnOptions{Side: SideClient})
+	must(t, c.Send(Frame{Type: wiretype.Pong, Payload: []byte("first")}))
 	testkit.WaitFor(t, "the stalled write", func() bool { return rc.Writes() == 1 })
 	return c, b, release
 }
 
 func TestQueueBoundsAndDropPolicies(t *testing.T) {
-	c, peer, release := stalledConn(t, SideClient)
+	c, peer, release := stalledConn(t)
 	for range queueCap(wiretype.P0) {
 		must(t, c.Send(Frame{Type: wiretype.Pong}))
 	}
@@ -205,7 +201,7 @@ func TestQueueBoundsAndDropPolicies(t *testing.T) {
 }
 
 func TestSendCoalesced(t *testing.T) {
-	c, peer, release := stalledConn(t, SideClient)
+	c, peer, release := stalledConn(t)
 	must(t, c.SendCoalesced(Frame{Type: wiretype.Progress, Payload: []byte("probe_done 1")}, "probe_done"))
 	must(t, c.SendCoalesced(Frame{Type: wiretype.Progress, Payload: []byte("fire")}, "fire"))
 	must(t, c.SendCoalesced(Frame{Type: wiretype.Progress, Payload: []byte("probe_done 2")}, "probe_done"))
@@ -277,7 +273,7 @@ func TestWriteFrameAndFlush(t *testing.T) {
 	}
 
 	// A frame still queued when ctx ends is withdrawn and never written.
-	c2, peer, release := stalledConn(t, SideClient)
+	c2, peer, release := stalledConn(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	if err := c2.WriteFrame(ctx, Frame{Type: wiretype.RoundResult, Payload: []byte("late")}); !errors.Is(err, context.DeadlineExceeded) {
@@ -298,7 +294,7 @@ func TestWriteFrameAndFlush(t *testing.T) {
 // TestFlushTargetsFramesQueuedBeforeIt: Flush does not wait for frames queued
 // after it started.
 func TestFlushTargetsFramesQueuedBeforeIt(t *testing.T) {
-	c, peer, release := stalledConn(t, SideClient)
+	c, peer, release := stalledConn(t)
 	done := make(chan error, 1)
 	ctx := newDoneSignal(context.Background())
 	go func() { done <- c.Flush(ctx) }()

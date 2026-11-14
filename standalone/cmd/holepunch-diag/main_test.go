@@ -32,7 +32,9 @@ func TestProbeEcho(t *testing.T) {
 	}()
 	defer func() {
 		cancel()
-		<-served
+		if err := <-served; err != nil {
+			t.Logf("serve returned: %v", err)
+		}
 	}()
 	testkit.WaitFor(t, "the echo host to register", func() bool { return len(w.Broker.Snapshot().Hosts) != 0 })
 	dialC := w.Client(w.NATHost(nattest.SymmetricSeq(1)), nil)

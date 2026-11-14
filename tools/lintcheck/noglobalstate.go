@@ -147,11 +147,11 @@ func (ps *pass) globalDecl(vs *ast.ValueSpec) {
 			value = vs.Values[i]
 		}
 		if what := ps.mutableKind(vs.Type, value, id.Name); what != "" {
-			ps.c.report(id.Pos(), ruleNoGlobalState, "package-level var %s holds %s; keep mutable state in an instance", id.Name, what)
+			ps.c.reportf(id.Pos(), ruleNoGlobalState, "package-level var %s holds %s; keep mutable state in an instance", id.Name, what)
 			continue
 		}
 		if pos, ok := ps.c.writes[varKey{ps.p.path, id.Name}]; ok {
-			ps.c.report(id.Pos(), ruleNoGlobalState, "package-level var %s is mutable (written or address taken at %s); keep mutable state in an instance", id.Name, ps.c.where(pos))
+			ps.c.reportf(id.Pos(), ruleNoGlobalState, "package-level var %s is mutable (written or address taken at %s); keep mutable state in an instance", id.Name, ps.c.where(pos))
 		}
 	}
 }

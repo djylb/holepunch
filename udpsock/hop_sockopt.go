@@ -6,7 +6,7 @@ import "syscall"
 
 // hopOption is the socket option holding the unicast TTL of the family. The
 // names are the same on Unix and Windows (where both values are 4).
-func hopOption(v6 bool) (level, opt int) {
+func hopOption(v6 bool) (level, opt int) { //nolint:unparam // opt is 4 for both families on darwin and windows only; Linux has IP_TTL 2 and IPV6_UNICAST_HOPS 16
 	if v6 {
 		return syscall.IPPROTO_IPV6, syscall.IPV6_UNICAST_HOPS
 	}

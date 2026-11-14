@@ -154,6 +154,15 @@ func anchorNewest(r api.AnchorRefresh) (port uint16, at time.Duration, before, a
 	return r.First.Port(), r.FirstAt, 0, 1
 }
 
+// anchorNewestAt is the time of the refresh's newest mapping, as anchorNewest
+// reports it.
+func anchorNewestAt(r api.AnchorRefresh) time.Duration {
+	if r.Second.IsValid() {
+		return r.SecondAt
+	}
+	return r.FirstAt
+}
+
 // anchorRate is the allocation rate of other hosts between a refresh's two
 // mappings, in steps a second: the steps between them less the
 // second one, over the time between them. A refresh missing a probe
@@ -212,7 +221,7 @@ func refreshRate(in input, role int, r api.AnchorRefresh, tr protocol.Traits, st
 // the fire at 20 a second, so the margin keeps most of the spread on the
 // side the offset pairs cover.
 func refreshDrift(lambda float64, r api.AnchorRefresh, at time.Duration) int {
-	_, newestAt, _, _ := anchorNewest(r)
+	newestAt := anchorNewestAt(r)
 	if at <= newestAt {
 		return 0
 	}
