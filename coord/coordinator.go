@@ -19,7 +19,12 @@ import (
 const (
 	housekeepEvery = 10 * time.Second // quota table and memory TTL sweeps
 	closeBound     = 3 * time.Second  // Close's internal bound
-	memorySweepMax = 1024             // memory entries scanned per housekeeping round
+	// rootJoinMin is the least time Close leaves to join the coordinator's
+	// own goroutines (dispatcher, housekeeping), which exit at once once
+	// told to: sessions stuck in user code may use all of closeBound, and
+	// these goroutines must not be counted stuck for it.
+	rootJoinMin    = 250 * time.Millisecond
+	memorySweepMax = 1024 // memory entries scanned per housekeeping round
 )
 
 // Coordinator creates and supervises sessions. Its methods are safe for
@@ -163,7 +168,8 @@ func (c *Coordinator) Memory() StrategyMemory { return c.set.memory }
 // only have their links closed — delivers their Results (OnResult has
 // returned for each, and their EvClosed events are queued before the event
 // dispatcher stops) and stops the coordinator's goroutines. It waits at
-// most 3 s. It is idempotent and safe for concurrent use: every caller waits
+// most 3.25 s: 3 s for the sessions, and at least 250 ms to join its own
+// goroutines. It is idempotent and safe for concurrent use: every caller waits
 // for the first call's shutdown and gets its result. NewSession and Attach
 // return ErrClosed afterwards.
 //
@@ -202,7 +208,7 @@ func (c *Coordinator) shutdown() error {
 	c.closeStep(&errs, func() { errs.add(faultinject.Point(fiClose)) })
 	c.closeStep(&errs, func() { c.cancelSessions(&ReasonError{Reason: protocol.ReasonServerShutdown}) })
 	c.closeStep(&errs, func() { drained = c.awaitDrained(deadline) })
-	c.closeStep(&errs, func() { _ = c.root.Close(max(time.Until(deadline), time.Millisecond)) })
+	c.closeStep(&errs, func() { _ = c.root.Close(max(time.Until(deadline), rootJoinMin)) })
 	c.closeStep(&errs, func() {
 		c.mu.Lock()
 		stuck := c.live
