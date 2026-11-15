@@ -19,11 +19,11 @@ import (
 const (
 	housekeepEvery = 10 * time.Second // quota table and memory TTL sweeps
 	closeBound     = 3 * time.Second  // Close's internal bound
-	// rootJoinMin is the least time Close leaves to join the coordinator's
-	// own goroutines (dispatcher, housekeeping), which exit at once once
-	// told to: sessions stuck in user code may use all of closeBound, and
+	// rootJoinFloor is the least time Close leaves to join the coordinator's
+	// own goroutines (dispatcher, housekeeping), which exit as soon as they
+	// are told to: sessions stuck in user code may use all of closeBound, and
 	// these goroutines must not be counted stuck for it.
-	rootJoinMin    = 250 * time.Millisecond
+	rootJoinFloor  = 250 * time.Millisecond
 	memorySweepMax = 1024 // memory entries scanned per housekeeping round
 )
 
@@ -208,7 +208,7 @@ func (c *Coordinator) shutdown() error {
 	c.closeStep(&errs, func() { errs.add(faultinject.Point(fiClose)) })
 	c.closeStep(&errs, func() { c.cancelSessions(&ReasonError{Reason: protocol.ReasonServerShutdown}) })
 	c.closeStep(&errs, func() { drained = c.awaitDrained(deadline) })
-	c.closeStep(&errs, func() { _ = c.root.Close(max(time.Until(deadline), rootJoinMin)) })
+	c.closeStep(&errs, func() { _ = c.root.Close(max(time.Until(deadline), rootJoinFloor)) })
 	c.closeStep(&errs, func() {
 		c.mu.Lock()
 		stuck := c.live
