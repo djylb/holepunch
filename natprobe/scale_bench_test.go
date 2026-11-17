@@ -3,15 +3,13 @@ package natprobe
 import (
 	"fmt"
 	"net/netip"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/protocol"
 )
-
-// benchSink keeps constructed values on the heap.
-var benchSink any
 
 // scaleSizes are the table sizes of the small and the large end.
 var scaleSizes = []int{16, 1 << 20}
@@ -28,7 +26,7 @@ func BenchmarkSourceLimiter(b *testing.B) {
 		b.Run(fmt.Sprint("new/n=", n), func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				benchSink = newSourceLimiter(Rate{PerSec: 1e9, Burst: 1e9}, n)
+				runtime.KeepAlive(newSourceLimiter(Rate{PerSec: 1e9, Burst: 1e9}, n)) // keeps it on the heap
 			}
 		})
 		b.Run(fmt.Sprint("allow/n=", n), func(b *testing.B) {
@@ -53,7 +51,7 @@ func BenchmarkTraitsMemoryScale(b *testing.B) {
 		b.Run(fmt.Sprint("new/n=", n), func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				benchSink = NewTraitsMemory(TraitsMemoryConfig{MaxEntries: n})
+				runtime.KeepAlive(NewTraitsMemory(TraitsMemoryConfig{MaxEntries: n})) // keeps it on the heap
 			}
 		})
 		b.Run(fmt.Sprint("observe/n=", n), func(b *testing.B) {

@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"net/netip"
+	"runtime"
 	"testing"
 	"time"
 
@@ -80,12 +81,15 @@ func TestSlotsPerRoleConfigurable(t *testing.T) {
 // The source limiter allocates nothing up front for its bound: a large
 // table costs what a small one does until sources arrive.
 func TestSourceLimiterLazy(t *testing.T) {
-	small := testing.AllocsPerRun(5, func() { benchSink = newSourceLimiter(Rate{PerSec: 1, Burst: 1}, srcShards) })
-	large := testing.AllocsPerRun(5, func() { benchSink = newSourceLimiter(Rate{PerSec: 1, Burst: 1}, 1<<24) })
+	small := testing.AllocsPerRun(5, func() { runtime.KeepAlive(newSourceLimiter(Rate{PerSec: 1, Burst: 1}, srcShards)) })
+	large := testing.AllocsPerRun(5, func() { runtime.KeepAlive(newSourceLimiter(Rate{PerSec: 1, Burst: 1}, 1<<24)) })
 	if large > small {
 		t.Fatalf("construction allocates %v at size 16, %v at 1<<24", small, large)
 	}
 	l := newSourceLimiter(Rate{PerSec: 1, Burst: 1}, 1<<24)
+	if l == nil {
+		t.Fatal("no limiter for a positive rate")
+	}
 	for i := range 1000 {
 		l.allow(addrN(i), int64(time.Hour))
 	}
