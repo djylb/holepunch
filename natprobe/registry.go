@@ -19,14 +19,13 @@ import (
 const (
 	defaultMaxEntries    = 16384
 	defaultSlotsPerRole  = 24
-	maxSlotsPerRole      = 64
+	maxSlotPairs         = 256 * 256 // distinct (socket, observer) pairs: both are bytes
 	defaultProbeBudget   = 96
 	defaultExtraQuota    = 8
 	defaultAltQuota      = 2
 	defaultSessionPerSec = 16
 	defaultSessionBurst  = 32
 	defaultSandwichQueue = 8
-	maxSandwichQueue     = 1024
 	defaultTTL           = 60 * time.Second // the library's fallback; coord passes BindTimeout+probe+ReportSlack+5 s
 	fullSweepGap         = time.Second
 	minSweepLen          = 64 // below it the table is not swept for growth alone
@@ -39,12 +38,12 @@ const tokenTagDomain = "holepunch/1 natprobe token tag" //nolint:gosec // G101: 
 // RegistryConfig configures a Registry; zero fields take the defaults.
 type RegistryConfig struct {
 	MaxEntries         int         // live sessions, default 16384, negative unlimited; when full the expired entries are dropped, then ErrRegistryFull
-	SlotsPerRole       int         // observation slots (socket, observer) per role, default 24, at most 64
+	SlotsPerRole       int         // observation slots (socket, observer) per role, default 24, negative unlimited (at most 65536 pairs exist)
 	ProbeBudgetPerRole uint16      // probes accepted per (session, role) in its lifetime, default 96
 	ExtraQuotaPerRole  uint8       // extra replies per (session, role), default 8
 	AltQuotaPerRole    uint8       // change-IP replies per (session, role), default 2
 	SessionRate        Rate        // per (session, role), default {16, 32}
-	SandwichQueue      int         // undelivered sandwich events per session, default 8; more are dropped
+	SandwichQueue      int         // undelivered sandwich events per session, default 8, negative unlimited; more are dropped
 	Clock              clock.Clock // nil means the system clock; the clock of every expiry and rate decision
 }
 
@@ -85,8 +84,15 @@ func NewRegistry(cfg RegistryConfig) *Registry {
 	if cfg.MaxEntries == 0 {
 		cfg.MaxEntries = defaultMaxEntries
 	}
-	cfg.SlotsPerRole = defaultBounded(cfg.SlotsPerRole, defaultSlotsPerRole, maxSlotsPerRole)
-	cfg.SandwichQueue = defaultBounded(cfg.SandwichQueue, defaultSandwichQueue, maxSandwichQueue)
+	if cfg.SlotsPerRole == 0 {
+		cfg.SlotsPerRole = defaultSlotsPerRole
+	}
+	if cfg.SlotsPerRole < 0 {
+		cfg.SlotsPerRole = maxSlotPairs
+	}
+	if cfg.SandwichQueue == 0 {
+		cfg.SandwichQueue = defaultSandwichQueue
+	}
 	if cfg.ProbeBudgetPerRole == 0 {
 		cfg.ProbeBudgetPerRole = defaultProbeBudget
 	}
@@ -109,14 +115,6 @@ func NewRegistry(cfg RegistryConfig) *Registry {
 	r := &Registry{cfg: cfg, now: now}
 	r.epoch = now()
 	return r
-}
-
-// defaultBounded returns v, or def when v ≤ 0, at most hi.
-func defaultBounded(v, def, hi int) int {
-	if v <= 0 {
-		v = def
-	}
-	return min(v, hi)
 }
 
 // mono converts t to the registry's monotonic nanoseconds.

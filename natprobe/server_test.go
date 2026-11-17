@@ -241,7 +241,6 @@ func TestNewServerValidation(t *testing.T) {
 		"extra sockets":    {Registry: reg, Groups: loGroup(), ExtraSockets: 17},
 		"readers":          {Registry: reg, Groups: loGroup(), ReadersPerListener: 9},
 		"table":            {Registry: reg, Groups: loGroup(), SourceTableSize: 3},
-		"table too large":  {Registry: reg, Groups: loGroup(), SourceTableSize: math.MaxInt}, // validated, never preallocated
 		"invalid bind":     {Registry: reg, Groups: []ObserverGroup{{}}},
 		"mapped bind":      {Registry: reg, Groups: []ObserverGroup{{Bind: netip.MustParseAddr("::ffff:127.0.0.1")}}},
 		"zoned bind":       {Registry: reg, Groups: []ObserverGroup{{Bind: netip.MustParseAddr("fe80::1%lo0")}}},

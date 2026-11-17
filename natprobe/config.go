@@ -23,8 +23,7 @@ const (
 	defaultSourcePerSec = 512
 	defaultSourceBurst  = 1024
 	defaultSourceTable  = 4096
-	maxSourceTable      = 1 << 20 // the limiter preallocates its table, so the size is bounded
-	maxObserverGroups   = 32      // observer id = observer group*8 + port index fits a byte
+	maxObserverGroups   = 32 // observer id = observer group*8 + port index fits a byte
 	portsPerGroup       = 8
 	maxFamilyObservers  = 16 // a family's observer ids
 )
@@ -90,7 +89,7 @@ type ServerConfig struct {
 	ExtraSockets       int             // extra-reply pool per group, default 4, 1..16; fixed, never rotated
 	ReadersPerListener int             // default 2, 1..8
 	SourceRate         Rate            // per source prefix (v4 /32, v6 /64), default {512, 1024}; PerSec < 0 disables it
-	SourceTableSize    int             // source limiter LRU size, default 4096, 16..1<<20
+	SourceTableSize    int             // source limiter LRU size, default 4096, at least 16; the table grows with the sources seen
 
 	// Listen opens one UDP socket; nil means net.ListenUDP. Its signature is
 	// that of nattest.Host.Listen. An injected Listen also
@@ -136,8 +135,8 @@ func normalize(cfg ServerConfig) (ServerConfig, error) {
 		return cfg, fmt.Errorf("natprobe: config: ReadersPerListener %d not in [1, %d]", cfg.ReadersPerListener, maxReaders)
 	case cfg.SourceRate.PerSec == 0:
 		return cfg, errors.New("natprobe: config: SourceRate.PerSec is 0")
-	case cfg.SourceTableSize < srcShards || cfg.SourceTableSize > maxSourceTable:
-		return cfg, fmt.Errorf("natprobe: config: SourceTableSize %d not in [%d, %d]", cfg.SourceTableSize, srcShards, maxSourceTable)
+	case cfg.SourceTableSize < srcShards:
+		return cfg, fmt.Errorf("natprobe: config: SourceTableSize %d below %d", cfg.SourceTableSize, srcShards)
 	case len(cfg.Groups) == 0:
 		return cfg, errors.New("natprobe: config: no group")
 	}

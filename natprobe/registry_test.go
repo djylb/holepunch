@@ -300,15 +300,18 @@ func TestAttachSandwichSinkBridge(t *testing.T) {
 
 // The registry config takes its defaults and bounds.
 func TestRegistryDefaults(t *testing.T) {
-	reg := NewRegistry(RegistryConfig{MaxEntries: 1 << 30, SlotsPerRole: 1000, SandwichQueue: -1, SessionRate: Rate{PerSec: 5}})
+	reg := NewRegistry(RegistryConfig{MaxEntries: 1 << 30, SlotsPerRole: 1000, SandwichQueue: 5000, SessionRate: Rate{PerSec: 5}})
 	c := reg.cfg
-	if c.MaxEntries != 1<<30 || c.SlotsPerRole != maxSlotsPerRole || c.SandwichQueue != defaultSandwichQueue ||
+	if c.MaxEntries != 1<<30 || c.SlotsPerRole != 1000 || c.SandwichQueue != 5000 ||
 		c.SessionRate != (Rate{PerSec: 5, Burst: 10}) || c.ProbeBudgetPerRole != defaultProbeBudget ||
 		c.ExtraQuotaPerRole != defaultExtraQuota || c.AltQuotaPerRole != defaultAltQuota {
 		t.Fatalf("config %+v", c)
 	}
-	if NewRegistry(RegistryConfig{}).cfg.MaxEntries != defaultMaxEntries {
-		t.Fatal("default MaxEntries")
+	if c := NewRegistry(RegistryConfig{}).cfg; c.MaxEntries != defaultMaxEntries || c.SlotsPerRole != defaultSlotsPerRole || c.SandwichQueue != defaultSandwichQueue {
+		t.Fatalf("defaults %+v", c)
+	}
+	if c := NewRegistry(RegistryConfig{SlotsPerRole: -1, SandwichQueue: -1}).cfg; c.SlotsPerRole != maxSlotPairs || c.SandwichQueue >= 0 {
+		t.Fatalf("unlimited %+v", c)
 	}
 	if NewRegistry(RegistryConfig{}).cfg.SessionRate != (Rate{PerSec: defaultSessionPerSec, Burst: defaultSessionBurst}) {
 		t.Fatal("default session rate")

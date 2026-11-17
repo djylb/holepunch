@@ -2,6 +2,7 @@ package natprobe
 
 import (
 	"encoding/binary"
+	"math"
 	"net/netip"
 	"sync"
 )
@@ -12,8 +13,9 @@ const srcShards = 16
 // sourceLimiter is the per-source-prefix token bucket (v4 /32, v6 /64) that
 // runs before the route lookup, so a flood of
 // random routes costs a hash and a map lookup each. It is a bounded, sharded
-// LRU of GCRA states with preallocated nodes: a known prefix costs no
-// allocation and an unknown one evicts the least recently used.
+// LRU of GCRA states whose nodes grow with the prefixes seen, up to the
+// shard's bound: a known prefix costs no allocation, an unknown one grows
+// the shard (amortised) or, at the bound, evicts the least recently used.
 type sourceLimiter struct {
 	rate   Rate
 	shards [srcShards]srcShard
@@ -37,7 +39,8 @@ type srcShard struct {
 	idx        map[srcKey]int32
 	nodes      []srcNode
 	head, tail int32 // most and least recently used; -1 when empty
-	_          [40]byte
+	bound      int32 // nodes this shard may hold
+	_          [36]byte
 }
 
 // newSourceLimiter returns a limiter for rate holding about size prefixes, or
@@ -46,13 +49,11 @@ func newSourceLimiter(rate Rate, size int) *sourceLimiter {
 	if rate.PerSec < 0 {
 		return nil
 	}
-	per := max(size/srcShards, 1)
+	per := int32(min(max(size/srcShards, 1), math.MaxInt32))
 	l := &sourceLimiter{rate: rate}
 	for i := range l.shards {
 		sh := &l.shards[i]
-		sh.idx = make(map[srcKey]int32, per)
-		sh.nodes = make([]srcNode, 0, per)
-		sh.head, sh.tail = -1, -1
+		sh.head, sh.tail, sh.bound = -1, -1, per
 	}
 	return l
 }
@@ -93,7 +94,10 @@ func (l *sourceLimiter) allow(a netip.Addr, now int64) bool {
 // the shard is full.
 func (sh *srcShard) insert(k srcKey) int32 {
 	var i int32
-	if len(sh.nodes) < cap(sh.nodes) {
+	if sh.idx == nil {
+		sh.idx = make(map[srcKey]int32)
+	}
+	if len(sh.nodes) < int(sh.bound) {
 		sh.nodes = append(sh.nodes, srcNode{})
 		i = int32(len(sh.nodes) - 1)
 	} else {

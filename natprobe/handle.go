@@ -152,7 +152,7 @@ func (h *handle) AttachSandwichSink(sink func(nat.SandwichEvent)) {
 	if h == nil || h.e == nil {
 		return
 	}
-	if p := h.e.sandwich.attach(sink, h.r.cfg.SandwichQueue); p > 0 {
+	if p := h.e.sandwich.attach(sink); p > 0 {
 		h.r.sinkPanics.Add(uint64(p))
 	}
 }

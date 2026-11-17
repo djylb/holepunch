@@ -19,12 +19,13 @@ import (
 // and the one being delivered. When it is reached, new events are dropped.
 // The deliverer takes the next event under the lock and checks closed first,
 // so once close returns no new sink call starts; a call already running may
-// still be returning. The ring is a fixed array of the configured capacity,
-// so queueing and delivering never allocate.
+// still be returning. The ring grows on demand, doubling up to the bound,
+// so a session that queues few events holds a small ring whatever the
+// bound, and once grown, queueing and delivering never allocate.
 type sandwichQueue struct {
 	mu         sync.Mutex
 	sink       func(nat.SandwichEvent)
-	ring       []nat.SandwichEvent // capacity slots, allocated on first use
+	ring       []nat.SandwichEvent // grown on demand, at most capacity slots
 	head, n    int                 // first queued event and the number queued
 	delivering bool                // an event is out of the ring and in the sink
 	closed     bool
@@ -38,12 +39,12 @@ func (q *sandwichQueue) offer(ev nat.SandwichEvent, capacity int) (queued bool, 
 	if q.delivering {
 		inSink = 1
 	}
-	if q.closed || q.n+inSink >= capacity {
+	if q.closed || capacity >= 0 && q.n+inSink >= capacity {
 		q.mu.Unlock()
 		return false, 0
 	}
-	if q.ring == nil {
-		q.ring = make([]nat.SandwichEvent, capacity)
+	if q.n == len(q.ring) {
+		q.grow(capacity)
 	}
 	q.ring[(q.head+q.n)%len(q.ring)] = ev
 	q.n++
@@ -52,17 +53,31 @@ func (q *sandwichQueue) offer(ev nat.SandwichEvent, capacity int) (queued bool, 
 
 // attach sets the sink and delivers what is queued, on the caller's
 // goroutine, and returns how many sink calls panicked.
-func (q *sandwichQueue) attach(sink func(nat.SandwichEvent), capacity int) (panics int) {
+func (q *sandwichQueue) attach(sink func(nat.SandwichEvent)) (panics int) {
 	q.mu.Lock()
 	if q.closed {
 		q.mu.Unlock()
 		return 0
 	}
 	q.sink = sink
-	if q.ring == nil {
-		q.ring = make([]nat.SandwichEvent, capacity)
-	}
 	return q.deliverLocked()
+}
+
+// sandwichRingMin is the first ring size: the default bound, so that a
+// session under the default never grows its ring.
+const sandwichRingMin = defaultSandwichQueue
+
+// grow doubles the full ring, at most to capacity (a negative capacity is
+// unbounded), and unrolls the queued events to its start.
+func (q *sandwichQueue) grow(capacity int) {
+	size := max(2*len(q.ring), sandwichRingMin)
+	if capacity >= 0 {
+		size = min(size, capacity)
+	}
+	ring := make([]nat.SandwichEvent, size)
+	n := copy(ring, q.ring[q.head:])
+	copy(ring[n:], q.ring[:q.head])
+	q.ring, q.head = ring, 0
 }
 
 // deliverLocked is called with mu held and returns with it released. Unless
