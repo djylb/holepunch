@@ -418,7 +418,7 @@ func TestRegistryWriteCostFlat(t *testing.T) {
 }
 
 // Expired entries do not pile up while the table is far from full: a table
-// that doubled since its last sweep is swept again (at most once a second).
+// that doubled since its last sweep is swept again.
 func TestRegistryGrowthSweep(t *testing.T) {
 	clk := clock.NewFake(t, time.Time{})
 	reg := NewRegistry(RegistryConfig{MaxEntries: -1, Clock: clk})
@@ -456,5 +456,62 @@ func TestRegistryReplaceExpired(t *testing.T) {
 	h2.Close()
 	if reg.Len() != 0 || reg.lookup(rt(1)) != nil {
 		t.Fatalf("len %d after close", reg.Len())
+	}
+}
+
+// The growth sweep is not rate-limited by time: with the clock frozen
+// between registrations, the expired entries stay bounded by about the
+// live ones however fast the registrations come.
+func TestRegistryGrowthSweepTimeIndependent(t *testing.T) {
+	clk := clock.NewFake(t, time.Time{})
+	reg := NewRegistry(RegistryConfig{MaxEntries: -1, Clock: clk})
+	const live = 100
+	clk.Advance(time.Millisecond)
+	for range 50 {
+		for range live {
+			if _, err := reg.register(nat.Registration{SessionID: "s", Route: protocol.NewRouteID(), Token: tok(1), TTL: time.Nanosecond}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		clk.Advance(time.Nanosecond) // the batch expires; far below any time-based gap
+	}
+	if reg.Len() > 2*live+minSweepLen {
+		t.Fatalf("%d entries kept for at most %d live", reg.Len(), live)
+	}
+}
+
+// A full table whose entries all expired takes a registration at once,
+// even right after a sweep: nothing waits out a sweep interval.
+func TestRegistryFullOfExpiredRightAfterSweep(t *testing.T) {
+	clk := clock.NewFake(t, time.Time{})
+	reg := NewRegistry(RegistryConfig{MaxEntries: 4, Clock: clk})
+	clk.Advance(time.Second)
+	reg.sweep(clk.Now()) // a sweep has just run
+	for range 4 {
+		if _, err := reg.register(nat.Registration{SessionID: "s", Route: protocol.NewRouteID(), Token: tok(1), TTL: time.Millisecond}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clk.Advance(2 * time.Millisecond)
+	for round := range 4 { // each round starts on a full table of expired entries
+		for i := range 4 {
+			if _, err := reg.register(nat.Registration{SessionID: "n", Route: protocol.NewRouteID(), Token: tok(2), TTL: time.Millisecond}); err != nil {
+				t.Fatalf("round %d, registration %d: %v", round, i, err)
+			}
+		}
+		clk.Advance(2 * time.Millisecond)
+	}
+	// a full table of live entries refuses without sweeping again
+	for range 4 {
+		if _, err := reg.register(nat.Registration{SessionID: "l", Route: protocol.NewRouteID(), Token: tok(3), TTL: time.Hour}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := reg.nextExpiry.Load()
+	if _, err := reg.register(nat.Registration{SessionID: "x", Route: protocol.NewRouteID(), Token: tok(4), TTL: time.Hour}); !errors.Is(err, ErrRegistryFull) {
+		t.Fatalf("full of live entries: %v", err)
+	}
+	if reg.sweepIfExpired() != 0 || reg.nextExpiry.Load() != before {
+		t.Fatal("a table full of live entries was swept again")
 	}
 }

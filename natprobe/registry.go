@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,8 +28,7 @@ const (
 	defaultSessionBurst  = 32
 	defaultSandwichQueue = 8
 	defaultTTL           = 60 * time.Second // the library's fallback; coord passes BindTimeout+probe+ReportSlack+5 s
-	fullSweepGap         = time.Second
-	minSweepLen          = 64 // below it the table is not swept for growth alone
+	minSweepLen          = 64               // below it the table is not swept for growth alone
 )
 
 // tokenTagDomain separates the token digest kept for idempotent
@@ -50,8 +50,10 @@ type RegistryConfig struct {
 // Registry holds the registered probe routes. It is safe for concurrent use,
 // starts no goroutine and needs no Close or upkeep: closed entries leave the
 // table at once, an expired one when its route is registered again, and all
-// expired ones in a sweep (at most once a second) when the table is full or
-// has doubled since the last sweep. Several Servers and Coordinators may
+// expired ones in a sweep when the table has doubled since the last sweep
+// (amortised O(1) per registration, which keeps the expired entries at most
+// about as many as the live ones), or when it is full and some entry may
+// have expired since the last sweep. Several Servers and Coordinators may
 // share one.
 //
 // The table is a sync.Map: lookups, the per-packet path, take no lock, and
@@ -64,14 +66,19 @@ type Registry struct {
 	now   func() time.Time
 	epoch time.Time    // origin of the monotonic nanoseconds of expiry and rate state
 	live  atomic.Int64 // entries in m, expired ones not yet removed included
-	// swept is when the last sweep ran (registry monotonic ns): a sweep runs
-	// at most once per fullSweepGap, so that a table full of live entries
-	// does not make every registration scan all of them.
-	swept atomic.Int64
+	// nextExpiry is a lower bound of the expiry of every entry in m
+	// (registry monotonic ns): the earliest expiry the last sweep kept,
+	// lowered by every insertion since. Renewals only raise expiries. A full
+	// table is swept only once now reaches it, so that a table full of live
+	// entries does not make every registration scan all of them.
+	nextExpiry atomic.Int64
 	// keptAtSweep is the table's length after the last sweep; a table that
-	// doubled since is swept again, which bounds the expired entries kept to
-	// the live ones at an amortised O(1) per registration.
+	// doubled since is swept again.
 	keptAtSweep atomic.Int64
+	// sweepMu serialises the sweeps. It is never held with another lock
+	// and is taken with TryLock by the growth sweep, so a registration
+	// never waits for a growth sweep.
+	sweepMu sync.Mutex
 
 	// sinkPanics counts sandwich sink panics recovered on the coordinator's
 	// goroutine (AttachSandwichSink delivering the queued events). The
@@ -135,8 +142,8 @@ func (r *Registry) lookup(route protocol.RouteID) *entry {
 //     joins loses nothing;
 //   - the route is held by another session: ErrRouteInUse;
 //   - the same route and SessionID with another token: ErrConflict;
-//   - MaxEntries live entries after the expired ones are dropped (at most
-//     once a second): ErrRegistryFull.
+//   - MaxEntries live entries after the expired ones are dropped:
+//     ErrRegistryFull.
 //
 // It never replaces a live entry. Session ids are not indexed (a session
 // keeps its handle), so a session that registers again under a new route
@@ -157,11 +164,14 @@ func (r *Registry) register(reg nat.Registration) (*handle, error) {
 	if ttl <= 0 {
 		ttl = defaultTTL
 	}
-	if n := r.live.Load(); n >= minSweepLen && n >= 2*r.keptAtSweep.Load() && r.claimSweep() {
-		r.sweep(r.now())
+	if n := r.live.Load(); n >= minSweepLen && n >= 2*r.keptAtSweep.Load() && r.sweepMu.TryLock() {
+		if n := r.live.Load(); n >= minSweepLen && n >= 2*r.keptAtSweep.Load() {
+			r.sweepLocked(r.now())
+		}
+		r.sweepMu.Unlock()
 	}
 	h, err := r.registerOnce(reg, ttl)
-	if errors.Is(err, ErrRegistryFull) && r.claimSweep() && r.sweep(r.now()) > 0 {
+	if errors.Is(err, ErrRegistryFull) && r.sweepIfExpired() > 0 {
 		h, err = r.registerOnce(reg, ttl)
 	}
 	return h, err
@@ -219,6 +229,9 @@ func (r *Registry) registerOnce(reg nat.Registration, ttl time.Duration) (*handl
 			e.expiresAt.Store(addSat(mono, int64(ttl)))
 		}
 		if _, loaded := r.m.LoadOrStore(reg.Route, e); !loaded {
+			// After the store: a sweep that reset nextExpiry before it
+			// either sees the entry or is lowered here.
+			r.lowerNextExpiry(e.expiresAt.Load())
 			return &handle{r: r, e: e}, nil
 		}
 	}
@@ -244,26 +257,60 @@ func tokenTag(token protocol.Token) [16]byte {
 	return [16]byte(sum[:16])
 }
 
-// claimSweep reports whether a full sweep may run now: one per fullSweepGap,
-// the first caller of a gap winning it.
-func (r *Registry) claimSweep() bool {
-	now := r.mono(r.now())
-	last := r.swept.Load()
-	return (last == 0 || now-last >= int64(fullSweepGap)) && r.swept.CompareAndSwap(last, now)
+// lowerNextExpiry lowers nextExpiry to exp.
+func (r *Registry) lowerNextExpiry(exp int64) {
+	for cur := r.nextExpiry.Load(); exp < cur; cur = r.nextExpiry.Load() {
+		if r.nextExpiry.CompareAndSwap(cur, exp) {
+			return
+		}
+	}
+}
+
+// sweepIfExpired sweeps a full table when some entry may have expired
+// since the last sweep, and returns how many entries it removed. A
+// concurrent caller waits for the running sweep and then finds nothing
+// left to sweep.
+func (r *Registry) sweepIfExpired() int {
+	now := r.now()
+	if r.mono(now) < r.nextExpiry.Load() {
+		return 0
+	}
+	r.sweepMu.Lock()
+	defer r.sweepMu.Unlock()
+	if r.mono(now) < r.nextExpiry.Load() {
+		return 0
+	}
+	return r.sweepLocked(now)
 }
 
 // sweep removes every closed and expired entry and returns how many it
-// removed. It holds no lock: each removal is a compare-and-delete, so an
-// entry renewed or replaced meanwhile stays.
-func (r *Registry) sweep(now time.Time) (removed int) {
+// removed.
+func (r *Registry) sweep(now time.Time) int {
+	r.sweepMu.Lock()
+	defer r.sweepMu.Unlock()
+	return r.sweepLocked(now)
+}
+
+// sweepLocked is sweep with sweepMu held. It takes no other lock: each
+// removal is a compare-and-delete, so an entry renewed or replaced
+// meanwhile stays. Insertions during the sweep lower nextExpiry themselves.
+func (r *Registry) sweepLocked(now time.Time) (removed int) {
 	mono := r.mono(now)
+	r.nextExpiry.Store(math.MaxInt64)
+	earliest := int64(math.MaxInt64)
 	r.m.Range(func(k, v any) bool {
-		if !v.(*entry).alive(mono) && r.m.CompareAndDelete(k, v) {
-			removed++
-			r.live.Add(-1)
+		e := v.(*entry)
+		if !e.alive(mono) {
+			if r.m.CompareAndDelete(k, v) {
+				removed++
+				r.live.Add(-1)
+			}
+			return true
 		}
+		earliest = min(earliest, e.expiresAt.Load())
 		return true
 	})
+	r.lowerNextExpiry(earliest)
 	r.keptAtSweep.Store(r.live.Load())
 	return removed
 }
