@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -137,7 +138,7 @@ func TestRegistryFull(t *testing.T) {
 	if _, err := reg.register(nat.Registration{SessionID: "s3", Route: rt(3), Token: tok(1)}); !errors.Is(err, ErrRegistryFull) {
 		t.Fatalf("got %v", err)
 	}
-	// Register itself drops the expired entries of the target shard
+	// Register itself drops the expired entries of the routes it takes
 	clk.Advance(2 * time.Minute)
 	for i := range 3 {
 		if _, err := reg.register(nat.Registration{SessionID: fmt.Sprint("n", i), Route: rt(byte(i)), Token: tok(9), TTL: time.Minute}); err != nil {
@@ -301,10 +302,13 @@ func TestAttachSandwichSinkBridge(t *testing.T) {
 func TestRegistryDefaults(t *testing.T) {
 	reg := NewRegistry(RegistryConfig{MaxEntries: 1 << 30, SlotsPerRole: 1000, SandwichQueue: -1, SessionRate: Rate{PerSec: 5}})
 	c := reg.cfg
-	if c.MaxEntries != maxMaxEntries || c.SlotsPerRole != maxSlotsPerRole || c.SandwichQueue != defaultSandwichQueue ||
+	if c.MaxEntries != 1<<30 || c.SlotsPerRole != maxSlotsPerRole || c.SandwichQueue != defaultSandwichQueue ||
 		c.SessionRate != (Rate{PerSec: 5, Burst: 10}) || c.ProbeBudgetPerRole != defaultProbeBudget ||
 		c.ExtraQuotaPerRole != defaultExtraQuota || c.AltQuotaPerRole != defaultAltQuota {
 		t.Fatalf("config %+v", c)
+	}
+	if NewRegistry(RegistryConfig{}).cfg.MaxEntries != defaultMaxEntries {
+		t.Fatal("default MaxEntries")
 	}
 	if NewRegistry(RegistryConfig{}).cfg.SessionRate != (Rate{PerSec: defaultSessionPerSec, Burst: defaultSessionBurst}) {
 		t.Fatal("default session rate")
@@ -312,7 +316,7 @@ func TestRegistryDefaults(t *testing.T) {
 }
 
 // Extend never revives an expired entry, whether or not an
-// unrelated writer of its shard already dropped it.
+// unrelated registration ran meanwhile.
 func TestExtendDoesNotReviveExpired(t *testing.T) {
 	for _, otherWrite := range []bool{false, true} {
 		r := newRig(t, rigOpts{})
@@ -327,7 +331,7 @@ func TestExtendDoesNotReviveExpired(t *testing.T) {
 		}
 		if otherWrite {
 			other := rt(1)
-			other[15] ^= 0xFF // same shard
+			other[15] ^= 0xFF
 			if _, err := r.reg.register(nat.Registration{SessionID: "other", Route: other, Token: tok(2), TTL: time.Minute}); err != nil {
 				t.Fatal(err)
 			}
@@ -360,5 +364,94 @@ func TestHugeTTLSaturates(t *testing.T) {
 	r.clk.Advance(time.Hour)
 	if out := r.deliver(0, c.probe(probetest.Probe{}), srcA); len(out) != 1 || h.e.expiresAt.Load() != math.MaxInt64 {
 		t.Fatalf("renewals wrapped the expiry to %d", h.e.expiresAt.Load())
+	}
+}
+
+// A negative MaxEntries is unlimited: the table takes more than the default.
+func TestRegistryUnlimited(t *testing.T) {
+	clk := clock.NewFake(t, time.Time{})
+	reg := NewRegistry(RegistryConfig{MaxEntries: -1, Clock: clk})
+	for i := range defaultMaxEntries + 1 {
+		route := protocol.NewRouteID()
+		if _, err := reg.register(nat.Registration{SessionID: "s", Route: route, Token: tok(1), TTL: time.Hour}); err != nil {
+			t.Fatalf("entry %d: %v", i, err)
+		}
+	}
+	if reg.Len() != defaultMaxEntries+1 {
+		t.Fatalf("len %d", reg.Len())
+	}
+}
+
+// A write costs the same whatever the table's size: registering and
+// closing a session allocates no more bytes in a large table than in a
+// small one (a copy-on-write table copies every entry of the written shard).
+func TestRegistryWriteCostFlat(t *testing.T) {
+	cost := func(n int) uint64 {
+		clk := clock.NewFake(t, time.Time{})
+		reg := NewRegistry(RegistryConfig{MaxEntries: 1 << 20, Clock: clk})
+		for range n {
+			if _, err := reg.register(nat.Registration{SessionID: "s", Route: protocol.NewRouteID(), Token: tok(1), TTL: time.Hour}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		route := protocol.NewRouteID()
+		const runs = 50
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		for range runs {
+			h, err := reg.register(nat.Registration{SessionID: "x", Route: route, Token: tok(3), TTL: time.Hour})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.Close()
+		}
+		runtime.ReadMemStats(&after)
+		return (after.TotalAlloc - before.TotalAlloc) / runs
+	}
+	small, large := cost(10), cost(50000)
+	if large > 2*small {
+		t.Fatalf("a write allocates %d B at 10 entries, %d B at 50000", small, large)
+	}
+}
+
+// Expired entries do not pile up while the table is far from full: a table
+// that doubled since its last sweep is swept again (at most once a second).
+func TestRegistryGrowthSweep(t *testing.T) {
+	clk := clock.NewFake(t, time.Time{})
+	reg := NewRegistry(RegistryConfig{MaxEntries: -1, Clock: clk})
+	for range 20 {
+		clk.Advance(2 * time.Second) // everything registered before has expired
+		for range 100 {
+			if _, err := reg.register(nat.Registration{SessionID: "s", Route: protocol.NewRouteID(), Token: tok(1), TTL: time.Second}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if reg.Len() > 4*100 {
+		t.Fatalf("%d entries kept for 100 live", reg.Len())
+	}
+}
+
+// An expired entry leaves the table when its route is registered again,
+// and the count stays exact.
+func TestRegistryReplaceExpired(t *testing.T) {
+	clk := clock.NewFake(t, time.Time{})
+	reg := NewRegistry(RegistryConfig{Clock: clk})
+	h1, err := reg.register(nat.Registration{SessionID: "a", Route: rt(1), Token: tok(1), TTL: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(2 * time.Second)
+	h2, err := reg.register(nat.Registration{SessionID: "b", Route: rt(1), Token: tok(2), TTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h1.Close() // must not remove b's entry
+	if reg.Len() != 1 || reg.lookup(rt(1)) != h2.e {
+		t.Fatalf("len %d, entry replaced %v", reg.Len(), reg.lookup(rt(1)) != h2.e)
+	}
+	h2.Close()
+	if reg.Len() != 0 || reg.lookup(rt(1)) != nil {
+		t.Fatalf("len %d after close", reg.Len())
 	}
 }

@@ -121,8 +121,8 @@ func (h *handle) Registered() time.Time {
 // Extend renews the registration to max(current expiry, now+ttl), for
 // example to punchDeadline + 1 s when sandwich probing was negotiated.
 // It does nothing after Close or once the registration expired: an expired
-// entry is gone, whether or not a writer already dropped it from its
-// shard. A ttl too large for the clock saturates.
+// entry is gone, whether or not a sweep already dropped it from the
+// table. A ttl too large for the clock saturates.
 func (h *handle) Extend(ttl time.Duration) {
 	if h == nil || h.e == nil || h.e.closed.Load() {
 		return

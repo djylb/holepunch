@@ -286,57 +286,73 @@ func driveLoopback(b *testing.B, to netip.AddrPort, pkts [][][]byte) {
 	b.ReportMetric(100*float64(total-got)/float64(total), "lost%")
 }
 
-// The registry: lock-free concurrent lookups while sessions come and go.
-func BenchmarkRegistryLookupParallel(b *testing.B) {
-	reg := NewRegistry(RegistryConfig{})
-	routes := make([]protocol.RouteID, 4096)
+// registrySizes are the table sizes of the registry benchmarks: the tiny
+// and the large end.
+var registrySizes = []int{10, 100_000, 1_000_000}
+
+// filledRegistry returns a registry holding n live sessions and their routes.
+func filledRegistry(b *testing.B, n int) (*Registry, []protocol.RouteID) {
+	b.Helper()
+	reg := NewRegistry(RegistryConfig{MaxEntries: -1})
+	routes := make([]protocol.RouteID, n)
 	for i := range routes {
 		routes[i] = protocol.NewRouteID()
-		if _, err := reg.register(nat.Registration{SessionID: fmt.Sprint("s", i), Route: routes[i], Token: tok(1), TTL: time.Hour}); err != nil {
+		if _, err := reg.register(nat.Registration{SessionID: "s", Route: routes[i], Token: tok(1), TTL: time.Hour}); err != nil {
 			b.Fatal(err)
 		}
 	}
-	var writes atomic.Int64
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		i := 0
-		r := protocol.NewRouteID()
-		for pb.Next() {
-			i++
-			if i%1000 == 0 { // ≈ 0.1 % writes: register and close a session
-				r[15]++
-				id := writes.Add(1)
-				if h, err := reg.register(nat.Registration{SessionID: fmt.Sprint("w", id), Route: r, Token: tok(2), TTL: time.Hour}); err == nil {
-					h.Close()
-				}
-				continue
-			}
-			if e := reg.lookup(routes[i%len(routes)]); e == nil {
-				b.Fatal("lookup failed")
-			}
-		}
-	})
+	return reg, routes
 }
 
+// The registry: lock-free concurrent lookups while sessions come and go.
+func BenchmarkRegistryLookupParallel(b *testing.B) {
+	for _, n := range registrySizes {
+		b.Run(fmt.Sprint("n=", n), func(b *testing.B) {
+			reg, routes := filledRegistry(b, n)
+			var writes atomic.Int64
+			b.ReportAllocs()
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				i := 0
+				r := protocol.NewRouteID()
+				for pb.Next() {
+					i++
+					if i%1000 == 0 { // ≈ 0.1 % writes: register and close a session
+						r[15]++
+						id := writes.Add(1)
+						if h, err := reg.register(nat.Registration{SessionID: fmt.Sprint("w", id), Route: r, Token: tok(2), TTL: time.Hour}); err == nil {
+							h.Close()
+						}
+						continue
+					}
+					if e := reg.lookup(routes[i%len(routes)]); e == nil {
+						b.Fatal("lookup failed")
+					}
+				}
+			})
+		})
+	}
+}
+
+// One registration and its close in a table of n sessions: the cost must
+// not grow with n.
 func BenchmarkRegisterClose(b *testing.B) {
-	reg := NewRegistry(RegistryConfig{})
-	for i := range 4096 { // a realistic table: the copy-on-write cost scales with the shard
-		if _, err := reg.register(nat.Registration{SessionID: fmt.Sprint("s", i), Route: protocol.NewRouteID(), Token: tok(1), TTL: time.Hour}); err != nil {
-			b.Fatal(err)
-		}
-	}
-	routes := make([]protocol.RouteID, 1024)
-	for i := range routes {
-		routes[i] = protocol.NewRouteID()
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := range b.N {
-		h, err := reg.register(nat.Registration{SessionID: "x", Route: routes[i%len(routes)], Token: tok(3), TTL: time.Hour})
-		if err != nil {
-			b.Fatal(err)
-		}
-		h.Close()
+	for _, n := range registrySizes {
+		b.Run(fmt.Sprint("n=", n), func(b *testing.B) {
+			reg, _ := filledRegistry(b, n)
+			routes := make([]protocol.RouteID, 1024)
+			for i := range routes {
+				routes[i] = protocol.NewRouteID()
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := range b.N {
+				h, err := reg.register(nat.Registration{SessionID: "x", Route: routes[i%len(routes)], Token: tok(3), TTL: time.Hour})
+				if err != nil {
+					b.Fatal(err)
+				}
+				h.Close()
+			}
+		})
 	}
 }

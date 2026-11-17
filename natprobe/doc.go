@@ -5,11 +5,11 @@
 //
 //   - Registry: the table of the sessions' probe routes, which the
 //     coordinator fills and the Servers read. It is an instance (no package
-//     state) of 64 copy-on-write shards whose read path, taken by every UDP
-//     packet, is lock-free and allocation-free. It starts no goroutine and
-//     needs no upkeep: a closed entry leaves at once, expired ones whenever
-//     a registration rewrites their shard, and all of them when the table
-//     is full.
+//     state) whose index grows with its entries and whose read path, taken
+//     by every UDP packet, is lock-free. It starts no goroutine and needs no
+//     upkeep: a closed entry leaves at once, an expired one when its route
+//     is registered again, and all of them in a sweep when the table is
+//     full or has doubled since the last one.
 //   - Server: the observer listeners of each ObserverGroup, which reply from
 //     the probed address — the bound one, or the probe's destination on a
 //     wildcard socket — with a fixed extra-reply socket pool per group and
