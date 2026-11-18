@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
@@ -275,5 +276,19 @@ func TestRunPanicCarried(t *testing.T) {
 	}
 	if r := newSim(t, defaultOpts()).loopRun(context.Background()); r.Panic != nil {
 		t.Fatalf("a clean run carries %v", r.Panic)
+	}
+}
+
+// A run ended by a panic elsewhere in the session (the context's cause)
+// hands that panic over with its internal failure.
+func TestRunCarriesSessionPanic(t *testing.T) {
+	s := newSim(t, defaultOpts())
+	ctx, cancel := context.WithCancelCause(context.Background())
+	pe := life.Safe("udp-read:probe:udp4:0", func() { panic("boom") })
+	cancel(pe)
+	s.p = New(s.spec, s.socks[0], nil, nil)
+	r := s.p.Run(ctx)
+	if r.Failure != protocol.ReasonInternal || r.Detail != "panic:udp-read:probe:udp4:0" || r.Panic == nil || r.Panic.Where() != "udp-read:probe:udp4:0" {
+		t.Fatalf("result %+v", r)
 	}
 }

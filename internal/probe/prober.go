@@ -290,6 +290,14 @@ func (p *Prober) Run(ctx context.Context) (res Result) {
 			res.Panic = pe
 		}
 	}
+	// A panic elsewhere in the session that ended the run (ctxReason) is
+	// handed over too, so the session's error carries it whichever of the
+	// two failures it reports.
+	if res.Failure == protocol.ReasonInternal && res.Panic == nil {
+		if pe, ok := errors.AsType[*life.PanicError](context.Cause(ctx)); ok {
+			res.Panic = pe
+		}
+	}
 	return res
 }
 
