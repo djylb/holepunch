@@ -299,6 +299,24 @@ co, err := coord.New(coord.Config{Registry: reg, DefaultProbe: spec,
 `coord.Config.Memory` takes a `coord.StrategyMemory` of your own in the same
 way, for example one shared by several servers.
 
+### A fixed local port
+
+`Options.LocalPort` binds each family's main socket to a fixed port, for a
+firewall rule or a manual port forward; the other sockets keep random ports.
+Sessions running at the same time share the port through one
+`holepunch.SharedPorts`, which demultiplexes the socket between them; each
+`Session` then reads only its own peer's datagrams through a conn that is
+not a `*net.UDPConn`:
+
+```go
+var ports holepunch.SharedPorts // one per process
+
+sess, err := holepunch.Punch(ctx, conn, holepunch.Options{LocalPort: 41641, SharedPorts: &ports})
+if errors.Is(err, holepunch.ErrLocalPortUnavailable) {
+	// another program holds the port: punch again with LocalPort 0
+}
+```
+
 ### Handling failures
 
 A failed session returns a `*holepunch.Error`. Its `Advice`, its `Reason`

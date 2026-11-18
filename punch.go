@@ -84,6 +84,23 @@ type Options struct {
 	// the slow birthday — up to about a minute, many sockets opened slowly.
 	// Without it every session runs interactive.
 	AcceptBackground bool
+	// LocalPort pins the local port of the primary sockets, one per family,
+	// on LocalAddr or the preferred interface; 0 lets the system choose.
+	// The other sockets — the second probe socket among them — keep
+	// system-chosen or drawn ports. A port another socket holds, or that the
+	// system refuses, fails the session with Reason local_port_bind_failed
+	// and an Err that matches ErrLocalPortUnavailable: punch again with 0 to
+	// fall back. Concurrent sessions pinning one port share it through
+	// SharedPorts; without it each session binds the port itself. A shared
+	// socket gets no port mapping (PortMapper), and a session whose
+	// confirmed path would run between the same two endpoints as one
+	// already handed over on it fails the same way. Error.Detail tells
+	// them apart: local_port for the bind, local_port_path for the path.
+	LocalPort uint16
+	// SharedPorts, optional, is where the sessions of the process that pin
+	// the same LocalPort share one socket per family and address (see
+	// SharedPorts). nil shares nothing.
+	SharedPorts *SharedPorts
 	// OnProgress receives a copy of every progress event, in order, on one
 	// library goroutine (queue of 256, the oldest dropped when full). It must
 	// not block for long; a panic is recovered and counted. It is never
@@ -133,7 +150,9 @@ type Options struct {
 // caller.
 //
 // When Punch returns:
-//   - every library goroutine has exited;
+//   - every library goroutine has exited, but for the reader of a socket
+//     shared through Options.SharedPorts, which runs until the socket's
+//     last member closes;
 //   - the library no longer reads or writes control, and has cleared its
 //     deadlines; control always stays the caller's and is never closed;
 //   - on success the Session owns the winning socket, which the library no
@@ -507,8 +526,9 @@ func (rt *runtime) initCounters() {
 	if limit == 0 {
 		limit = int(protocol.DefaultBudget().MaxSockets)
 	}
+	pin := pinSpec{port: rt.opts.LocalPort, shared: rt.opts.SharedPorts, codec: rt.codec}
 	rt.socks = newSocketPool(poolDeps{g: rt.g, netw: rt.netw, opener: rt.opener, pace: rt.pace, cnt: cnt,
-		panics: &rt.cnt.callbackPanics, sink: rt}, limit)
+		panics: &rt.cnt.callbackPanics, sink: rt, pin: pin}, limit)
 }
 
 // computeWaits derives the local waits from the timeouts: client waits that

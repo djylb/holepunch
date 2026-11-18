@@ -36,8 +36,11 @@ type Session struct {
 
 // PacketConn returns the primary path's socket (Result.Path.Conn), exactly
 // as Network.ListenPacket returned it: no wrapper, so optional capabilities
-// such as *net.UDPConn's stay available. Close the Session rather than the
-// conn directly, so that a port mapping on it is released too.
+// such as *net.UDPConn's stay available. A socket shared through
+// Options.SharedPorts is the exception: the conn is the session's member of
+// it, which reads only the datagrams of the confirmed remotes. Close the
+// Session rather than the conn directly, so that a port mapping on it is
+// released too.
 func (s *Session) PacketConn() net.PacketConn { return s.conns[0] }
 
 // PacketConns returns every socket of the session's paths once, the primary

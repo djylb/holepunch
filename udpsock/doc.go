@@ -28,6 +28,11 @@
 // IsTruncated recognises the read error of a datagram larger than the
 // buffer, which only Windows reports; other systems truncate silently.
 //
+// # Bind errors
+//
+// IsPortUnavailable recognises the bind error of a port that cannot be had
+// — in use, or refused to the process — on Unix and Windows alike.
+//
 // The package is stateless: no goroutines, no package state, no ownership
 // of the conns it is given. It depends on the standard library only.
 package udpsock

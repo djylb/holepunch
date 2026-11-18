@@ -1,6 +1,7 @@
 package holepunch
 
 import (
+	"net/netip"
 	"time"
 
 	"github.com/djylb/holepunch/internal/candidate"
@@ -58,6 +59,21 @@ func (rt *runtime) handoffOf(win *candidate.Action) *handoff {
 	return ho
 }
 
+// remotesOn lists the remotes of the confirmed paths on hs: what a shared
+// socket's member claims at the handover.
+func (ho *handoff) remotesOn(hs *handSock) []netip.AddrPort {
+	var out []netip.AddrPort
+	if ho.primary.s == hs {
+		out = append(out, ho.primary.c.Remote)
+	}
+	for _, p := range ho.extra {
+		if p.s == hs {
+			out = append(out, p.c.Remote)
+		}
+	}
+	return out
+}
+
 func (ho *handoff) sockFor(s *udpSock) *handSock {
 	for _, hs := range ho.socks {
 		if hs.sock == s {
@@ -68,7 +84,8 @@ func (ho *handoff) sockFor(s *udpSock) *handSock {
 }
 
 // disown moves every socket and its port mapping out of the session group
-// and detaches it from the sender (finish step 1). A socket the group does
+// and detaches it from the sender (finish step 1). A member of a shared
+// socket claims its paths' remotes there. A socket the group does
 // not give up would be closed with it, under the caller. The primary path's
 // socket failing to leave the group or to detach fails the session; an extra
 // path's is lost.
@@ -82,6 +99,13 @@ func (rt *runtime) disown(ho *handoff) *failure {
 			continue
 		}
 		hs.owned = true
+		if sc, ok := hs.sock.conn.(*sharedConn); ok && !sc.claim(ho.remotesOn(hs)) {
+			if i == 0 {
+				return fail(protocol.ReasonLocalPortBindFailed, "local_port_path", ErrLocalPortUnavailable)
+			}
+			rt.lose(hs)
+			continue
+		}
 		if fs := rt.fam(hs.sock.fam); fs.primary == hs.sock && fs.mapping != nil {
 			if info, rc, ok := fs.mapping.result(); ok {
 				rt.g.Disown(rc)

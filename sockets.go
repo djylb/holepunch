@@ -3,6 +3,7 @@ package holepunch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
+	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/udpsock"
 )
@@ -92,6 +94,9 @@ type hopCtl struct {
 
 func newHopCtl(conn net.PacketConn, panics *atomic.Int64) hopCtl {
 	h := hopCtl{panics: panics}
+	if sc, ok := conn.(*sharedConn); ok && !sc.sh.hop.ok {
+		return h // the shared socket cannot set its TTL
+	}
 	if hl, ok := conn.(HopLimiter); ok {
 		h.hl, h.ok = hl, true
 		return h
@@ -299,6 +304,16 @@ type poolDeps struct {
 	cnt    [2]*famCounters // by Family.Index
 	panics *atomic.Int64
 	sink   packetSink
+	pin    pinSpec
+}
+
+// pinSpec is the pinned port of the primary sockets: Options.LocalPort (0:
+// none), the session's SharedPorts (nil: none) and the session codec its
+// members classify with.
+type pinSpec struct {
+	shared *SharedPorts
+	codec  *udpwire.Codec
+	port   uint16
 }
 
 // socketPool holds every socket of the session, indexed by family, role in
@@ -375,10 +390,52 @@ func (o *connOwner) Close() error { return o.conn.Close() }
 // hands it to the session group and starts its read loop. A typed-nil conn
 // from the Network is a failed bind.
 func (p *socketPool) open(ctx context.Context, fam protocol.Family, laddr netip.AddrPort, purpose string, index uint8, rcvbuf int) (*udpSock, error) {
+	return p.openWith(ctx, fam, purpose, index, rcvbuf, func() (net.PacketConn, error) { return p.listen(ctx, fam, laddr, purpose) })
+}
+
+// openPrimary binds the primary socket of family fam on addr: at the
+// pinned port (Options.LocalPort) when there is one, through the shared
+// ports when the session has them.
+func (p *socketPool) openPrimary(ctx context.Context, fam protocol.Family, addr netip.Addr) (*udpSock, error) {
+	laddr := netip.AddrPortFrom(addr, p.pin.port)
+	if p.pin.port == 0 {
+		return p.open(ctx, fam, laddr, PurposeProbe, nat.IndexPrimary, primaryRecvBuffer)
+	}
+	return p.openWith(ctx, fam, PurposeProbe, nat.IndexPrimary, primaryRecvBuffer, func() (net.PacketConn, error) {
+		conn, err := p.listenPinned(ctx, fam, laddr)
+		if err != nil && udpsock.IsPortUnavailable(err) {
+			err = fmt.Errorf("%w: %w", ErrLocalPortUnavailable, err)
+		}
+		return conn, err
+	})
+}
+
+// listenPinned binds the pinned primary socket: a member of the shared
+// socket when the session shares ports on a Network that allows it, else a
+// socket of its own.
+func (p *socketPool) listenPinned(ctx context.Context, fam protocol.Family, laddr netip.AddrPort) (net.PacketConn, error) {
+	if p.pin.shared == nil || !shareable(p.netw) {
+		return p.listen(ctx, fam, laddr, PurposeProbe)
+	}
+	if err := faultinject.Point(fiProbeBind); err != nil {
+		return nil, err
+	}
+	c, err := p.pin.shared.join(ctx, p.netw, famNetwork(fam), laddr, codecAccepts(p.pin.codec))
+	if err != nil {
+		if _, ok := errors.AsType[*PanicError](err); ok {
+			p.panics.Add(1)
+		}
+		return nil, err
+	}
+	return c, nil
+}
+
+// openWith opens a socket through listen; see open.
+func (p *socketPool) openWith(ctx context.Context, fam protocol.Family, purpose string, index uint8, rcvbuf int, listen func() (net.PacketConn, error)) (*udpSock, error) {
 	if !p.reserve() {
 		return nil, errNoSockets
 	}
-	conn, err := p.listen(ctx, fam, laddr, purpose)
+	conn, err := listen()
 	if err != nil {
 		p.unreserve()
 		return nil, err

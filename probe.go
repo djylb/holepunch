@@ -2,6 +2,7 @@ package holepunch
 
 import (
 	"context"
+	"errors"
 	"math"
 	"net/netip"
 	"slices"
@@ -112,10 +113,18 @@ func (rt *runtime) probePhase() error {
 			bound = append(bound, fs)
 		}
 	}
+	for _, fs := range fams {
+		if errors.Is(fs.bindErr, ErrLocalPortUnavailable) {
+			return fail(protocol.ReasonLocalPortBindFailed, "local_port", fs.bindErr)
+		}
+	}
 	if len(bound) == 0 {
 		return fail(protocol.ReasonLocalPortBindFailed, "", fams[0].bindErr)
 	}
-	unprobed := rt.bindUnobserved(ctx)
+	unprobed, err := rt.bindUnobserved(ctx)
+	if err != nil {
+		return fail(protocol.ReasonLocalPortBindFailed, "local_port", err)
+	}
 	pctx, pcancel := context.WithCancel(ctx)
 	defer pcancel()
 	probeEnd := rt.clk.AfterFunc(time.Duration(rt.timeouts.ProbeTimeoutMs)*time.Millisecond+probeSlack, pcancel)
@@ -148,7 +157,9 @@ func (rt *runtime) probePhase() error {
 		}
 	}
 	for _, fs := range bound {
-		if len(rt.portMapMethods()) > 0 {
+		// A shared socket gets no mapping: one session's release would
+		// remove it under the others.
+		if _, shared := fs.primary.conn.(*sharedConn); !shared && len(rt.portMapMethods()) > 0 {
 			fs.mapping = rt.startPortMap(fs.primary, rt.policy.PortMapping)
 		}
 		pr := rt.newProber(fs, onFirstAck)
@@ -196,7 +207,9 @@ func (rt *runtime) probePhase() error {
 // observer for but this host has a global address in: the server may run
 // that family with unverified, Direct-only targets, which needs this
 // side's socket and its self-reported addresses.
-func (rt *runtime) bindUnobserved(ctx context.Context) []*famState {
+//
+// The pinned port unavailable fails the session: the caller asked for it.
+func (rt *runtime) bindUnobserved(ctx context.Context) ([]*famState, error) {
 	var out []*famState
 	for _, fs := range rt.fams {
 		if fs.primary != nil || len(nat.Observers(fs.fam, rt.start.Probe.Observers)) > 0 {
@@ -206,14 +219,17 @@ func (rt *runtime) bindUnobserved(ctx context.Context) []*famState {
 		if !a.IsValid() {
 			continue
 		}
-		s, err := rt.socks.open(ctx, fs.fam, netip.AddrPortFrom(a, 0), PurposeProbe, nat.IndexPrimary, primaryRecvBuffer)
+		s, err := rt.socks.openPrimary(ctx, fs.fam, a)
 		if err != nil {
+			if errors.Is(err, ErrLocalPortUnavailable) {
+				return out, err
+			}
 			continue
 		}
 		fs.primary = s
 		out = append(out, fs)
 	}
-	return out
+	return out, nil
 }
 
 // bindProbeSockets binds the primary socket of fs (on Options.LocalAddr or
@@ -221,8 +237,7 @@ func (rt *runtime) bindUnobserved(ctx context.Context) []*famState {
 // sockets on the host's other LAN addresses of the family — never on an
 // overlay address, whose route to the observers is the tunnel's.
 func (rt *runtime) bindProbeSockets(ctx context.Context, fs *famState) bool {
-	laddr := netip.AddrPortFrom(rt.preferredAddr(fs.fam), 0)
-	s, err := rt.socks.open(ctx, fs.fam, laddr, PurposeProbe, nat.IndexPrimary, primaryRecvBuffer)
+	s, err := rt.socks.openPrimary(ctx, fs.fam, rt.preferredAddr(fs.fam))
 	if err != nil {
 		fs.bindErr = err
 		return false
