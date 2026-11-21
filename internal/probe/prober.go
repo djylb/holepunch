@@ -101,10 +101,6 @@ type Prober struct {
 	icmp     atomic.Uint32
 
 	observed netip.AddrPort // the primary's observed address; written by Run before finished is set
-
-	// onSelect, when set, is called before each select of Run and Hairpin;
-	// tests count the selects of the goroutine under test with it.
-	onSelect func()
 }
 
 type sibling struct {
@@ -350,9 +346,6 @@ func (p *Prober) run(ctx context.Context) Result {
 			return r
 		}
 		timer.Reset(s.nextWake(now) - now)
-		if p.onSelect != nil {
-			p.onSelect()
-		}
 		select {
 		case <-ctx.Done():
 			r, d := ctxReason(ctx)

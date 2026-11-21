@@ -5,6 +5,7 @@ package probe
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/protocol"
@@ -14,21 +15,23 @@ import (
 // detail panic:probe/<family>, the panic in Result.Panic; the
 // process does not crash.
 func TestPanicInjectedOnReceive(t *testing.T) {
-	defer faultinject.Reset()
-	disarm := faultinject.Arm(pointRecv, faultinject.Panic(), 1)
-	defer disarm()
-	s := newSim(t, defaultOpts())
-	r := s.loopRun(context.Background())
-	if r.Failure != protocol.ReasonInternal || r.Detail != "panic:probe/udp4" || r.Table == nil || r.Traits.Family != protocol.FamilyUDP4 ||
-		r.Panic == nil || r.Panic.Where() != "probe/udp4" {
-		t.Fatalf("result %+v", r)
-	}
-	if faultinject.Fired(pointRecv) != 1 {
-		t.Fatal("the injection did not fire")
-	}
-	if s.fake.Pending() != 0 {
-		t.Fatalf("%d timers left behind", s.fake.Pending())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		defer faultinject.Reset()
+		disarm := faultinject.Arm(pointRecv, faultinject.Panic(), 1)
+		defer disarm()
+		s := newSim(t, defaultOpts())
+		r := s.loopRun(context.Background())
+		if r.Failure != protocol.ReasonInternal || r.Detail != "panic:probe/udp4" || r.Table == nil || r.Traits.Family != protocol.FamilyUDP4 ||
+			r.Panic == nil || r.Panic.Where() != "probe/udp4" {
+			t.Fatalf("result %+v", r)
+		}
+		if faultinject.Fired(pointRecv) != 1 {
+			t.Fatal("the injection did not fire")
+		}
+		if s.fake.Pending() != 0 {
+			t.Fatalf("%d timers left behind", s.fake.Pending())
+		}
+	})
 }
 
 // An injected send error is a failed send like any write error.
@@ -50,7 +53,7 @@ func TestReceiveErrorInjected(t *testing.T) {
 	defer disarm()
 	s := newSim(t, defaultOpts())
 	s.spec.Timeout = minTimeout
-	s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
+	s.p = New(s.spec, s.socks[0], nil, nil)
 	r := s.stepRun()
 	if r.Failure != protocol.ReasonProbeTimeout || r.Sent.Rejected == 0 {
 		t.Fatalf("result %+v", r)

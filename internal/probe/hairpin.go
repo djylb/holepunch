@@ -75,9 +75,6 @@ func (p *Prober) runHairpin(ctx context.Context) protocol.Tri {
 	defer timer.Stop()
 	second := false
 	for {
-		if p.onSelect != nil {
-			p.onSelect()
-		}
 		select {
 		case <-ctx.Done():
 			return protocol.TriUnknown

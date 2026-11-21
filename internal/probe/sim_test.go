@@ -7,8 +7,8 @@ import (
 	"net/netip"
 	"slices"
 	"sync"
-	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/djylb/holepunch/internal/goroutines"
@@ -106,14 +106,10 @@ type sim struct {
 	writeErr  func(sock uint8, to netip.AddrPort) error
 	observers []protocol.ObserverSpec
 
-	// Loop mode (drive): selects counts the selects of the goroutine under
-	// test, awaited is the count it reaches once it consumed every stimulus
-	// delivered so far, and exited reports that it returned. wakes is
-	// whether it selects on the ICMP wake-up channel (Run, not Hairpin).
-	loop, wakes bool
-	exited      atomic.Bool
-	selects     atomic.Int64
-	awaited     int64
+	// Loop mode (drive): the goroutine under test runs in a synctest
+	// bubble, and the world settles after each stimulus until it is
+	// durably blocked again.
+	loop bool
 }
 
 type mapping struct {
@@ -206,17 +202,10 @@ func newSim(t *testing.T, o simOpts) *sim {
 		sibs = append(sibs, s.sock(nat.SocketID(protocol.FamilyUDP4, nat.IndexSibling+i), fmt.Sprintf("10.8.%d.2:40000", i)))
 	}
 	s.spec = Spec{Codec: cli, Probe: ps, Family: protocol.FamilyUDP4, Timeout: o.timeout, Clock: fake}
-	s.p = s.counted(New(s.spec, primary, sibs, func() (SocketHandle, error) {
+	s.p = New(s.spec, primary, sibs, func() (SocketHandle, error) {
 		return s.sock(nat.SocketID(protocol.FamilyUDP4, nat.IndexSecond), "192.168.1.10:40001"), nil
-	}))
+	})
 	return s
-}
-
-// counted makes p count the selects of the goroutine under test: Run and
-// Hairpin select once per wait.
-func (s *sim) counted(p *Prober) *Prober {
-	p.onSelect = func() { s.selects.Add(1) }
-	return p
 }
 
 func (s *sim) sock(id uint8, local string) *simSock {
@@ -430,9 +419,7 @@ func (s *sim) toClient(pkt []byte, from, to netip.AddrPort) {
 		}
 	}
 	if IsSTUN(pkt) {
-		if s.p.DeliverSTUN(sock.id, from, pkt, s.fake.Now()) {
-			s.stimulus()
-		}
+		s.p.DeliverSTUN(sock.id, from, pkt, s.fake.Now())
 		return
 	}
 	var h udpwire.Header
@@ -447,40 +434,21 @@ func (s *sim) toClient(pkt []byte, from, to netip.AddrPort) {
 	if h.Role == udpwire.RoleServer && !s.cliWin.Accept(h.Seq) {
 		return
 	}
-	if s.p.Deliver(sock.id, from, &h, &t, s.fake.Now()) {
-		s.stimulus()
-	}
+	s.p.Deliver(sock.id, from, &h, &t, s.fake.Now())
 }
 
 // noteICMP plays the read pump's ICMP unreachable note on socket sock.
 func (s *sim) noteICMP(sock uint8) {
-	before := s.p.icmp.Load()
 	s.p.NoteUnreachable(sock)
-	if s.wakes && s.p.icmp.Load() != before {
-		s.stimulus()
-	}
 }
 
-// stimulus records that the goroutine under test has one more thing to
-// consume: once it has, it selects once more.
-func (s *sim) stimulus() {
-	if s.loop {
-		s.awaited++
-	}
-}
-
-// settle waits, in real time, until the goroutine under test has consumed
-// every stimulus and is back in its select, or has returned. The world
+// settle waits until the goroutine under test has consumed every stimulus
+// and is durably blocked in its select again, or has returned. The world
 // delivers one stimulus at a time and settles after each, so each one is
 // consumed by a select of its own: none is coalesced or discarded.
 func (s *sim) settle() {
-	if !s.loop {
-		return
-	}
-	for start := time.Now(); s.selects.Load() < s.awaited && !s.exited.Load(); time.Sleep(20 * time.Microsecond) {
-		if time.Since(start) > 30*time.Second {
-			s.t.Fatalf("the goroutine under test is stuck: %d selects, %d awaited", s.selects.Load(), s.awaited)
-		}
+	if s.loop {
+		synctest.Wait()
 	}
 }
 
@@ -545,17 +513,7 @@ func (s *sim) advanceTo(t time.Duration) {
 
 // clockTo advances the fake clock to t; a timer that fires is a stimulus.
 func (s *sim) clockTo(t time.Duration) {
-	at := s.start.Add(t)
-	fires := 0
-	for _, d := range s.fake.Deadlines() {
-		if !d.After(at) {
-			fires++
-		}
-	}
-	s.fake.AdvanceTo(at)
-	for range fires {
-		s.stimulus()
-	}
+	s.fake.AdvanceTo(s.start.Add(t))
 	s.settle()
 }
 
