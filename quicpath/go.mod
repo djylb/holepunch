@@ -8,7 +8,7 @@ require (
 )
 
 require (
-	github.com/djylb/timeshim v0.0.0-20261114151544-5e7682ca67cc // indirect
+	github.com/djylb/timeshim v0.0.0-20261121052148-1ed9b7a27ad0 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
