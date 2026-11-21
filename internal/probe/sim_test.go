@@ -97,6 +97,7 @@ type sim struct {
 	stunOn      bool
 	stunWrongV6 bool          // the STUN server answers with an IPv6 address
 	extraFirst  bool          // the extra leaves before the ack
+	loop        bool          // loop mode (drive): the goroutine under test runs in a synctest bubble, and the world settles after each stimulus until it is durably blocked again
 	stunDelay   time.Duration // the STUN server's answer arrives this long after the request; 0: one RTT
 
 	cli, srv  *udpwire.Codec
@@ -105,11 +106,6 @@ type sim struct {
 	log       []pktLog
 	writeErr  func(sock uint8, to netip.AddrPort) error
 	observers []protocol.ObserverSpec
-
-	// Loop mode (drive): the goroutine under test runs in a synctest
-	// bubble, and the world settles after each stimulus until it is
-	// durably blocked again.
-	loop bool
 }
 
 type mapping struct {
