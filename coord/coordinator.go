@@ -13,6 +13,7 @@ import (
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // Coordinator timings.
@@ -308,13 +309,13 @@ func (c *Coordinator) noteCallbackPanic(sessionID string, err error) {
 // housekeep sweeps the quota table, the strategy memory and the Registry
 // every 10 s until the coordinator closes.
 func (c *Coordinator) housekeep(ctx context.Context) {
-	t := c.set.clock.NewTimer(housekeepEvery)
+	t := timeshim.NewTimer(c.set.clock, housekeepEvery)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C():
+		case <-t.C:
 			c.callout("", "coord.housekeeping", "", c.sweep)
 			t.Reset(housekeepEvery)
 		}

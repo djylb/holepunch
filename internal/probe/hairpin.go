@@ -7,6 +7,7 @@ import (
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // Hairpin runs the hairpin self-test: the primary
@@ -70,10 +71,13 @@ func (p *Prober) runHairpin(ctx context.Context) protocol.Tri {
 	}
 	t0 := p.clk.Now()
 	send()
-	timer := p.clk.NewTimer(hairpinGap)
+	timer := timeshim.NewTimer(p.clk, hairpinGap)
 	defer timer.Stop()
 	second := false
 	for {
+		if p.onSelect != nil {
+			p.onSelect()
+		}
 		select {
 		case <-ctx.Done():
 			return protocol.TriUnknown
@@ -83,7 +87,7 @@ func (p *Prober) runHairpin(ctx context.Context) protocol.Tri {
 				p.table.SetHairpin(protocol.TriTrue)
 				return protocol.TriTrue
 			}
-		case <-timer.C():
+		case <-timer.C:
 			if ctx.Err() != nil {
 				return protocol.TriUnknown
 			}

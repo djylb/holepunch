@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // Fault injection at the points portmap.map (each mapping
@@ -108,7 +108,7 @@ func TestFaultPortmapRenew(t *testing.T) {
 	t.Run("panic stops renewal, release still deletes", func(t *testing.T) {
 		faultinject.Reset()
 		gw := newFakeGW(t)
-		fc := clock.NewFake(t, time.Time{})
+		fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 		m := newTestMapper(t, Config{}, testEnv{gw: gw, clk: fc})
 		base := goroutineBase()
 		defer faultinject.Arm(pointRenew, faultinject.Panic(), 1)()
@@ -133,7 +133,7 @@ func TestFaultPortmapRenew(t *testing.T) {
 	t.Run("failed renewals are retried", func(t *testing.T) {
 		faultinject.Reset()
 		gw := newFakeGW(t)
-		fc := clock.NewFake(t, time.Time{})
+		fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 		m := newTestMapper(t, Config{}, testEnv{gw: gw, clk: fc})
 		disarm := faultinject.Arm(pointRenew, faultinject.Error(nil), 0)
 		_, release, err := m.Map(context.Background(), listenLoopback(t), protocol.PortMappingPolicy{})
@@ -153,7 +153,7 @@ func TestFaultPortmapRenew(t *testing.T) {
 	t.Run("renewal stuck: release still bounded", func(t *testing.T) {
 		faultinject.Reset()
 		gw := newFakeGW(t)
-		fc := clock.NewFake(t, time.Time{})
+		fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 		m := newTestMapper(t, Config{}, testEnv{gw: gw, clk: fc})
 		disarm := faultinject.Arm(pointRenew, faultinject.Stall(0), 1)
 		_, release, err := m.Map(context.Background(), listenLoopback(t), protocol.PortMappingPolicy{})

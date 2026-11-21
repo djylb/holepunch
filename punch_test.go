@@ -12,27 +12,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/leak"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // countingClock counts every use of the clock, to prove that an idle session
 // does not poll.
 type countingClock struct {
-	inner clock.Clock
+	inner timeshim.Clock
 	calls atomic.Int64
 }
 
 func (c *countingClock) Now() time.Time { c.calls.Add(1); return c.inner.Now() }
-func (c *countingClock) NewTimer(d time.Duration) clock.Timer {
-	c.calls.Add(1)
-	return c.inner.NewTimer(d)
-}
-func (c *countingClock) AfterFunc(d time.Duration, f func()) clock.Timer {
+func (c *countingClock) AfterFunc(d time.Duration, f func()) timeshim.Timer {
 	c.calls.Add(1)
 	return c.inner.AfterFunc(d, f)
 }
@@ -42,7 +38,7 @@ func (c *countingClock) AfterFunc(d time.Duration, f func()) clock.Timer {
 func TestIdleZeroPolling(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
-	cc := &countingClock{inner: clock.System{}}
+	cc := &countingClock{inner: timeshim.Real}
 	so := newSolo(t, w, func(o *Options) { o.Clock = cc })
 	to := testTimeouts()
 	to.SummaryWaitMs, to.GoWaitMs = 15000, 15000

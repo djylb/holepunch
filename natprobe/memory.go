@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // TraitsKey identifies one NAT across sessions: a stable identity the
@@ -40,9 +40,9 @@ type TraitsMemory = nat.TraitsMemory
 
 // TraitsMemoryConfig configures NewTraitsMemory; zero fields take the defaults.
 type TraitsMemoryConfig struct {
-	TTL        time.Duration // default 24 h: how long a learned conclusion stays usable
-	MaxEntries int           // default 65536 (about 100 B each); a hard bound
-	Clock      clock.Clock   // nil means the system clock
+	TTL        time.Duration  // default 24 h: how long a learned conclusion stays usable
+	MaxEntries int            // default 65536 (about 100 B each); a hard bound
+	Clock      timeshim.Clock // nil means the system clock
 }
 
 const (

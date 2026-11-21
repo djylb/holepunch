@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/timeshim"
 )
 
 // Defaults of the address lists that refresh themselves (STUNList,
@@ -23,17 +23,15 @@ const (
 // every period, every retry instead while the last refresh left the list
 // empty, until the context ends.
 type refresher struct {
-	clk    clock.Clock
+	clk    timeshim.Clock
 	log    *slog.Logger
 	period time.Duration
 	retry  time.Duration
 	done   atomic.Bool // a refresh has completed
 }
 
-func newRefresher(clk clock.Clock, log *slog.Logger, period, defPeriod, retry time.Duration) refresher {
-	if clk == nil {
-		clk = clock.System{}
-	}
+func newRefresher(clk timeshim.Clock, log *slog.Logger, period, defPeriod, retry time.Duration) refresher {
+	clk = timeshim.Or(clk)
 	if period <= 0 {
 		period = defPeriod
 	}
@@ -50,13 +48,13 @@ func (r *refresher) run(ctx context.Context, refresh func(context.Context), full
 	if !r.done.Load() {
 		refresh(ctx)
 	}
-	t := r.clk.NewTimer(r.wait(full()))
+	t := timeshim.NewTimer(r.clk, r.wait(full()))
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C():
+		case <-t.C:
 		}
 		refresh(ctx)
 		t.Reset(r.wait(full()))

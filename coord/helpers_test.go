@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
@@ -32,7 +32,7 @@ var mustAP = netip.MustParseAddrPort
 // results.
 type rig struct {
 	t       *testing.T
-	clk     *clock.Fake
+	clk     *timeshim.Fake
 	c       *Coordinator
 	results chan Result
 
@@ -44,7 +44,7 @@ type rigOpt func(*Config)
 
 func newRig(t *testing.T, opts ...rigOpt) *rig {
 	t.Helper()
-	r := &rig{t: t, clk: clock.NewFake(t, time.Time{}), results: make(chan Result, 64)}
+	r := &rig{t: t, clk: timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), results: make(chan Result, 64)}
 	cfg := Config{
 		NoObserver: true,
 		Clock:      r.clk,

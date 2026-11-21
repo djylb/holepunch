@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 func TestMapPCP(t *testing.T) {
@@ -48,7 +48,7 @@ func TestMapPCP(t *testing.T) {
 func TestMapNATPMPWhenPCPUnsupported(t *testing.T) {
 	gw := newFakeGW(t)
 	gw.set(func(f *fakeGW) { f.pcpMode = serveUnsupported; f.grant = 120 })
-	fc := clock.NewFake(t, time.Time{})
+	fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	// UNSUPP_VERSION ends the PCP attempt at once, long before the attempt
 	// bound, which is far beyond what a loaded machine adds.
 	m := newTestMapper(t, Config{AttemptTimeout: 5 * time.Second}, testEnv{gw: gw, clk: fc})
@@ -87,7 +87,7 @@ func TestMapUPnPVariants(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			igd := newFakeIGD(t, tc.service)
-			fc := clock.NewFake(t, time.Time{})
+			fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			m := newTestMapper(t, Config{}, testEnv{igd: igd, clk: fc})
 			pc := listenLoopback(t)
 			base := goroutineBase()
@@ -123,7 +123,7 @@ func TestMapUPnPVariants(t *testing.T) {
 func TestMapUPnPPermanentOnly(t *testing.T) {
 	igd := newFakeIGD(t, svcIGD1)
 	igd.set(func(f *fakeIGD) { f.permanentOnly = true })
-	fc := clock.NewFake(t, time.Time{})
+	fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	m := newTestMapper(t, Config{}, testEnv{igd: igd, clk: fc})
 	pc := listenLoopback(t)
 

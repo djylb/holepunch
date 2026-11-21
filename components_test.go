@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
@@ -21,6 +20,7 @@ import (
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/udpsock"
+	"github.com/djylb/timeshim"
 )
 
 func TestKeepaliveTable(t *testing.T) {
@@ -497,7 +497,7 @@ func runPunchLoop(t *testing.T, rt *runtime) <-chan error {
 // waitArmed waits, in real time, until the earliest timer of fc is due at a
 // deadline want accepts — the code under test armed it — and returns that
 // deadline. origin is the instant failures report the deadline from.
-func waitArmed(t *testing.T, fc *clock.Fake, origin time.Time, want func(time.Time) bool) time.Time {
+func waitArmed(t *testing.T, fc *timeshim.Fake, origin time.Time, want func(time.Time) bool) time.Time {
 	t.Helper()
 	limit := time.Now().Add(testkit.WaitBound(t))
 	for {

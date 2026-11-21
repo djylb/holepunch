@@ -70,7 +70,7 @@ func FuzzIntercept(f *testing.F) {
 
 // The client runtime links neither the server side nor a port-mapping
 // implementation, and the module, tests included, links nothing but the
-// standard library and its own packages — never the quicpath or
+// standard library, its own packages and timeshim — never the quicpath or
 // standalone modules.
 func TestDependencies(t *testing.T) {
 	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", ".").Output()
@@ -92,6 +92,9 @@ func TestDependencies(t *testing.T) {
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		dep, _, _ := strings.Cut(line, " ") // a test variant: "pkg [pkg.test]"
 		ours := dep == mod || strings.HasPrefix(dep, mod+"/") || dep == mod+"_test" || dep == mod+".test"
+		if dep == "github.com/djylb/timeshim" {
+			continue // the only dependency allowed
+		}
 		if !ours || strings.HasPrefix(dep, mod+"/quicpath") || strings.HasPrefix(dep, mod+"/standalone") {
 			t.Errorf("the module links %s", dep)
 		}

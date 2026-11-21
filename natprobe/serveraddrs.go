@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/hostaddr"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/netaddr"
+	"github.com/djylb/timeshim"
 )
 
 // ServerAddrsConfig configures a ServerAddrs. Every field is optional.
@@ -41,7 +41,7 @@ type ServerAddrsConfig struct {
 	// 5 min.
 	Refresh time.Duration
 	// Clock schedules the refreshes; nil uses the system clock.
-	Clock clock.Clock
+	Clock timeshim.Clock
 	// Logger, optional, receives the failed lookups and interface reads at
 	// Warn.
 	Logger *slog.Logger

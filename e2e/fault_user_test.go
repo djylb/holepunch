@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord"
 	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/testkit"
@@ -18,6 +17,7 @@ import (
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // errUserPanic is the value user code panics with in the user-code faults.
@@ -65,9 +65,9 @@ const clockPanicCall = 40
 
 // nthNowPanics returns the system clock, except that its nth call of Now
 // panics once, counted in n.
-func nthNowPanics(nth int32, n *atomic.Int32) clock.Clock {
+func nthNowPanics(nth int32, n *atomic.Int32) timeshim.Clock {
 	var seen atomic.Int32
-	return testkit.PanicClock{Clock: clock.System{}, Panic: func(method string) any {
+	return testkit.PanicClock{Clock: timeshim.Real, Panic: func(method string) any {
 		if method != "Now" || seen.Add(1) != nth {
 			return nil
 		}

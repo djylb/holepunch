@@ -54,7 +54,7 @@ func TestNewCodec(t *testing.T) {
 }
 
 func TestNextSeqAndNow(t *testing.T) {
-	clk := testkit.NewStepClock(t, clockStart)
+	clk := testkit.NewStepClock(clockStart)
 	c, err := NewCodec(testToken(), testRoute(), RoleInitiator, testPad, clk.Now)
 	if err != nil {
 		t.Fatal(err)

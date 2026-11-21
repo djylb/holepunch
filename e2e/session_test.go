@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/djylb/holepunch"
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord"
 	"github.com/djylb/holepunch/internal/ablation"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // roles in index order: 0 is the initiator, 1 the responder.
@@ -43,7 +43,7 @@ type sessionSpec struct {
 	timeouts     *protocol.Timeouts
 	clientPolicy [2]*protocol.Policy
 	onProgress   [2]func(protocol.Progress)
-	clock        [2]clock.Clock
+	clock        [2]timeshim.Clock
 	// maxPaths is both clients' Options.MaxPaths; 0 is one path.
 	maxPaths int
 	// prepare runs once the links exist and before anything is attached:

@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/udpsock"
+	"github.com/djylb/timeshim"
 )
 
 // sendClass is the budget class of a packet.
@@ -205,7 +205,7 @@ type meterCount struct {
 // (runs.go) sees them in the order they leave.
 type sender struct {
 	codec *udpwire.Codec
-	clk   clock.Clock
+	clk   timeshim.Clock
 	pace  *pacer
 	cnt   [2]*famCounters // by Family.Index
 	host  sendHost
@@ -360,7 +360,7 @@ type sendHost interface {
 	noteICMP(s *udpSock)
 }
 
-func newSender(codec *udpwire.Codec, clk clock.Clock, pace *pacer, cnt [2]*famCounters, host sendHost, hits *punchState) *sender {
+func newSender(codec *udpwire.Codec, clk timeshim.Clock, pace *pacer, cnt [2]*famCounters, host sendHost, hits *punchState) *sender {
 	return &sender{
 		codec: codec, clk: clk, pace: pace, cnt: cnt, host: host, hits: hits, lanes: [2]*lane{newLane(), newLane()},
 		targets: map[netip.AddrPort]struct{}{},

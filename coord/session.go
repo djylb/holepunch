@@ -8,13 +8,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/ablation"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/trunc"
 	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // SessionOptions configures one session.
@@ -127,7 +127,7 @@ type Session struct {
 	// Attach with its own ProbeSpec recomputes it.
 	unobserved []protocol.Family
 	group      *life.Group
-	timer      clock.Timer
+	timer      timeshim.Timer
 	wake       chan struct{} // capacity 1: work for the session goroutine
 	quit       chan struct{} // closed when the session ends
 	done       chan struct{}

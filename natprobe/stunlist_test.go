@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/hostaddr"
+	"github.com/djylb/timeshim"
 )
 
 // fakeLookup answers every name with the addresses set last, or fails while
@@ -59,7 +59,7 @@ func runInBackground(run func(context.Context)) (stop func()) {
 
 // waitArmed waits until the code under test armed its timer, and returns
 // how far ahead of now it is due.
-func waitArmed(t *testing.T, clk *clock.Fake) time.Duration {
+func waitArmed(t *testing.T, clk *timeshim.Fake) time.Duration {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -71,7 +71,7 @@ func waitArmed(t *testing.T, clk *clock.Fake) time.Duration {
 }
 
 func TestSTUNListRun(t *testing.T) {
-	clk := clock.NewFake(t, time.Unix(1e9, 0))
+	clk := timeshim.NewFake(time.Unix(1e9, 0))
 	var fl fakeLookup
 	l := NewSTUNList(STUNListConfig{Servers: []string{"stun.example:3478"}, Lookup: fl.lookup, Clock: clk})
 	if l.Addrs() != nil {
@@ -134,7 +134,7 @@ type fakeConn struct {
 func (c fakeConn) LocalAddr() net.Addr { return c.local }
 
 func TestServerAddrs(t *testing.T) {
-	clk := clock.NewFake(t, time.Unix(1e9, 0))
+	clk := timeshim.NewFake(time.Unix(1e9, 0))
 	var fl fakeLookup
 	ifaces := []hostaddr.Addr{
 		{Prefix: netip.MustParsePrefix("203.0.113.5/24"), Up: true, Kind: hostaddr.Public},

@@ -86,7 +86,7 @@ type rigOpts struct {
 
 func newRig(t *testing.T, o rigOpts) *rig {
 	t.Helper()
-	r := &rig{t: t, clk: testkit.NewStepClock(t, time.Time{})}
+	r := &rig{t: t, clk: testkit.NewStepClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))}
 	o.reg.Clock = r.clk
 	r.reg = NewRegistry(o.reg)
 	if o.srcRate == (Rate{}) {

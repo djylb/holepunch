@@ -7,10 +7,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // Rate is a token bucket: PerSec tokens per second, at most Burst at once.
@@ -150,7 +150,7 @@ type Config struct {
 	// Clock is the time source; nil uses the system clock. A Clock is
 	// infrastructure for tests and simulation, not a callback: it is called
 	// directly, with the session mutex held too, and must not panic.
-	Clock clock.Clock
+	Clock timeshim.Clock
 	// Rand is the randomness for session ids, tokens, routes, wire lengths
 	// and round seeds; nil uses crypto/rand.
 	Rand io.Reader
@@ -413,7 +413,7 @@ func ms(v uint32) time.Duration { return time.Duration(v) * time.Millisecond }
 type settings struct {
 	cfg        Config
 	limits     Limits
-	clock      clock.Clock
+	clock      timeshim.Clock
 	rand       io.Reader
 	planner    plan.Planner
 	memory     StrategyMemory
@@ -458,9 +458,7 @@ func newSettings(cfg Config) (settings, error) {
 		timeouts:   cfg.Timeouts.Normalize(),
 		unverified: cfg.Registry == nil,
 	}
-	if s.clock == nil {
-		s.clock = clock.System{}
-	}
+	s.clock = timeshim.Or(s.clock)
 	if s.rand == nil {
 		s.rand = rand.Reader
 	}

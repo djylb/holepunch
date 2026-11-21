@@ -261,12 +261,12 @@ func TestRunPanicCarried(t *testing.T) {
 	s := newSim(t, defaultOpts())
 	// Timers that panic stand in for any panic inside the probing loop.
 	s.spec.Clock = testkit.PanicClock{Clock: s.fake, Panic: func(method string) any {
-		if method == "NewTimer" {
+		if method == "AfterFunc" {
 			return "timer"
 		}
 		return nil
 	}}
-	s.p = New(s.spec, s.socks[0], nil, nil)
+	s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
 	r := s.p.Run(context.Background())
 	if r.Failure != protocol.ReasonInternal || r.Detail != "panic:probe/udp4" || r.Panic == nil || "panic:"+r.Panic.Where() != r.Detail {
 		t.Fatalf("result %+v", r)
@@ -286,7 +286,7 @@ func TestRunCarriesSessionPanic(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	pe := life.Safe("udp-read:probe:udp4:0", func() { panic("boom") })
 	cancel(pe)
-	s.p = New(s.spec, s.socks[0], nil, nil)
+	s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
 	r := s.p.Run(ctx)
 	if r.Failure != protocol.ReasonInternal || r.Detail != "panic:udp-read:probe:udp4:0" || r.Panic == nil || r.Panic.Where() != "udp-read:probe:udp4:0" {
 		t.Fatalf("result %+v", r)

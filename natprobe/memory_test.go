@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 func eimMedium() protocol.Traits {
@@ -23,7 +23,7 @@ func mkey(ip string) TraitsKey {
 }
 
 func TestMemoryRules(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	if got := mem.Apply(k, eimMedium()); got != eimMedium() {
@@ -184,7 +184,7 @@ func TestMemoryConcurrent(_ *testing.T) {
 // renew the memo: 100 h after the only cross-IP verification, a single-IP
 // EIM is no longer raised (TTL 24 h).
 func TestMemoryNotRenewedWithoutEvidence(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	final := eimMedium()
@@ -211,7 +211,7 @@ func TestMemoryNoSelfRenewal(t *testing.T) {
 	verified := single
 	verified.MappingConf, verified.CrossIP = protocol.ConfHigh, true
 
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	mem.Observe(k, verified, true) // the only cross-IP verification
@@ -223,7 +223,7 @@ func TestMemoryNoSelfRenewal(t *testing.T) {
 		}
 	}
 
-	clk = clock.NewFake(t, time.Time{})
+	clk = timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	mem = NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	mem.Observe(k, verified, true)
 	var raised []int
@@ -247,7 +247,7 @@ func TestMemoryNoSelfRenewal(t *testing.T) {
 // renews it, conclusion by conclusion; one that does not establish a
 // conclusion leaves its expiry alone.
 func TestMemoryDirectMeasurementRenews(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	verified := eimMedium()
@@ -290,7 +290,7 @@ func TestMemoryDirectMeasurementRenews(t *testing.T) {
 // mapping learned earlier, and a contradicting observation replaces a
 // conclusion at once.
 func TestMemoryPerConclusionExpiry(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	verified := eimMedium()
@@ -337,7 +337,7 @@ func TestMemorySmallMaxEntries(t *testing.T) {
 // A sequential allocation learned again after its memo expired does not
 // inherit the expired velocity; one measured again replaces it.
 func TestMemoryAllocationRelearned(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	seq := protocol.Traits{Family: protocol.FamilyUDP4, Mapping: protocol.MapAPDM, MappingConf: protocol.ConfHigh,
@@ -363,7 +363,7 @@ func TestMemoryAllocationRelearned(t *testing.T) {
 // shard lock, so a Clock that panics once leaves no lock held.
 func TestMemoryClockPanicHoldsNoLock(t *testing.T) {
 	var panicking atomic.Bool
-	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: testkit.PanicClock{Clock: clock.System{}, Panic: func(method string) any {
+	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: testkit.PanicClock{Clock: timeshim.Real, Panic: func(method string) any {
 		if method == "Now" && panicking.Load() {
 			return "clock"
 		}
@@ -399,7 +399,7 @@ func TestMemoryClockPanicHoldsNoLock(t *testing.T) {
 // TestRecall: Recall returns the remembered conclusions as traits, nothing
 // for an unknown key, and nothing once the mapping expired.
 func TestRecall(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	mem := NewTraitsMemory(TraitsMemoryConfig{Clock: clk})
 	k := mkey("203.0.113.5")
 	if _, ok := mem.Recall(k); ok {

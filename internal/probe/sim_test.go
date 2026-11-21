@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/stun"
+	"github.com/djylb/timeshim"
 )
 
 func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
@@ -63,7 +63,7 @@ type pktLog struct {
 type sim struct {
 	t     *testing.T
 	mu    sync.Mutex
-	fake  *clock.Fake
+	fake  *timeshim.Fake
 	start time.Time
 	now   time.Duration
 	evs   []event
@@ -114,28 +114,6 @@ type sim struct {
 	exited      atomic.Bool
 	selects     atomic.Int64
 	awaited     int64
-}
-
-// selectClock is the fake clock as the prober sees it: Run and Hairpin
-// read their timer's C exactly once per select, so its timers count the
-// selects of the goroutine under test.
-type selectClock struct {
-	*clock.Fake
-	selects *atomic.Int64
-}
-
-func (c selectClock) NewTimer(d time.Duration) clock.Timer {
-	return selectTimer{Timer: c.Fake.NewTimer(d), selects: c.selects}
-}
-
-type selectTimer struct {
-	clock.Timer
-	selects *atomic.Int64
-}
-
-func (t selectTimer) C() <-chan time.Time {
-	t.selects.Add(1)
-	return t.Timer.C()
 }
 
 type mapping struct {
@@ -190,7 +168,7 @@ func testKeys() ([32]byte, [16]byte) {
 
 func newSim(t *testing.T, o simOpts) *sim {
 	t.Helper()
-	fake := clock.NewFake(t, time.Time{})
+	fake := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	token, route := testKeys()
 	cli, err := udpwire.NewCodec(token, route, o.role, udpwire.PadPolicy{Min: 64, Max: 128}, fake.Now)
 	if err != nil {
@@ -227,11 +205,18 @@ func newSim(t *testing.T, o simOpts) *sim {
 	for i := range o.siblings {
 		sibs = append(sibs, s.sock(nat.SocketID(protocol.FamilyUDP4, nat.IndexSibling+i), fmt.Sprintf("10.8.%d.2:40000", i)))
 	}
-	s.spec = Spec{Codec: cli, Probe: ps, Family: protocol.FamilyUDP4, Timeout: o.timeout, Clock: selectClock{Fake: fake, selects: &s.selects}}
-	s.p = New(s.spec, primary, sibs, func() (SocketHandle, error) {
+	s.spec = Spec{Codec: cli, Probe: ps, Family: protocol.FamilyUDP4, Timeout: o.timeout, Clock: fake}
+	s.p = s.counted(New(s.spec, primary, sibs, func() (SocketHandle, error) {
 		return s.sock(nat.SocketID(protocol.FamilyUDP4, nat.IndexSecond), "192.168.1.10:40001"), nil
-	})
+	}))
 	return s
+}
+
+// counted makes p count the selects of the goroutine under test: Run and
+// Hairpin select once per wait.
+func (s *sim) counted(p *Prober) *Prober {
+	p.onSelect = func() { s.selects.Add(1) }
+	return p
 }
 
 func (s *sim) sock(id uint8, local string) *simSock {
@@ -560,7 +545,15 @@ func (s *sim) advanceTo(t time.Duration) {
 
 // clockTo advances the fake clock to t; a timer that fires is a stimulus.
 func (s *sim) clockTo(t time.Duration) {
-	for range s.fake.AdvanceTo(s.start.Add(t)) {
+	at := s.start.Add(t)
+	fires := 0
+	for _, d := range s.fake.Deadlines() {
+		if !d.After(at) {
+			fires++
+		}
+	}
+	s.fake.AdvanceTo(at)
+	for range fires {
 		s.stimulus()
 	}
 	s.settle()

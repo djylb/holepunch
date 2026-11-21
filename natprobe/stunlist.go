@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/timeshim"
 )
 
 // STUNListConfig configures a STUNList.
@@ -25,7 +25,7 @@ type STUNListConfig struct {
 	// most Refresh).
 	Retry time.Duration
 	// Clock schedules the refreshes; nil uses the system clock.
-	Clock clock.Clock
+	Clock timeshim.Clock
 	// Logger, optional, receives every resolution at Info and the servers
 	// left out at Warn.
 	Logger *slog.Logger

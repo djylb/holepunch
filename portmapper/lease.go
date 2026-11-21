@@ -8,6 +8,7 @@ import (
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // remover deletes a mapping at the gateway.
@@ -59,13 +60,13 @@ func (l *lease) start() {
 func (l *lease) renewLoop() {
 	defer close(l.done)
 	lifetime := l.info.Lease
-	t := l.m.clk.NewTimer(renewAfter(lifetime, true))
+	t := timeshim.NewTimer(l.m.clk, renewAfter(lifetime, true))
 	defer t.Stop()
 	for {
 		select {
 		case <-l.ctx.Done():
 			return
-		case <-t.C():
+		case <-t.C:
 		}
 		var granted time.Duration
 		var err error

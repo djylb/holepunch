@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/ablation"
 	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/faultinject"
@@ -19,6 +18,7 @@ import (
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // Session-wide waits.
@@ -111,7 +111,7 @@ type Options struct {
 	// PortMapper creates port mappings; nil disables them.
 	PortMapper PortMapper
 	// Clock is the session's time source; nil is the system clock.
-	Clock clock.Clock
+	Clock timeshim.Clock
 	// MaxPaths is how many confirmed paths the Session hands over: the
 	// primary path, chosen exactly as with one, and up to MaxPaths-1 extra
 	// paths that already carried the peer's packets, each confirmed on its
@@ -303,7 +303,7 @@ type timings struct{ probe, summaryWait, goWait, handover, total time.Duration }
 type runtime struct {
 	callerCtx context.Context
 	opts      Options
-	clk       clock.Clock
+	clk       timeshim.Clock
 	netw      Network
 	mapper    PortMapper
 	abl       ablation.Set
@@ -345,7 +345,7 @@ type runtime struct {
 	timeouts    protocol.Timeouts
 	udpBlocked  atomic.Bool // set by a round goroutine
 	waits       waitPlan
-	deadline    clock.Timer // the session deadline
+	deadline    timeshim.Timer // the session deadline
 	localIPs    map[netip.Addr]struct{}
 	observers   map[netip.AddrPort]bool // punch_start's natprobe observers, main and alternate
 	hosts       []hostAddr              // the host's addresses, read once at punch_start
@@ -383,9 +383,7 @@ func newRuntime(ctx context.Context, o Options) *runtime {
 		g: life.New(ctx), phases: newPhaseTracker(), followUps: make(chan struct{}, maxFollowUps),
 		localIPs: map[netip.Addr]struct{}{}, punch: newPunchState(),
 	}
-	if rt.clk == nil {
-		rt.clk = clock.System{}
-	}
+	rt.clk = timeshim.Or(rt.clk)
 	rt.nom = newNominator(rt.clk, rt)
 	if rt.netw == nil {
 		rt.netw = SystemNetwork()
@@ -439,12 +437,12 @@ func (rt *runtime) run() (*candidate.Action, error) {
 // waitStart waits for the first library frame.
 func (rt *runtime) waitStart() (startMsg, error) {
 	ctx := rt.g.Context()
-	t := rt.clk.NewTimer(startWait)
+	t := timeshim.NewTimer(rt.clk, startWait)
 	defer t.Stop()
 	if err := faultinject.Point(fiAttachReadStart); err != nil {
 		return startMsg{}, err
 	}
-	s, w, err := waitControl(ctx, rt.ctl, rt.ctl.startCh, t.C(), nil)
+	s, w, err := waitControl(ctx, rt.ctl, rt.ctl.startCh, t.C, nil)
 	switch {
 	case err != nil:
 		return startMsg{}, err
@@ -564,12 +562,12 @@ func (rt *runtime) waitSummary() (stamped[protocol.ProbeSummary], error) {
 	}
 	deadline := rt.startAt.Add(rt.waits.summary)
 	keepalive := rt.clk.Now().Add(rt.pace.spread(keepaliveInterval, 0.1))
-	t := rt.clk.NewTimer(time.Hour)
+	t := timeshim.NewTimer(rt.clk, time.Hour)
 	defer t.Stop()
 	for {
 		now := rt.clk.Now()
 		t.Reset(max(earliest(deadline, keepalive).Sub(now), 0))
-		s, w, err := waitControl(ctx, rt.ctl, rt.ctl.summaryCh, t.C(), func(a stamped[protocol.Assist]) {
+		s, w, err := waitControl(ctx, rt.ctl, rt.ctl.summaryCh, t.C, func(a stamped[protocol.Assist]) {
 			// Round 1's anchor refresh follows the summary on the link: when
 			// both wait here, the select may take it first.
 			if a.msg.Kind == protocol.AssistRefresh && !rt.abl.NoAssistRelay {

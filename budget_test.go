@@ -26,7 +26,7 @@ type gateRig struct {
 	m    *roundMeter
 	clk  interface {
 		Now() time.Time
-		Advance(time.Duration) int
+		Advance(time.Duration)
 		WaitPending(context.Context, int) error
 	}
 }

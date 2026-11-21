@@ -269,7 +269,7 @@ func TestInfrastructureIsClean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := run(wd, []string{"../../clock/...", "../../internal/faultinject/...", "../../internal/leak/...", "../../internal/ablation/..."}, &stdout, &stderr)
+	code := run(wd, []string{"../../internal/faultinject/...", "../../internal/leak/...", "../../internal/ablation/..."}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s%s", code, stdout.String(), stderr.String())
 	}

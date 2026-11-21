@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // TestReleaseStopsRenewalAndDeletes: after release returns, the renewal
@@ -18,7 +18,7 @@ import (
 // idempotent and leaves the socket open.
 func TestReleaseStopsRenewalAndDeletes(t *testing.T) {
 	gw := newFakeGW(t)
-	fc := clock.NewFake(t, time.Time{})
+	fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	m := newTestMapper(t, Config{}, testEnv{gw: gw, clk: fc})
 	pc := listenLoopback(t)
 	base := goroutineBase()
@@ -102,7 +102,7 @@ func TestReleaseBoundedWhenGatewayStopsAnswering(t *testing.T) {
 func TestRenewalRecreatesAfterGatewayReboot(t *testing.T) {
 	gw := newFakeGW(t)
 	gw.set(func(f *fakeGW) { f.grant = 120 })
-	fc := clock.NewFake(t, time.Time{})
+	fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	m := newTestMapper(t, Config{AttemptTimeout: 200 * time.Millisecond}, testEnv{gw: gw, clk: fc})
 	_, release, err := m.Map(context.Background(), listenLoopback(t), protocol.PortMappingPolicy{})
 	if err != nil {
@@ -134,7 +134,7 @@ func TestRenewalRecreatesAfterGatewayReboot(t *testing.T) {
 
 func TestRenewalRetriesAtQuarterLease(t *testing.T) {
 	igd := newFakeIGD(t, svcIGD1)
-	fc := clock.NewFake(t, time.Time{})
+	fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	// Every exchange here is answered at once — the failing renewal with a
 	// SOAP fault — so AttemptTimeout only bounds them: it is as long as the
 	// test may wait, not a guess at how fast a loaded loopback answers.

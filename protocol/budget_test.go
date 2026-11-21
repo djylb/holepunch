@@ -384,7 +384,7 @@ func TestTraitsPredicates(t *testing.T) {
 // internal/controlwire → std + internal/wiretype + internal/life +
 // internal/faultinject; internal/life → std + internal/trunc;
 // internal/wiretype, internal/trunc, internal/netaddr and the standalone
-// tool packages (stun, udpsock, hostaddr, clock) → std.
+// tool packages (stun, udpsock, hostaddr) → std.
 func TestDependencyRules(t *testing.T) {
 	const module = "github.com/djylb/holepunch"
 	allowed := map[string][]string{
@@ -397,7 +397,6 @@ func TestDependencyRules(t *testing.T) {
 		"stun":                 nil,
 		"udpsock":              nil,
 		"hostaddr":             nil,
-		"clock":                nil,
 	}
 	for dir, extra := range allowed {
 		files, err := filepath.Glob(filepath.Join("..", dir, "*.go"))

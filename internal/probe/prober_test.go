@@ -182,7 +182,7 @@ func TestSecondSocketFailures(t *testing.T) {
 		"typed nil": func(*sim) (SocketHandle, error) { return (*simSock)(nil), nil },
 	} {
 		s := newSim(t, o)
-		s.p = New(s.spec, s.socks[0], nil, func() (SocketHandle, error) { return open(s) })
+		s.p = s.counted(New(s.spec, s.socks[0], nil, func() (SocketHandle, error) { return open(s) }))
 		r := s.stepRun()
 		if r.Failure != "" || r.Sent.Second != 0 || r.Traits.Mapping != protocol.MapAPDM || len(r.Table.Sockets()) != 1 {
 			t.Fatalf("%s: %+v", name, r)
@@ -484,7 +484,7 @@ func TestSTUNICMPDoesNotFailReachableServer(t *testing.T) {
 	lan := netip.MustParseAddrPort("10.0.0.1:3478")
 	s.observers = append(s.observers, protocol.ObserverSpec{ID: 16, Addr: lan, Group: 2})
 	s.spec.Probe.Observers = s.observers
-	s.p = New(s.spec, s.socks[0], nil, nil)
+	s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
 	s.writeErr = func(sock uint8, to netip.AddrPort) error {
 		if to == lan {
 			s.schedule(20*ms, func() { s.noteICMP(sock) })
@@ -558,7 +558,7 @@ func TestSTUNSubProbe(t *testing.T) {
 	for i := range protocol.MaxReportSTUNRows {
 		s.spec.Probe.STUN = append(s.spec.Probe.STUN, netip.AddrPortFrom(netip.AddrFrom4([4]byte{192, 0, 2, byte(51 + i)}), 3478))
 	}
-	s.p = New(s.spec, s.socks[0], nil, nil)
+	s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
 	rs := newRunState(s.p)
 	if len(rs.stun) != protocol.MaxReportSTUNRows || rs.stun[0].addr != stunAddr || rs.stun[0].idx != 2 || rs.stun[protocol.MaxReportSTUNRows-1].idx != protocol.MaxReportSTUNRows+1 {
 		t.Fatalf("stun targets %+v", rs.stun)
@@ -597,7 +597,7 @@ func TestSTUNWaits(t *testing.T) {
 		s := newSim(t, c.o)
 		s.stunOn, s.stunDelay = c.delay >= 0, max(c.delay, 0)
 		s.spec.Probe.STUN = c.servers
-		s.p = New(s.spec, s.socks[0], nil, nil)
+		s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
 		r := s.stepRun()
 		if s.now > c.maxDone || s.now < c.minDone {
 			t.Fatalf("%s: done at %v, want within [%v, %v]", c.name, s.now, c.minDone, c.maxDone)
@@ -615,7 +615,7 @@ func TestSiblingsAndLANObserver(t *testing.T) {
 	s := newSim(t, o)
 	s.observers = append(s.observers, protocol.ObserverSpec{ID: 16, Addr: netip.MustParseAddrPort("10.0.0.1:3478"), Group: 2})
 	s.spec.Probe.Observers = s.observers
-	s.p = New(s.spec, s.socks[0], []SocketHandle{s.socks[2], s.socks[3], s.socks[0]}, nil)
+	s.p = s.counted(New(s.spec, s.socks[0], []SocketHandle{s.socks[2], s.socks[3], s.socks[0]}, nil))
 	r := s.stepRun()
 	if r.Sent.Sibling != 2 || r.Sent.Primary != 4 || r.Traits.Samples != 3 || r.Traits.MultiHomed {
 		t.Fatalf("traits %+v sent %+v", r.Traits, r.Sent)
@@ -709,7 +709,7 @@ func TestPerFamilyBudget(t *testing.T) {
 	o.stun = false
 	s = newSim(t, o)
 	s.spec.Probe.STUN = []netip.AddrPort{stunAddr, netip.MustParseAddrPort("192.0.2.51:3478")}
-	s.p = New(s.spec, s.socks[0], nil, nil)
+	s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
 	s.unreachable = true
 	if r := s.stepRun(); int(r.Sent.STUN) > stunBudget || r.Sent.STUN != 4 {
 		t.Fatalf("sent %+v", r.Sent)
@@ -721,7 +721,7 @@ func TestNoNATHost(t *testing.T) {
 	o.nat = natCfg{noNAT: true, filtering: protocol.FiltPDF}
 	s := newSim(t, o)
 	s.socks[0].local = netip.MustParseAddrPort("203.0.113.9:40000") // a public local address
-	s.p = New(s.spec, s.socks[0], nil, nil)
+	s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
 	r := s.stepRun()
 	if r.Traits.NoNAT != protocol.TriTrue || r.Traits.Mapping != protocol.MapEIM || r.Traits.MappingConf != protocol.ConfHigh ||
 		r.Traits.Filtering != protocol.FiltPDF {
@@ -733,7 +733,7 @@ func TestNoObserverForFamily(t *testing.T) {
 	s := newSim(t, defaultOpts())
 	s.spec.Family = protocol.FamilyUDP6
 	p6 := &simSock{sim: s, id: nat.SocketID(protocol.FamilyUDP6, 0), local: netip.MustParseAddrPort("[2001:db8::5]:40000")}
-	s.p = New(s.spec, p6, nil, nil)
+	s.p = s.counted(New(s.spec, p6, nil, nil))
 	r := s.p.Run(context.Background())
 	if r.Failure != protocol.ReasonNoProbeEndpoint || r.Table == nil || r.Sent.Primary != 0 || r.Traits.Family != protocol.FamilyUDP6 {
 		t.Fatalf("result %+v", r)
@@ -947,7 +947,7 @@ func TestSTUNWrongFamilyKeepsLANWait(t *testing.T) {
 	s := newSim(t, o)
 	s.stunOn, s.stunWrongV6 = true, true
 	s.spec.Probe.STUN = []netip.AddrPort{stunAddr, netip.MustParseAddrPort("192.0.2.60:3478")} // the second stays silent
-	s.p = New(s.spec, s.socks[0], nil, nil)
+	s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
 	r := s.stepRun()
 	if s.now < stunLANGrace || s.now > o.rtt+stunLANGrace+ms {
 		t.Fatalf("done at %v, want the LAN wait of %v", s.now, stunLANGrace)

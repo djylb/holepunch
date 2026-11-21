@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/probetest"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // The registry runs no goroutine of its own. The check is against the
@@ -23,7 +23,7 @@ import (
 // that ends meanwhile would lower the count.
 func TestRegistryNoGoroutine(t *testing.T) {
 	base := goroutines.IgnoreCurrent()
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	reg := NewRegistry(RegistryConfig{Clock: clk})
 	for i := range 10000 {
 		var route protocol.RouteID
@@ -130,7 +130,7 @@ func TestHandleRegistered(t *testing.T) {
 }
 
 func TestRegistryFull(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	reg := NewRegistry(RegistryConfig{MaxEntries: 3, Clock: clk})
 	for i := range 3 {
 		register(t, reg, fmt.Sprint("s", i), tok(1), rt(byte(i)))
@@ -200,7 +200,7 @@ func TestRegistryExpiryExtendClose(t *testing.T) {
 
 // Concurrent Handle.Close calls are idempotent.
 func TestHandleCloseIdempotentRace(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	reg := NewRegistry(RegistryConfig{Clock: clk})
 	var hs []*handle
 	for i := range 50 {
@@ -239,7 +239,7 @@ func TestRegistriesIndependent(t *testing.T) {
 
 // Concurrent readers with registrations and closes (-race).
 func TestRegistryConcurrentReadWrite(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	reg := NewRegistry(RegistryConfig{Clock: clk})
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -372,7 +372,7 @@ func TestHugeTTLSaturates(t *testing.T) {
 
 // A negative MaxEntries is unlimited: the table takes more than the default.
 func TestRegistryUnlimited(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	reg := NewRegistry(RegistryConfig{MaxEntries: -1, Clock: clk})
 	for i := range defaultMaxEntries + 1 {
 		route := protocol.NewRouteID()
@@ -390,7 +390,7 @@ func TestRegistryUnlimited(t *testing.T) {
 // small one (a copy-on-write table copies every entry of the written shard).
 func TestRegistryWriteCostFlat(t *testing.T) {
 	cost := func(n int) uint64 {
-		clk := clock.NewFake(t, time.Time{})
+		clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 		reg := NewRegistry(RegistryConfig{MaxEntries: 1 << 20, Clock: clk})
 		for range n {
 			if _, err := reg.register(nat.Registration{SessionID: "s", Route: protocol.NewRouteID(), Token: tok(1), TTL: time.Hour}); err != nil {
@@ -420,7 +420,7 @@ func TestRegistryWriteCostFlat(t *testing.T) {
 // Expired entries do not pile up while the table is far from full: a table
 // that doubled since its last sweep is swept again.
 func TestRegistryGrowthSweep(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	reg := NewRegistry(RegistryConfig{MaxEntries: -1, Clock: clk})
 	for range 20 {
 		clk.Advance(2 * time.Second) // everything registered before has expired
@@ -438,7 +438,7 @@ func TestRegistryGrowthSweep(t *testing.T) {
 // An expired entry leaves the table when its route is registered again,
 // and the count stays exact.
 func TestRegistryReplaceExpired(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	reg := NewRegistry(RegistryConfig{Clock: clk})
 	h1, err := reg.register(nat.Registration{SessionID: "a", Route: rt(1), Token: tok(1), TTL: time.Second})
 	if err != nil {
@@ -463,7 +463,7 @@ func TestRegistryReplaceExpired(t *testing.T) {
 // between registrations, the expired entries stay bounded by about the
 // live ones however fast the registrations come.
 func TestRegistryGrowthSweepTimeIndependent(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	reg := NewRegistry(RegistryConfig{MaxEntries: -1, Clock: clk})
 	const live = 100
 	clk.Advance(time.Millisecond)
@@ -483,7 +483,7 @@ func TestRegistryGrowthSweepTimeIndependent(t *testing.T) {
 // A full table whose entries all expired takes a registration at once,
 // even right after a sweep: nothing waits out a sweep interval.
 func TestRegistryFullOfExpiredRightAfterSweep(t *testing.T) {
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	reg := NewRegistry(RegistryConfig{MaxEntries: 4, Clock: clk})
 	clk.Advance(time.Second)
 	reg.sweep(clk.Now()) // a sweep has just run

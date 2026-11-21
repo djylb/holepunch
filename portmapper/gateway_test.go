@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // TestMapHungGatewayIsBounded: a gateway lookup or gateway that hangs does
@@ -131,7 +131,7 @@ func TestMapHungGatewayIsBounded(t *testing.T) {
 func TestGatewayCache(t *testing.T) {
 	var calls atomic.Int32
 	addr := netip.MustParseAddr("192.168.1.1")
-	fc := clock.NewFake(t, time.Time{})
+	fc := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	m := newTestMapper(t, Config{}, testEnv{clk: fc})
 	m.discover = func(context.Context) (netip.Addr, error) {
 		calls.Add(1)

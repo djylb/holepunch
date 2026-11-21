@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/ablation"
 	engine "github.com/djylb/holepunch/internal/plan"
@@ -17,6 +16,7 @@ import (
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // fired is an outcome of a round in which the side fired and saw nothing.
@@ -449,14 +449,14 @@ func TestMappedAccounting(t *testing.T) {
 func TestFireAtOrigin(t *testing.T) {
 	cases := []struct {
 		name  string
-		reg   func(clk *clock.Fake, arm *atomic.Bool) *natprobe.Registry
+		reg   func(clk *timeshim.Fake, arm *atomic.Bool) *natprobe.Registry
 		regAt time.Duration
 	}{
-		{"same clock", func(clk *clock.Fake, arm *atomic.Bool) *natprobe.Registry {
+		{"same clock", func(clk *timeshim.Fake, arm *atomic.Bool) *natprobe.Registry {
 			// Register reads the clock 1 ms into a call that lasts 2 ms.
 			return natprobe.NewRegistry(natprobe.RegistryConfig{Clock: armedClock{clk, arm}})
 		}, time.Millisecond},
-		{"other clock", func(*clock.Fake, *atomic.Bool) *natprobe.Registry {
+		{"other clock", func(*timeshim.Fake, *atomic.Bool) *natprobe.Registry {
 			return natprobe.NewRegistry(natprobe.RegistryConfig{}) // the system clock: meaningless on the fake one
 		}, 0},
 		{"relay-only", nil, 0},
@@ -468,7 +468,7 @@ func TestFireAtOrigin(t *testing.T) {
 			r := newRig(t, func(cfg *Config) {
 				cfg.Planner = rp
 				if c.reg != nil {
-					cfg.Registry, cfg.NoObserver = c.reg(cfg.Clock.(*clock.Fake), &arm), false
+					cfg.Registry, cfg.NoObserver = c.reg(cfg.Clock.(*timeshim.Fake), &arm), false
 				}
 			})
 			r.clk.Advance(time.Second)
@@ -648,7 +648,7 @@ func TestGoneAtRoundEnd(t *testing.T) {
 // armedClock is clk, except that once armed its next Now lasts 2 ms and
 // reads the clock 1 ms into it.
 type armedClock struct {
-	*clock.Fake
+	*timeshim.Fake
 	arm *atomic.Bool
 }
 

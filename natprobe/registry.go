@@ -10,10 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // Registry defaults and bounds.
@@ -37,14 +37,14 @@ const tokenTagDomain = "holepunch/1 natprobe token tag" //nolint:gosec // G101: 
 
 // RegistryConfig configures a Registry; zero fields take the defaults.
 type RegistryConfig struct {
-	MaxEntries         int         // live sessions, default 16384, negative unlimited; when full the expired entries are dropped, then ErrRegistryFull
-	SlotsPerRole       int         // observation slots (socket, observer) per role, default 24, negative unlimited (at most 65536 pairs exist)
-	ProbeBudgetPerRole uint16      // probes accepted per (session, role) in its lifetime, default 96
-	ExtraQuotaPerRole  uint8       // extra replies per (session, role), default 8
-	AltQuotaPerRole    uint8       // change-IP replies per (session, role), default 2
-	SessionRate        Rate        // per (session, role), default {16, 32}
-	SandwichQueue      int         // undelivered sandwich events per session, default 8, negative unlimited; more are dropped
-	Clock              clock.Clock // nil means the system clock; the clock of every expiry and rate decision
+	MaxEntries         int            // live sessions, default 16384, negative unlimited; when full the expired entries are dropped, then ErrRegistryFull
+	SlotsPerRole       int            // observation slots (socket, observer) per role, default 24, negative unlimited (at most 65536 pairs exist)
+	ProbeBudgetPerRole uint16         // probes accepted per (session, role) in its lifetime, default 96
+	ExtraQuotaPerRole  uint8          // extra replies per (session, role), default 8
+	AltQuotaPerRole    uint8          // change-IP replies per (session, role), default 2
+	SessionRate        Rate           // per (session, role), default {16, 32}
+	SandwichQueue      int            // undelivered sandwich events per session, default 8, negative unlimited; more are dropped
+	Clock              timeshim.Clock // nil means the system clock; the clock of every expiry and rate decision
 }
 
 // Registry holds the registered probe routes. It is safe for concurrent use,

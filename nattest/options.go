@@ -1,6 +1,6 @@
 package nattest
 
-import "github.com/djylb/holepunch/clock"
+import "github.com/djylb/timeshim"
 
 // Option configures [NewNetwork].
 type Option func(*options)
@@ -10,7 +10,7 @@ type options struct {
 	coreHops int
 	coreLink LinkConfig
 	eventLog int
-	clock    clock.Clock
+	clock    timeshim.Clock
 }
 
 const (
@@ -49,14 +49,14 @@ func WithEventLog(n int) Option {
 	}
 }
 
-// WithClock replaces the real clock. With a manual clock — a *clock.Fake, or
-// any clock that also has the Fake's AdvanceTo(time.Time) int, such as a
+// WithClock replaces the real clock. With a manual clock — a *timeshim.Fake, or
+// any clock that also has the Fake's AdvanceTo(time.Time), such as a
 // wrapper embedding one — the network is fully event-driven and starts no
 // goroutine: delayed packets, pipe data and deadlines move only while the
 // test advances the clock, on the advancing goroutine, so a single-goroutine
 // test is reproducible packet by packet. Any other clock drives the
 // scheduler goroutine. A nil clock is ignored.
-func WithClock(c clock.Clock) Option {
+func WithClock(c timeshim.Clock) Option {
 	return func(o *options) {
 		if c != nil {
 			o.clock = c

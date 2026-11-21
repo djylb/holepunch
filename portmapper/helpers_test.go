@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/goroutines"
 	"github.com/djylb/holepunch/internal/leak"
 	"github.com/djylb/holepunch/internal/testkit"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 func TestMain(m *testing.M) { goroutines.VerifyTestMain(m) }
@@ -102,7 +102,7 @@ func closedUDPPort(t testing.TB) uint16 {
 type testEnv struct {
 	gw  *fakeGW
 	igd *fakeIGD
-	clk clock.Clock
+	clk timeshim.Clock
 }
 
 type testMapper struct {
@@ -208,7 +208,7 @@ func noLeak(t *testing.T, base goroutines.Option) {
 
 // waitPending waits until the fake clock has one timer armed, at most
 // testkit.WaitBound.
-func waitPending(t *testing.T, fc *clock.Fake) {
+func waitPending(t *testing.T, fc *timeshim.Fake) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), testkit.WaitBound(t))
 	defer cancel()

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/goroutines"
+	"github.com/djylb/timeshim"
 )
 
 func TestDelayedDeliveryRealClock(t *testing.T) {
@@ -80,7 +80,7 @@ func TestFakeClockIsEventDriven(t *testing.T) {
 // the goroutines of the test.
 func TestFakeClockStartsNoGoroutine(t *testing.T) {
 	defer goroutines.VerifyNone(t, goroutines.IgnoreCurrent())
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	n := NewNetwork(WithClock(clk), WithCoreLink(LinkConfig{Delay: time.Millisecond}))
 	if n.sched.group != nil {
 		t.Fatal("scheduler goroutine started on a fake clock")
@@ -183,7 +183,7 @@ func TestConcurrentTraffic(t *testing.T) {
 // jittery, noisy run packet by packet.
 func TestDeterministicReplay(t *testing.T) {
 	run := func() string {
-		clk := clock.NewFake(t, time.Time{})
+		clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 		n := NewNetwork(WithSeed(5), WithClock(clk), WithCoreLink(LinkConfig{Delay: 10 * time.Millisecond, Jitter: 5 * time.Millisecond, Loss: 0.1}))
 		defer func() { _ = n.Close() }()
 		_, o := observer(t, n, 1)

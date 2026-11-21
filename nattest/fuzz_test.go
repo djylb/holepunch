@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/goroutines"
+	"github.com/djylb/timeshim"
 )
 
 // FuzzNATSim drives random outbound, inbound, time and reboot sequences
@@ -26,7 +26,7 @@ func FuzzNATSim(f *testing.F) {
 			return
 		}
 		defer goroutines.VerifyNone(t, goroutines.IgnoreCurrent())
-		clk := clock.NewFake(t, time.Time{})
+		clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 		n := NewNetwork(WithClock(clk), WithEventLog(64), WithSeed(int64(len(data))))
 		cfg := NATConfig{
 			Mapping:        Mapping(data[0] % 3),

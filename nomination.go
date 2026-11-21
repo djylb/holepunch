@@ -6,11 +6,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // nominationEvents bounds the packet facts waiting for the nomination
@@ -77,7 +77,7 @@ type announced struct{ nominate, adopt uint16 }
 // the configuration it is started with, once the summary has settled the
 // handover timeout. The read loops thus only ever touch events and pair.
 type nominator struct {
-	clk    clock.Clock
+	clk    timeshim.Clock
 	host   nominationHost
 	events chan candEvent
 	pair   atomic.Pointer[pairKey]   // the pair being nominated or adopted, for upper-layer evidence
@@ -104,7 +104,7 @@ var candidateStateNames = map[candidate.State]string{
 	candidate.StateClosed:     "closed",
 }
 
-func newNominator(clk clock.Clock, host nominationHost) *nominator {
+func newNominator(clk timeshim.Clock, host nominationHost) *nominator {
 	return &nominator{clk: clk, host: host, events: make(chan candEvent, nominationEvents), states: map[pairKey]pairState{}}
 }
 
@@ -129,7 +129,7 @@ func (n *nominator) post(ev candEvent) {
 // wake while no handshake is in progress.
 func (n *nominator) run(ctx context.Context, cfg candidate.Config) {
 	n.mgr = candidate.NewManager(cfg)
-	t := n.clk.NewTimer(time.Hour)
+	t := timeshim.NewTimer(n.clk, time.Hour)
 	t.Stop()
 	defer t.Stop()
 	for {
@@ -147,7 +147,7 @@ func (n *nominator) run(ctx context.Context, cfg candidate.Config) {
 					break drain
 				}
 			}
-		case <-t.C():
+		case <-t.C:
 			n.perform(ctx, n.mgr.Tick(n.clk.Now()))
 		}
 		if at, ok := n.mgr.NextDeadline(); ok {

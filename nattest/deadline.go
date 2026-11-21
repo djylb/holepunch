@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/timeshim"
 )
 
 // deadline is a resettable read or write deadline in the style of net.Pipe:
@@ -14,7 +14,7 @@ import (
 // without being woken.
 type deadline struct {
 	mu      sync.Mutex
-	timer   clock.Timer
+	timer   timeshim.Timer
 	cancel  chan struct{}
 	stopped bool // the conn closed: set arms no timer any more
 }

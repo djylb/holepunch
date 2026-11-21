@@ -15,6 +15,7 @@ import (
 	"github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // One family's side of a round: the round goroutine and its sockets.
@@ -308,11 +309,11 @@ func dropTarget(items []sendItem, to netip.AddrPort) []sendItem {
 // waitUntil sleeps until t, an injected target or the end of the round.
 func (fr *familyRound) waitUntil(ctx context.Context, t time.Time) {
 	rt := fr.rt
-	tm := rt.clk.NewTimer(max(t.Sub(rt.clk.Now()), 0))
+	tm := timeshim.NewTimer(rt.clk, max(t.Sub(rt.clk.Now()), 0))
 	defer tm.Stop()
 	select {
 	case <-ctx.Done():
-	case <-tm.C():
+	case <-tm.C:
 	case more := <-fr.inject:
 		// put it back for the loop, which prepends it with fresh due times
 		select {

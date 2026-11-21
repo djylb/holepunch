@@ -6,13 +6,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/candidate"
 	"github.com/djylb/holepunch/internal/faultinject"
 	"github.com/djylb/holepunch/internal/msgframe"
 	"github.com/djylb/holepunch/internal/trunc"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // Round constants.
@@ -64,7 +64,7 @@ func (rt *runtime) currentRound() uint8 {
 func (rt *runtime) punchLoop() (*candidate.Action, error) {
 	ctx := rt.g.Context()
 	st := rt.punch
-	timer := rt.clk.NewTimer(time.Hour)
+	timer := timeshim.NewTimer(rt.clk, time.Hour)
 	defer timer.Stop()
 	var (
 		cur                              *roundRun
@@ -160,7 +160,7 @@ func (rt *runtime) punchLoop() (*candidate.Action, error) {
 			} else {
 				grace = rt.clk.Now().Add(confirmGrace)
 			}
-		case <-timer.C():
+		case <-timer.C:
 		}
 
 		now := rt.clk.Now()
@@ -476,16 +476,16 @@ func (rt *runtime) sleepUntil(ctx context.Context, t time.Time) error {
 func (rt *runtime) sleep(ctx context.Context, d time.Duration) error { return sleepOn(ctx, rt.clk, d) }
 
 // sleepOn waits for d on clk, or for ctx.
-func sleepOn(ctx context.Context, clk clock.Clock, d time.Duration) error {
+func sleepOn(ctx context.Context, clk timeshim.Clock, d time.Duration) error {
 	if d <= 0 {
 		return ctx.Err()
 	}
-	t := clk.NewTimer(d)
+	t := timeshim.NewTimer(clk, d)
 	defer t.Stop()
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
-	case <-t.C():
+	case <-t.C:
 		return nil
 	}
 }

@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	"github.com/djylb/holepunch/internal/controlwire"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // The panic paths that need no fault injection point: each test makes one
@@ -72,7 +72,7 @@ func TestFinishSurvivesResultPanic(t *testing.T) {
 }
 
 // resetPanics is a session timer whose Reset panics.
-type resetPanics struct{ clock.Timer }
+type resetPanics struct{ timeshim.Timer }
 
 func (resetPanics) Reset(time.Duration) bool { panic("reset") }
 

@@ -9,19 +9,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/coord/internal/simclient"
 	engine "github.com/djylb/holepunch/internal/plan"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // newMem returns a strategy memory on a fake clock; the memory reads only
 // its Now.
-func newMem(t *testing.T, cfg StrategyMemoryConfig) (*memory, *clock.Fake) {
+func newMem(t *testing.T, cfg StrategyMemoryConfig) (*memory, *timeshim.Fake) {
 	t.Helper()
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	cfg.Clock = clk
 	return NewStrategyMemory(cfg).(*memory), clk
 }

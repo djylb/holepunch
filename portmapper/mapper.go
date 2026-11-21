@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 const (
@@ -45,8 +45,8 @@ const (
 // Stability: beta.
 type Mapper struct {
 	cfg Config
-	g   *life.Group // every goroutine of the Mapper; its context ends when Close starts
-	clk clock.Clock // renewal schedule and gateway cache expiry
+	g   *life.Group    // every goroutine of the Mapper; its context ends when Close starts
+	clk timeshim.Clock // renewal schedule and gateway cache expiry
 	hc  *http.Client
 	gw  gatewayCache
 
@@ -78,7 +78,7 @@ func New(cfg Config) *Mapper {
 	m := &Mapper{
 		cfg:           cfg,
 		g:             life.New(context.Background()),
-		clk:           clock.System{},
+		clk:           timeshim.Real,
 		hc:            newHTTPClient(),
 		leases:        make(map[*lease]struct{}),
 		discover:      cfg.Gateway,

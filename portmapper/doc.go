@@ -52,7 +52,7 @@
 //
 // Network waits (retransmissions, attempt and release bounds) use real time,
 // because socket deadlines are wall-clock times. The renewal schedule and the
-// gateway cache use the Mapper's clock, which is clock.System
+// gateway cache use the Mapper's clock, which is timeshim.Real
 // outside tests.
 //
 // # Resource ownership

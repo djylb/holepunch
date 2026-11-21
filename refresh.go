@@ -7,6 +7,7 @@ import (
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // Anchor refresh. Before the go of a round that
@@ -38,12 +39,12 @@ func (rt *runtime) refreshAnchor(a protocol.Assist) {
 	}
 	rt.g.Go("refresh:"+string(a.Family), func(ctx context.Context) {
 		rt.refreshProbe(ctx, fs.primary, obs, a.Round, nat.RefreshFirst)
-		t := rt.clk.NewTimer(refreshGap)
+		t := timeshim.NewTimer(rt.clk, refreshGap)
 		defer t.Stop()
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C():
+		case <-t.C:
 		}
 		rt.refreshProbe(ctx, fs.primary, obs, a.Round, nat.RefreshSecond)
 	})

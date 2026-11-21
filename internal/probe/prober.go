@@ -8,13 +8,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/life"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/internal/netaddr"
 	"github.com/djylb/holepunch/internal/udpwire"
 	"github.com/djylb/holepunch/protocol"
 	"github.com/djylb/holepunch/stun"
+	"github.com/djylb/timeshim"
 )
 
 // SocketHandle is a probing socket as its owner, the session runtime,
@@ -36,7 +36,7 @@ type Spec struct {
 	Probe   protocol.ProbeSpec // punch_start.probe, validated by protocol
 	Family  protocol.Family    // the family this prober probes
 	Timeout time.Duration      // timeouts.probe_timeout_ms; ≤ 0 means 2000 ms; clamped to [500 ms, 10 s]
-	Clock   clock.Clock        // nil means the system clock
+	Clock   timeshim.Clock     // nil means the system clock
 	// OnFirstAck, when set, is called once on Run's goroutine when the
 	// first main observer answered the primary socket: the table then
 	// holds a verified row (an early probe_report). It must not block.
@@ -78,7 +78,7 @@ type Result struct {
 // NoteUnreachable, and optionally call Hairpin after Run returned.
 type Prober struct {
 	spec        Spec
-	clk         clock.Clock
+	clk         timeshim.Clock
 	primary     SocketHandle
 	active      atomic.Bool // Run or Hairpin is consuming the inbox
 	role        udpwire.Role
@@ -101,6 +101,10 @@ type Prober struct {
 	icmp     atomic.Uint32
 
 	observed netip.AddrPort // the primary's observed address; written by Run before finished is set
+
+	// onSelect, when set, is called before each select of Run and Hairpin;
+	// tests count the selects of the goroutine under test with it.
+	onSelect func()
 }
 
 type sibling struct {
@@ -133,9 +137,7 @@ func New(spec Spec, primary SocketHandle, siblings []SocketHandle, openSecond fu
 		inbox:      make(chan inbound, inboxCap),
 		wake:       make(chan struct{}, 1),
 	}
-	if p.clk == nil {
-		p.clk = clock.System{}
-	}
+	p.clk = timeshim.Or(p.clk)
 	var socks []nat.SocketMeta
 	switch role, ok := codecRole(spec.Codec); {
 	case !spec.Family.Valid():
@@ -337,7 +339,7 @@ func (p *Prober) run(ctx context.Context) Result {
 		return s.finish(r, d)
 	}
 	p.active.Store(true)
-	timer := p.clk.NewTimer(s.deadline)
+	timer := timeshim.NewTimer(p.clk, s.deadline)
 	defer timer.Stop()
 	for {
 		if p.stopped.Load() {
@@ -348,6 +350,9 @@ func (p *Prober) run(ctx context.Context) Result {
 			return r
 		}
 		timer.Reset(s.nextWake(now) - now)
+		if p.onSelect != nil {
+			p.onSelect()
+		}
 		select {
 		case <-ctx.Done():
 			r, d := ctxReason(ctx)
@@ -355,7 +360,7 @@ func (p *Prober) run(ctx context.Context) Result {
 		case in := <-p.inbox:
 			s.handle(in)
 		case <-p.wake:
-		case <-timer.C():
+		case <-timer.C:
 		}
 	}
 }

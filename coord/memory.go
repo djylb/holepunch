@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/natprobe"
 	"github.com/djylb/holepunch/plan"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 // StrategyKey identifies a pair of NAT exits across sessions: an HMAC of the
@@ -146,7 +146,7 @@ type StrategyMemoryConfig struct {
 	ReportsPerMin  int           // 6 reports per key and minute; more are ignored
 	// Clock is the time source of TTLs and report rates; nil means the
 	// system clock.
-	Clock clock.Clock
+	Clock timeshim.Clock
 }
 
 // Memory defaults.
@@ -211,9 +211,7 @@ func NewStrategyMemory(cfg StrategyMemoryConfig) StrategyMemory {
 	if m.cfg.ReportsPerMin <= 0 {
 		m.cfg.ReportsPerMin = memDefReports
 	}
-	if m.cfg.Clock == nil {
-		m.cfg.Clock = clock.System{}
-	}
+	m.cfg.Clock = timeshim.Or(m.cfg.Clock)
 	m.salt = slices.Clone(m.cfg.Salt)
 	if len(m.salt) == 0 {
 		m.salt = make([]byte, memSaltSize)

@@ -64,13 +64,14 @@ go get github.com/djylb/holepunch
 | `github.com/djylb/holepunch/stun`           | STUN Binding messages, a client query and a minimal server            |
 | `github.com/djylb/holepunch/udpsock`        | UDP socket helpers: ICMP error reports, TTL / hop limit, truncation   |
 | `github.com/djylb/holepunch/hostaddr`       | the host's addresses classified as loopback, LAN, public or overlay   |
-| `github.com/djylb/holepunch/clock`          | the time source, with a Fake clock for deterministic tests            |
 | `github.com/djylb/holepunch/nattest`        | in-process NAT and network simulator for tests                        |
 | `github.com/djylb/holepunch/quicpath`       | separate module: QUIC over the punched paths, with pinned peers       |
 | `github.com/djylb/holepunch/standalone/...` | separate module: a complete server and clients built on the library   |
 
-`stun`, `udpsock`, `hostaddr` and `clock` depend on the standard library only
-and are useful on their own.
+`stun`, `udpsock` and `hostaddr` depend on the standard library only and are
+useful on their own. The time source is a `timeshim.Clock` from
+`github.com/djylb/timeshim`, the root module's only dependency; a nil clock
+is the real one.
 
 ## Usage
 
@@ -428,7 +429,7 @@ any command with `-h` for all flags.
 ## Testing
 
 `nattest` simulates NATs, routers and links in process: a test runs real
-clients, a coordinator and natprobe across it, and with a `clock.Fake`
+clients, a coordinator and natprobe across it, and with a `timeshim.Fake`
 (`nattest.WithClock`, `Options.Clock`, `coord.Config.Clock`) the whole
 deployment advances deterministically, far faster than real time. The
 package example shows the setup.

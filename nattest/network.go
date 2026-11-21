@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/timeshim"
 )
 
 // inboxPackets is the receive queue of a socket, in packets.
@@ -21,8 +21,8 @@ const inboxPackets = 1024
 // methods are safe for concurrent use.
 type Network struct {
 	seed     int64
-	clock    clock.Clock
-	system   bool      // clock is clock.System
+	clock    timeshim.Clock
+	system   bool      // clock is timeshim.Real
 	base     time.Time // network time 0
 	coreHops int
 	queue    int // receive queue of new sockets, in packets
@@ -50,16 +50,16 @@ type Network struct {
 }
 
 // NewNetwork creates an empty network. Unless the clock is manual — a
-// *clock.Fake, or a clock with its AdvanceTo method (WithClock) — it starts
+// *timeshim.Fake, or a clock with its AdvanceTo method (WithClock) — it starts
 // the scheduler goroutine, so the caller must Close the network.
 func NewNetwork(opts ...Option) *Network {
-	o := options{seed: defaultSeed, coreHops: defaultCoreHops, eventLog: defaultEventLog, clock: clock.System{}}
+	o := options{seed: defaultSeed, coreHops: defaultCoreHops, eventLog: defaultEventLog, clock: timeshim.Real}
 	for _, f := range opts {
 		if f != nil {
 			f(&o)
 		}
 	}
-	_, system := o.clock.(clock.System)
+	system := o.clock == timeshim.Real
 	n := &Network{
 		seed:     o.seed,
 		clock:    o.clock,

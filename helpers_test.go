@@ -7,17 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/nat"
 	"github.com/djylb/holepunch/nattest"
 	"github.com/djylb/holepunch/protocol"
+	"github.com/djylb/timeshim"
 )
 
 func errClosedForTest() error { return net.ErrClosed }
 
 // newTestRuntime is a runtime with the pieces a unit test of the send gate,
 // the sockets or the dispatcher needs, as if punch_start had been accepted.
-func newTestRuntime(t testing.TB, clk clock.Clock, netw Network) *runtime {
+func newTestRuntime(t testing.TB, clk timeshim.Clock, netw Network) *runtime {
 	t.Helper()
 	rt := newRuntime(context.Background(), Options{Clock: clk, Network: netw, ControlSecurity: protocol.ControlSecurityDeclared})
 	st := protocol.PunchStart{
@@ -70,9 +70,9 @@ func simHost(t testing.TB) (*nattest.Network, *nattest.Host) {
 }
 
 // fakeClock returns a fake clock reporting to t.
-func fakeClock(tb testing.TB) *clock.Fake {
+func fakeClock(tb testing.TB) *timeshim.Fake {
 	tb.Helper()
-	return clock.NewFake(tb, time.Time{})
+	return timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
 func netipAP(ip string, port int) netip.AddrPort {

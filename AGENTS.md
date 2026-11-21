@@ -2,8 +2,8 @@
 
 - Run `make ci` before you finish; it must pass. It formats, vets, lints
   (`tools/lintcheck`) and runs the race tests of every module.
-- The root module has no external dependencies, not even for tests. Use the
-  standard library. Only the `quicpath` and `standalone` modules may depend
+- The root module has no external dependencies, not even for tests, except
+  the author's own `github.com/djylb/timeshim`. Use the standard library. Only the `quicpath` and `standalone` modules may depend
   on quic-go, and the root module never imports them.
 - `standalone` uses the library's public API only.
 - Treat everything from gateways, observers, peers and the kernel as

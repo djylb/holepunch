@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/life"
+	"github.com/djylb/timeshim"
 )
 
 const (
@@ -89,7 +89,7 @@ func (h *eventHeap) pop() event {
 // earliest event, runs the due events on the goroutine that advances the
 // clock.
 type scheduler struct {
-	timer     clock.Timer // manual only, created on first use
+	timer     timeshim.Timer // manual only, created on first use
 	n         *Network
 	group     *life.Group   // real time only
 	wake      chan struct{} // real time: a new earliest event was pushed
@@ -102,16 +102,16 @@ type scheduler struct {
 }
 
 // manualClock is a clock that moves only when a test advances it, as
-// *clock.Fake does: its timers fire on the advancing goroutine. A clock that
+// *timeshim.Fake does: its timers fire on the advancing goroutine. A clock that
 // wraps a Fake is manual when it keeps the Fake's AdvanceTo; one that hides
 // it is driven like a real clock, by the scheduler goroutine.
 type manualClock interface {
-	clock.Clock
-	AdvanceTo(target time.Time) int
+	timeshim.Clock
+	AdvanceTo(target time.Time)
 }
 
 // isManual reports whether c is a manualClock.
-func isManual(c clock.Clock) bool {
+func isManual(c timeshim.Clock) bool {
 	_, ok := c.(manualClock)
 	return ok
 }
@@ -171,7 +171,7 @@ func (s *scheduler) due(batch []event) ([]event, time.Duration) {
 
 // run is the scheduler goroutine of the real-time mode.
 func (s *scheduler) run(ctx context.Context) {
-	timer := s.n.clock.NewTimer(time.Hour)
+	timer := timeshim.NewTimer(s.n.clock, time.Hour)
 	timer.Stop()
 	defer timer.Stop()
 	batch := make([]event, 0, maxBatch)
@@ -192,7 +192,7 @@ func (s *scheduler) run(ctx context.Context) {
 			timer.Reset(wait)
 		}
 		select {
-		case <-timer.C():
+		case <-timer.C:
 		case <-s.wake:
 			timer.Stop()
 		case <-ctx.Done():

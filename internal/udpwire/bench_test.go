@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/timeshim"
 )
 
 // Budgets: Seal S ≤ 400 ns, Seal P ≤ 700 ns,
@@ -193,7 +193,7 @@ func BenchmarkSeqWindow(b *testing.B) {
 // BenchmarkDropResidual: inside the window an upper-layer datagram whose first
 // byte is in range costs one trial AEAD; afterwards only an atomic load.
 func BenchmarkDropResidual(b *testing.B) {
-	clk := clock.NewFake(b, clockStart)
+	clk := timeshim.NewFake(clockStart)
 	resp, err := NewCodec(testToken(), testRoute(), RoleResponder, testPad, clk.Now)
 	if err != nil {
 		b.Fatal(err)

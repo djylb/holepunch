@@ -50,7 +50,7 @@ func TestReceiveErrorInjected(t *testing.T) {
 	defer disarm()
 	s := newSim(t, defaultOpts())
 	s.spec.Timeout = minTimeout
-	s.p = New(s.spec, s.socks[0], nil, nil)
+	s.p = s.counted(New(s.spec, s.socks[0], nil, nil))
 	r := s.stepRun()
 	if r.Failure != protocol.ReasonProbeTimeout || r.Sent.Rejected == 0 {
 		t.Fatalf("result %+v", r)

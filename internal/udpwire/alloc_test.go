@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/testkit"
+	"github.com/djylb/timeshim"
 )
 
 // loopConn serves the same datagram forever without allocating.
@@ -40,7 +40,7 @@ func TestZeroAllocs(t *testing.T) {
 	var w SeqWindow
 	seq := uint32(0)
 
-	clk := clock.NewFake(t, clockStart)
+	clk := timeshim.NewFake(clockStart)
 	resp, err := NewCodec(testToken(), testRoute(), RoleResponder, testPad, clk.Now)
 	if err != nil {
 		t.Fatal(err)

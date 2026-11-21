@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
 	"github.com/djylb/holepunch/internal/goroutines"
+	"github.com/djylb/timeshim"
 )
 
 func TestMain(m *testing.M) {
@@ -40,9 +40,9 @@ func newNet(t testing.TB, opts ...Option) *Network {
 }
 
 // fakeNet creates a network driven by a fake clock.
-func fakeNet(t testing.TB, opts ...Option) (*Network, *clock.Fake) {
+func fakeNet(t testing.TB, opts ...Option) (*Network, *timeshim.Fake) {
 	t.Helper()
-	clk := clock.NewFake(t, time.Time{})
+	clk := timeshim.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	return newNet(t, append([]Option{WithClock(clk)}, opts...)...), clk
 }
 
@@ -145,7 +145,7 @@ func srcAt(t testing.TB, c, obs Conn) netip.AddrPort {
 }
 
 // srcAtAfter is srcAt on a network with link delays driven by clk.
-func srcAtAfter(t testing.TB, clk *clock.Fake, c, obs Conn) netip.AddrPort {
+func srcAtAfter(t testing.TB, clk *timeshim.Fake, c, obs Conn) netip.AddrPort {
 	t.Helper()
 	send(t, c, addrOf(obs), "probe")
 	clk.Advance(time.Second)

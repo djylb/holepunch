@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djylb/holepunch/clock"
+	"github.com/djylb/timeshim"
 )
 
 // linkPair builds, on a fake clock, a host behind a NAT whose uplink
 // carries cfg, and a public observer.
-func linkPair(t *testing.T, cfg LinkConfig, opts ...Option) (*Network, *clock.Fake, *NAT, Conn, Conn) {
+func linkPair(t *testing.T, cfg LinkConfig, opts ...Option) (*Network, *timeshim.Fake, *NAT, Conn, Conn) {
 	t.Helper()
 	n, clk := fakeNet(t, opts...)
 	_, o := observer(t, n, 3478)
